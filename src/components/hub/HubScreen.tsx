@@ -269,7 +269,7 @@ export const HubScreen: React.FC = () => {
     sound.playTap();
     if (!isPresentDayCompleted) return;
     if (activeDay.type === 'match' && autoSimOnAdvance && !activeDay.matchFixture?.completed) {
-      startMatch(opponentTeam.id, selectedMatchFormat, !isCurrentMatchHome);
+      startMatch(opponentTeam.id, selectedMatchFormat, !isCurrentMatchHome, activeDay.matchFixture?.id);
       simEntireMatch();
     }
     advanceCalendarDay();
@@ -280,7 +280,7 @@ export const HubScreen: React.FC = () => {
 
   const handleQuickSimMatch = () => {
     sound.playCrowdCheer(0.6);
-    startMatch(opponentTeam.id, selectedMatchFormat, !isCurrentMatchHome);
+    startMatch(opponentTeam.id, selectedMatchFormat, !isCurrentMatchHome, activeDay.matchFixture?.id);
     setTimeout(() => simEntireMatch(), 200);
   };
 
@@ -799,7 +799,7 @@ export const HubScreen: React.FC = () => {
                     disabled={!isViewingPresent}
                     onClick={() => {
                       sound.playTap();
-                      startMatch(opponentTeam.id, selectedMatchFormat, !isCurrentMatchHome);
+                      startMatch(opponentTeam.id, selectedMatchFormat, !isCurrentMatchHome, activeDay.matchFixture?.id);
                     }}
                     className={`py-3.5 font-black text-xs uppercase tracking-wider rounded-2xl flex items-center justify-center gap-1.5 transition-all ${
                       !isViewingPresent
@@ -1706,12 +1706,12 @@ export const HubScreen: React.FC = () => {
         players={userTeamPlayers}
         onConfirmOpeners={(strikerId, nonStrikerId) => {
           setIsOpenersModalOpen(false);
-          startMatch(opponentTeam.id, selectedMatchFormat, !isCurrentMatchHome);
+          startMatch(opponentTeam.id, selectedMatchFormat, !isCurrentMatchHome, activeDay.matchFixture?.id);
           setTimeout(() => selectOpeners(strikerId, nonStrikerId), 50);
         }}
         onSimMatch={() => {
           setIsOpenersModalOpen(false);
-          startMatch(opponentTeam.id, selectedMatchFormat, !isCurrentMatchHome);
+          startMatch(opponentTeam.id, selectedMatchFormat, !isCurrentMatchHome, activeDay.matchFixture?.id);
           setTimeout(() => simEntireMatch(), 200);
         }}
       />

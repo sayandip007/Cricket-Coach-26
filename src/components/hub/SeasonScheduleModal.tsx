@@ -1786,17 +1786,199 @@ export const SeasonScheduleModal: React.FC<SeasonScheduleModalProps> = ({
     return Math.floor(totalTeamGames / 2);
   }, [leagues]);
 
-  // Build the 74 IPL fixtures dynamically based on actual matches completed in this career
+  function extractWinnerFromSummary(summary?: string, homeShort?: string, awayShort?: string): string | undefined {
+    if (!summary) return undefined;
+    const s = summary.toUpperCase();
+    if (homeShort && (s.includes(`${homeShort} WON`) || s.startsWith(`${homeShort} `))) return homeShort;
+    if (awayShort && (s.includes(`${awayShort} WON`) || s.startsWith(`${awayShort} `))) return awayShort;
+    if (homeShort && awayShort) {
+      const beatIdx = s.indexOf('BEAT');
+      if (beatIdx > -1) {
+        const winnerPart = s.substring(0, beatIdx).trim();
+        if (winnerPart.includes(homeShort)) return homeShort;
+        if (winnerPart.includes(awayShort)) return awayShort;
+      }
+    }
+    return undefined;
+  }
+
+  function convertToScorecardInnings(inn: any, teamShort: string, teamName: string): ScorecardInningsData {
+    if (!inn) {
+      return {
+        teamShort,
+        teamName,
+        totalRuns: 0,
+        wickets: 0,
+        overs: '20.0',
+        batters: [],
+        didNotBat: [],
+        fallOfWickets: [],
+        partnerships: [],
+        bowlers: []
+      };
+    }
+
+    const batters: ScorecardBatterLine[] = (inn.batters || []).map((b: any) => ({
+      name: b.name || 'Batter',
+      dismissal: b.dismissal || (b.isOut ? (b.outDesc || 'c & b Bowler') : 'not out'),
+      runs: b.runs || 0,
+      balls: b.balls || 0,
+      fours: b.fours || 0,
+      sixes: b.sixes || 0,
+      sr: String(b.sr || b.strikeRate || (b.balls ? ((b.runs / b.balls) * 100).toFixed(1) : '0.0')),
+      isNotOut: !b.isOut && b.dismissal !== 'out'
+    }));
+
+    const bowlers: ScorecardBowlerLine[] = (inn.bowlers || []).map((bw: any) => ({
+      name: bw.name || 'Bowler',
+      overs: String(bw.overs || '4.0'),
+      maidens: bw.maidens || 0,
+      runs: bw.runs || 0,
+      wickets: bw.wickets || 0,
+      econ: String(bw.econ || bw.economy || '6.00')
+    }));
+
+    return {
+      teamShort: teamShort || 'TEAM',
+      teamName: teamName || 'TEAM',
+      totalRuns: inn.runs ?? inn.totalRuns ?? 0,
+      wickets: inn.wickets ?? 0,
+      overs: String(inn.overs || '20.0'),
+      batters,
+      didNotBat: inn.didNotBat || [],
+      fallOfWickets: inn.fallOfWickets || [],
+      partnerships: inn.partnerships || [],
+      bowlers
+    };
+  }
+
+  // Build the 74 IPL fixtures dynamically based on actual calendar dates & completed matches in this career
   const iplFixtures: ScheduleMatchItem[] = useMemo(() => {
-    const completedCalFixtures = calendarDays.filter(
-      d => d.eventType === 'match' && d.matchFixture?.completed && !d.matchFixture?.isInternational
-    );
+    const liveMatches: ScheduleMatchItem[] = [];
 
-    return IPL_2026_RAW_FIXTURES.map((raw, idx) => {
-      const isCompletedInCareer = idx < totalLeagueMatchesCompleted;
+    calendarDays.forEach((d) => {
+      // 1. Primary fixture on this day
+      if (d.type === 'match' && d.matchFixture && !d.matchFixture.isInternational) {
+        const fix = d.matchFixture;
+        const homeCode = (fix.homeShortName || 'KOL').toUpperCase();
+        const awayCode = (fix.awayShortName || 'MUM').toUpperCase();
+        const homeFullName = ROSTER_NAMES_BY_TEAM[homeCode]?.fullName || fix.homeShortName || homeCode;
+        const awayFullName = ROSTER_NAMES_BY_TEAM[awayCode]?.fullName || fix.awayShortName || awayCode;
 
-      if (!isCompletedInCareer) {
-        return {
+        const histRecord = completedMatchesHistory.find(
+          m => m.id === fix.id ||
+            (m.dateStr === d.dateStr &&
+              ((m.homeTeam === homeCode && m.awayTeam === awayCode) ||
+               (m.homeTeam === awayCode && m.awayTeam === homeCode)))
+        );
+
+        const isCompleted = Boolean(fix.completed || histRecord);
+        const fullSummary = histRecord?.summary || fix.resultSummary || (isCompleted ? 'Match completed' : undefined);
+        const shortSummary = fullSummary ? (fullSummary.length > 34 ? `${fullSummary.slice(0, 33)}...` : fullSummary) : undefined;
+
+        let scInnings1: ScorecardInningsData;
+        let scInnings2: ScorecardInningsData;
+
+        if (histRecord?.innings1) {
+          scInnings1 = convertToScorecardInnings(histRecord.innings1, homeCode, homeFullName);
+          scInnings2 = convertToScorecardInnings(histRecord.innings2, awayCode, awayFullName);
+        } else {
+          const generated = buildDetailedScorecard(
+            fix.id,
+            homeCode,
+            178,
+            4,
+            '20.0',
+            awayCode,
+            165,
+            7,
+            '20.0',
+            histRecord?.playerOfMatch || 'Star Performer'
+          );
+          scInnings1 = generated.innings1;
+          scInnings2 = generated.innings2;
+        }
+
+        liveMatches.push({
+          id: fix.id,
+          dateLabel: `${d.dayNumber} ${d.month}`,
+          homeShort: homeCode,
+          awayShort: awayCode,
+          homeFull: homeFullName,
+          awayFull: awayFullName,
+          completed: isCompleted,
+          resultShort: shortSummary,
+          resultFull: fullSummary,
+          winnerShort: extractWinnerFromSummary(fullSummary, homeCode, awayCode),
+          potm: histRecord?.playerOfMatch || (fix.completedMatchState as any)?.playerOfMatch?.name,
+          innings1: scInnings1,
+          innings2: scInnings2
+        });
+      }
+
+      // 2. Concurrent other team matches on this day
+      (d.otherMatches || []).forEach((om) => {
+        const homeCode = (om.homeShortName || 'KOL').toUpperCase();
+        const awayCode = (om.awayShortName || 'MUM').toUpperCase();
+        const homeFullName = ROSTER_NAMES_BY_TEAM[homeCode]?.fullName || om.homeShortName || homeCode;
+        const awayFullName = ROSTER_NAMES_BY_TEAM[awayCode]?.fullName || om.awayShortName || awayCode;
+
+        const histRecord = completedMatchesHistory.find(
+          m => m.id === om.id ||
+            (m.dateStr === d.dateStr &&
+              ((m.homeTeam === homeCode && m.awayTeam === awayCode) ||
+               (m.homeTeam === awayCode && m.awayTeam === homeCode)))
+        );
+
+        const isCompleted = Boolean(om.completed || histRecord);
+        const fullSummary = histRecord?.summary || om.resultSummary || (isCompleted ? 'Match completed' : undefined);
+        const shortSummary = fullSummary ? (fullSummary.length > 34 ? `${fullSummary.slice(0, 33)}...` : fullSummary) : undefined;
+
+        let scInnings1: ScorecardInningsData;
+        let scInnings2: ScorecardInningsData;
+
+        if (histRecord?.innings1) {
+          scInnings1 = convertToScorecardInnings(histRecord.innings1, homeCode, homeFullName);
+          scInnings2 = convertToScorecardInnings(histRecord.innings2, awayCode, awayFullName);
+        } else {
+          const generated = buildDetailedScorecard(
+            om.id,
+            homeCode,
+            170,
+            5,
+            '20.0',
+            awayCode,
+            156,
+            8,
+            '20.0',
+            histRecord?.playerOfMatch || 'Match Performer'
+          );
+          scInnings1 = generated.innings1;
+          scInnings2 = generated.innings2;
+        }
+
+        liveMatches.push({
+          id: om.id,
+          dateLabel: `${d.dayNumber} ${d.month}`,
+          homeShort: homeCode,
+          awayShort: awayCode,
+          homeFull: homeFullName,
+          awayFull: awayFullName,
+          completed: isCompleted,
+          resultShort: shortSummary,
+          resultFull: fullSummary,
+          winnerShort: extractWinnerFromSummary(fullSummary, homeCode, awayCode),
+          potm: histRecord?.playerOfMatch || (om.completedMatchState as any)?.playerOfMatch?.name,
+          innings1: scInnings1,
+          innings2: scInnings2
+        });
+      });
+    });
+
+    // Fill remaining slots up to 74 with raw fixture templates if calendar has fewer
+    if (liveMatches.length < 74) {
+      IPL_2026_RAW_FIXTURES.slice(liveMatches.length).forEach((raw) => {
+        liveMatches.push({
           id: raw.id,
           dateLabel: raw.date,
           homeShort: raw.home,
@@ -1805,65 +1987,12 @@ export const SeasonScheduleModal: React.FC<SeasonScheduleModalProps> = ({
           awayFull: ROSTER_NAMES_BY_TEAM[raw.away]?.fullName || raw.away,
           completed: false,
           abandoned: false
-        };
-      }
+        });
+      });
+    }
 
-      if (raw.abandoned) {
-        return {
-          id: raw.id,
-          dateLabel: raw.date,
-          homeShort: raw.home,
-          awayShort: raw.away,
-          homeFull: ROSTER_NAMES_BY_TEAM[raw.home]?.fullName || raw.home,
-          awayFull: ROSTER_NAMES_BY_TEAM[raw.away]?.fullName || raw.away,
-          completed: false,
-          abandoned: true,
-          resultShort: 'Match abandoned: persistent rain...'
-        };
-      }
-
-      const calMatch = completedCalFixtures[idx]?.matchFixture;
-      const secondWon = raw.secondRuns > raw.firstRuns;
-      const winShort = secondWon ? raw.secondBat : raw.firstBat;
-      const winRuns = secondWon ? raw.secondRuns : raw.firstRuns;
-      const winWkts = secondWon ? raw.secondWkts : raw.firstWkts;
-      const loseShort = secondWon ? raw.firstBat : raw.secondBat;
-      const loseRuns = secondWon ? raw.firstRuns : raw.secondRuns;
-      const loseWkts = secondWon ? raw.firstWkts : raw.secondWkts;
-
-      const fullText = calMatch?.resultSummary || `${winShort} ${winRuns}/${winWkts} beat ${loseShort} ${loseRuns}/${loseWkts} ${raw.margin}`;
-      const shortText = fullText.length > 34 ? `${fullText.slice(0, 33)}...` : fullText;
-
-      const sc = buildDetailedScorecard(
-        raw.id,
-        raw.firstBat,
-        raw.firstRuns,
-        raw.firstWkts,
-        '20.0',
-        raw.secondBat,
-        raw.secondRuns,
-        raw.secondWkts,
-        secondWon ? '18.4' : '20.0',
-        raw.potm
-      );
-
-      return {
-        id: raw.id,
-        dateLabel: raw.date,
-        homeShort: raw.home,
-        awayShort: raw.away,
-        homeFull: ROSTER_NAMES_BY_TEAM[raw.home]?.fullName || raw.home,
-        awayFull: ROSTER_NAMES_BY_TEAM[raw.away]?.fullName || raw.away,
-        completed: true,
-        resultShort: shortText,
-        resultFull: fullText,
-        winnerShort: winShort,
-        potm: raw.potm,
-        innings1: sc.innings1,
-        innings2: sc.innings2
-      };
-    });
-  }, [totalLeagueMatchesCompleted, calendarDays]);
+    return liveMatches;
+  }, [calendarDays, completedMatchesHistory]);
 
   // Dynamically compute International Series & Tournaments based on career progress and real player stats
   const dynamicSeriesList: IntlSeriesOrTournament[] = useMemo(() => {
