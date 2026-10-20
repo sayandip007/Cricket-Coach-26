@@ -297,7 +297,7 @@ export const Dimensions = {
 };
 
 export const Platform = {
-  OS: (typeof window !== 'undefined' && window.MasterstrokeNative?.isNativeAndroidApp?.() ? 'android' : 'web') as 'android' | 'ios' | 'web',
+  OS: (typeof window !== 'undefined' && (window.CricketCoachNative || window.MasterstrokeNative)?.isNativeAndroidApp?.() ? 'android' : 'web') as 'android' | 'ios' | 'web',
   Version: 35,
   select<T>(specifics: { android?: T; ios?: T; web?: T; default?: T }): T | undefined {
     const os = this.OS;
@@ -309,8 +309,9 @@ export const Vibration = {
   vibrate(pattern: number | number[] = 15) {
     try {
       const ms = Array.isArray(pattern) ? pattern[0] || 15 : pattern;
-      if (typeof window !== 'undefined' && window.MasterstrokeNative?.triggerHapticTap) {
-        window.MasterstrokeNative.triggerHapticTap(ms);
+      const native = typeof window !== 'undefined' ? (window.CricketCoachNative || window.MasterstrokeNative) : null;
+      if (native?.triggerHapticTap) {
+        native.triggerHapticTap(ms);
       } else if (typeof navigator !== 'undefined' && navigator.vibrate) {
         navigator.vibrate(pattern);
       }

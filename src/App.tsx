@@ -90,7 +90,7 @@ const MainAppContent: React.FC = () => {
           </Pressable>
 
           <View style={styles.headerCenterGroup}>
-            <Text style={styles.headerBrandText}>MASTERSTROKE CRICKET MANAGER</Text>
+            <Text style={styles.headerBrandText}>CRICKET COACH 26</Text>
           </View>
 
           <View style={styles.rnBadge}>

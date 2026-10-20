@@ -5,7 +5,7 @@ interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
 }
 
-export interface MasterstrokeAndroidBridge {
+export interface CricketCoachAndroidBridge {
   isNativeAndroidApp?: () => boolean;
   getDevicePlatform?: () => string;
   saveSecureData?: (key: string, value: string) => void;
@@ -15,9 +15,12 @@ export interface MasterstrokeAndroidBridge {
   scanReceiptBase64?: (base64Image: string, callbackJsFn: string) => void;
 }
 
+export type MasterstrokeAndroidBridge = CricketCoachAndroidBridge;
+
 declare global {
   interface Window {
-    MasterstrokeNative?: MasterstrokeAndroidBridge;
+    CricketCoachNative?: CricketCoachAndroidBridge;
+    MasterstrokeNative?: CricketCoachAndroidBridge;
   }
 }
 
@@ -31,7 +34,8 @@ export function usePWAInstall() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
-    const nativeApk = Boolean(window.MasterstrokeNative?.isNativeAndroidApp?.());
+    const nativeBridge = window.CricketCoachNative || window.MasterstrokeNative;
+    const nativeApk = Boolean(nativeBridge?.isNativeAndroidApp?.());
     setIsNativeAndroidApk(nativeApk);
 
     const isStandalone =

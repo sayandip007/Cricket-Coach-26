@@ -5,8 +5,9 @@
 const AsyncStorage = {
   async getItem(key: string): Promise<string | null> {
     try {
-      if (typeof window !== 'undefined' && window.MasterstrokeNative?.loadSecureData) {
-        const nativeVal = window.MasterstrokeNative.loadSecureData(key);
+      const native = typeof window !== 'undefined' ? (window.CricketCoachNative || window.MasterstrokeNative) : null;
+      if (native?.loadSecureData) {
+        const nativeVal = native.loadSecureData(key);
         if (nativeVal !== null && nativeVal !== undefined) return nativeVal;
       }
       if (typeof localStorage !== 'undefined') {
@@ -20,8 +21,9 @@ const AsyncStorage = {
 
   async setItem(key: string, value: string): Promise<void> {
     try {
-      if (typeof window !== 'undefined' && window.MasterstrokeNative?.saveSecureData) {
-        window.MasterstrokeNative.saveSecureData(key, value);
+      const native = typeof window !== 'undefined' ? (window.CricketCoachNative || window.MasterstrokeNative) : null;
+      if (native?.saveSecureData) {
+        native.saveSecureData(key, value);
       }
       if (typeof localStorage !== 'undefined') {
         localStorage.setItem(key, value);

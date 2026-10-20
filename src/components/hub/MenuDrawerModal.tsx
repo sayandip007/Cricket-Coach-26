@@ -249,7 +249,7 @@ export const MenuDrawerModal: React.FC<MenuDrawerModalProps> = ({
               onClick={() => {
                 const activeLeague = leagues.find(l => l.id === currentLeagueId) || leagues[0];
                 const payload = JSON.stringify({
-                  app: 'Masterstroke: Cricket Manager',
+                  app: 'Cricket Coach 26',
                   version: '1.13.0',
                   timestamp: new Date().toISOString(),
                   coachProfile,

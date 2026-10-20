@@ -380,7 +380,7 @@ export const INITIAL_ACHIEVEMENTS: Achievement[] = [
   { id: 'ach_76', title: 'Unbeaten Campaign', description: 'Win an international tournament without losing a single fixture.', category: 'INTERNATIONAL', unlocked: false, iconType: 'trophy' },
   { id: 'ach_77', title: 'Whitewash Series', description: 'Complete a 5-0 bilateral international series whitewash.', category: 'INTERNATIONAL', unlocked: false, iconType: 'award' },
   { id: 'ach_78', title: 'Golden Duck Hunter', description: 'Dismiss an opposition opening batter on the very first ball of an innings.', category: 'INTERNATIONAL', unlocked: false, iconType: 'target' },
-  { id: 'ach_79', title: 'Masterstroke Immortal', description: 'Complete the Grand Slam of IPL Champions, T20 World Cup, and ICC Champions Trophy.', category: 'INTERNATIONAL', unlocked: false, iconType: 'trophy' }
+  { id: 'ach_79', title: 'Cricket Coach Immortal', description: 'Complete the Grand Slam of IPL Champions, T20 World Cup, and ICC Champions Trophy.', category: 'INTERNATIONAL', unlocked: false, iconType: 'trophy' }
 ];
 
 export const INITIAL_COACH_PROFILE: CoachProfile = {

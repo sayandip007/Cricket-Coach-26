@@ -85,10 +85,10 @@ export const OpeningLandingScreen: React.FC = () => {
         <div className="lg:col-span-7 flex flex-col items-center lg:items-start text-center lg:text-left space-y-6">
           <div>
             <h1 className="text-4xl sm:text-6xl font-black font-display tracking-wider text-transparent bg-clip-text bg-gradient-to-b from-[#fff2a8] via-[#f5b82e] to-[#c78b17] drop-shadow-[0_4px_12px_rgba(0,0,0,0.8)]">
-              MASTERSTROKE
+              CRICKET COACH
             </h1>
             <div className="text-sm sm:text-base font-black font-mono tracking-[0.25em] text-slate-200 uppercase mt-1">
-              CRICKET MANAGER
+              26
             </div>
 
             <div className="flex items-center justify-center lg:justify-start gap-3 mt-3 text-xs font-bold text-amber-400 tracking-wider">
@@ -254,14 +254,14 @@ export const OpeningLandingScreen: React.FC = () => {
           <div className="w-full max-w-md bg-[#0e1422] border border-slate-700 rounded-3xl p-6 shadow-2xl space-y-4">
             <div className="flex justify-between items-center">
               <h3 className="text-base font-black font-display tracking-wider text-white uppercase">
-                ABOUT MASTERSTROKE
+                ABOUT CRICKET COACH 26
               </h3>
               <button onClick={() => setShowAboutModal(false)} className="text-slate-400 hover:text-white">
                 <X className="w-4 h-4" />
               </button>
             </div>
             <p className="text-xs text-slate-300 leading-relaxed">
-              Masterstroke is an authentic tactical cricket management simulator featuring ball-by-ball physics, IPL Mega Auctions, dynamic player development, and international ICC rankings.
+              Cricket Coach 26 is an authentic tactical cricket management simulator featuring ball-by-ball physics, IPL Mega Auctions, dynamic player development, and international ICC rankings.
             </p>
             <div className="p-3 bg-slate-900 rounded-2xl border border-slate-800 text-xs font-mono text-slate-400 space-y-1">
               <div>Version: 1.13.0 (Browser Widescreen Edition)</div>

@@ -431,8 +431,8 @@ runTest('SMOKE', 'React Native Architecture: StyleSheet, Platform, Dimensions, A
   assert.ok(Platform.OS === 'web' || Platform.OS === 'android', 'Platform.OS must resolve cleanly');
   const winDim = Dimensions.get('window');
   assert.ok(winDim.width > 0 && winDim.height > 0, 'Dimensions.get("window") must return valid dimensions');
-  const reg = AppRegistry.registerComponent('MasterstrokeCricket', () => (() => null));
-  assert.equal(reg.appKey, 'MasterstrokeCricket');
+  const reg = AppRegistry.registerComponent('CricketCoach26', () => (() => null));
+  assert.equal(reg.appKey, 'CricketCoach26');
 });
 
 // ============================================================================

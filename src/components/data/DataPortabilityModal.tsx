@@ -30,7 +30,7 @@ export const DataPortabilityModal: React.FC<DataPortabilityModalProps> = ({ isOp
     sound.playTap();
     try {
       const exportData = {
-        app: 'Masterstroke: Cricket Manager',
+        app: 'Cricket Coach 26',
         version: '2.0.0',
         exportedAt: new Date().toISOString(),
         coachProfile,
@@ -45,7 +45,7 @@ export const DataPortabilityModal: React.FC<DataPortabilityModalProps> = ({ isOp
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `masterstroke_career_save_${Date.now()}.json`;
+      a.download = `cricket_coach_26_save_${Date.now()}.json`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -310,7 +310,7 @@ export const DataPortabilityModal: React.FC<DataPortabilityModalProps> = ({ isOp
                   RESTORE PREVIOUS CAREER SAVE
                 </span>
                 <p className="text-xs text-slate-300 leading-relaxed">
-                  Select a previously exported Masterstroke `.json` save file from your device to restore your exact season progression and franchise rosters.
+                  Select a previously exported Cricket Coach 26 `.json` save file from your device to restore your exact season progression and franchise rosters.
                 </p>
 
                 <input
