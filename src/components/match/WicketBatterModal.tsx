@@ -3,6 +3,8 @@ import { Player } from '../../types/cricket';
 import { sound } from '../../utils/soundEffects';
 import { Zap, AlertTriangle, Radio, ShieldCheck } from 'lucide-react';
 
+import { checkDrsEligibility } from '../../utils/drsRules';
+
 interface WicketBatterModalProps {
   isOpen: boolean;
   outBatterName: string;
@@ -89,15 +91,6 @@ export const WicketBatterModal: React.FC<WicketBatterModalProps> = ({
 
             {/* DRS Challenge Button inside Wicket Modal - Strictly for LBWs and Edges to Keeper/Slip */}
             {onTriggerDrs && (() => {
-              const dLower = (dismissalText || '').toLowerCase();
-              const isLbw = dLower.startsWith('lbw') || dLower.includes('lbw');
-              const isKeeperOrSlipEdge =
-                dLower.includes('c keeper') ||
-                dLower.includes('c †') ||
-                dLower.includes('c slip') ||
-                dLower.includes('c wicketkeeper');
-              const isDrsPermitted = isLbw || isKeeperOrSlipEdge;
-
               if (drsAlreadyReviewed) {
                 return (
                   <div className="w-full py-2 px-3 rounded-xl bg-slate-900/90 border border-rose-500/40 text-rose-300 font-mono font-bold text-[10px] uppercase flex items-center justify-center gap-1.5">
@@ -107,33 +100,36 @@ export const WicketBatterModal: React.FC<WicketBatterModalProps> = ({
                 );
               }
 
-              if (!isDrsPermitted) {
+              const dLower = (dismissalText || '').toLowerCase();
+              const isLbw = dLower.startsWith('lbw') || dLower.includes('lbw');
+              const syntheticBall: any = {
+                isWicket: true,
+                wicketType: isLbw ? 'lbw' : 'caught',
+                dismissalText,
+                drsReviewed: drsAlreadyReviewed
+              };
+
+              const drs = checkDrsEligibility(syntheticBall, true, reviewsRemaining);
+
+              if (!drs.canReview) {
                 return (
                   <div className="w-full py-2 px-3 rounded-xl bg-slate-900/70 border border-slate-800 text-slate-400 font-mono text-[10px] text-center flex items-center justify-center gap-1">
-                    <span>🚫 DRS Unavailable for outfield catches / clean bowled (LBW &amp; Edges only)</span>
+                    <span>🚫 {drs.reason}</span>
                   </div>
                 );
               }
 
-              if (reviewsRemaining > 0) {
-                return (
-                  <button
-                    onClick={() => {
-                      sound.playTap();
-                      onTriggerDrs();
-                    }}
-                    className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-cyan-950 via-[#0f2942] to-cyan-950 hover:from-cyan-900 hover:to-cyan-900 border border-cyan-400/70 text-cyan-300 font-mono font-black text-[11px] uppercase flex items-center justify-center gap-2 shadow-lg shadow-cyan-500/15 active:scale-98 transition-all"
-                  >
-                    <Radio className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
-                    📺 CHALLENGE WITH DRS · {isLbw ? 'HAWK-EYE (LBW)' : 'ULTRAEDGE (EDGE)'} ({reviewsRemaining} LEFT)
-                  </button>
-                );
-              }
-
               return (
-                <div className="w-full py-1.5 px-3 rounded-xl bg-slate-900/60 border border-slate-800 text-slate-500 font-mono font-bold text-[10px] uppercase text-center">
-                  NO DRS REVIEWS REMAINING (0 LEFT)
-                </div>
+                <button
+                  onClick={() => {
+                    sound.playTap();
+                    onTriggerDrs();
+                  }}
+                  className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-cyan-950 via-[#0f2942] to-cyan-950 hover:from-cyan-900 hover:to-cyan-900 border border-cyan-400/70 text-cyan-300 font-mono font-black text-[11px] uppercase flex items-center justify-center gap-2 shadow-lg shadow-cyan-500/15 active:scale-98 transition-all"
+                >
+                  <Radio className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
+                  📺 CHALLENGE WITH DRS · {drs.reviewType === 'lbw' ? 'HAWK-EYE (LBW)' : 'ULTRAEDGE (EDGE)'} ({reviewsRemaining} LEFT)
+                </button>
               );
             })()}
           </div>

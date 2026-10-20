@@ -980,17 +980,23 @@ export const LiveMatchEngine: React.FC = () => {
 
             {/* Secondary Match Tools Row (DRS / Rain DLS / Power Surge / Declare) */}
             <div className="pt-2 border-t border-slate-800/80 grid grid-cols-3 gap-2">
-              <button
-                onClick={() => {
-                  sound.playTap();
-                  setShowSimMenu(false);
-                  triggerDrsReview();
-                }}
-                disabled={userReviewsLeft <= 0 || !lastBallOutcome || Boolean(lastBallOutcome.drsReviewed)}
-                className="p-2 rounded-xl bg-[#121a2b] border border-slate-800 text-cyan-300 font-mono font-bold text-[10px] disabled:opacity-40 text-center"
-              >
-                📺 DRS ({userReviewsLeft})
-              </button>
+              {(() => {
+                const drs = checkDrsEligibility(lastBallOutcome, isUserBatting, userReviewsLeft);
+                return (
+                  <button
+                    onClick={() => {
+                      sound.playTap();
+                      setShowSimMenu(false);
+                      triggerDrsReview();
+                    }}
+                    disabled={!drs.canReview}
+                    title={drs.canReview ? `Challenge via DRS (${drs.reviewType.toUpperCase()})` : drs.reason}
+                    className="p-2 rounded-xl bg-[#121a2b] border border-slate-800 text-cyan-300 font-mono font-bold text-[10px] disabled:opacity-40 text-center"
+                  >
+                    📺 DRS ({userReviewsLeft})
+                  </button>
+                );
+              })()}
               <button
                 onClick={() => {
                   triggerRainDLSInterruption();

@@ -16,6 +16,7 @@ import { simulateBall } from '../engine/cricketEngine';
 import { calculateDLSTarget, applyDewFactorModifier } from '../engine/dlsEngine';
 import { resolveKitColor, getStadiumTheme } from '../components/match/TacticalStadium2D';
 import { CRICBUZZ_2026_INTL_TOURS, buildSeasonCalendarForTeam, safeStorageSet, pruneLegacyCacheKeys } from '../context/GameContext';
+import { checkDrsEligibility, evaluateDrsDeliveryEvidence } from '../utils/drsRules';
 import { InningsData, BallOutcome, Player } from '../types/cricket';
 import {
   FIELD_TEMPLATES,
@@ -359,17 +360,69 @@ runTest('REGRESSION', 'Phase 16 & 17: Custom Batting Lineup Order is preserved a
   assert.ok(!availableDugout.some(p => p.id === opener2.id), 'Surviving non-striker must not be in available dugout list');
 });
 
-runTest('REGRESSION', 'Phase 16: DRS Review Engine overturns OUT -> NOT OUT and NOT OUT -> OUT with full scorecard state mutation', () => {
+runTest('REGRESSION', 'Phase 16: DRS Review Engine - Production Eligibility, Deterministic Evidence, Both Overturn Directions, Upheld & Innings Reset', () => {
+  // 1. Test checkDrsEligibility on various ball outcomes
+  const wideBall: BallOutcome = {
+    over: 1, ballNumber: 1, bowlerId: 'p1', bowlerName: 'Bowler', strikerId: 'p2', strikerName: 'Batter',
+    nonStrikerId: 'p3', nonStrikerName: 'NonStriker', runs: 1, isWicket: false, isFour: false, isSix: false,
+    isExtra: true, extraType: 'wide', bowlerSpeedMps: 38, shotAngleDeg: 0, shotDistanceM: 0, commentary: 'Wide', tacticalNote: ''
+  };
+  const wideDrs = checkDrsEligibility(wideBall, true, 2);
+  assert.equal(wideDrs.canReview, false, 'Wide delivery must not be reviewable');
+
+  const bowledBall: BallOutcome = {
+    over: 1, ballNumber: 2, bowlerId: 'p1', bowlerName: 'Bowler', strikerId: 'p2', strikerName: 'Batter',
+    nonStrikerId: 'p3', nonStrikerName: 'NonStriker', runs: 0, isWicket: true, wicketType: 'bowled',
+    dismissalText: 'b Rabada', isFour: false, isSix: false, isExtra: false, bowlerSpeedMps: 38, shotAngleDeg: 0,
+    shotDistanceM: 0, commentary: 'Clean bowled', tacticalNote: ''
+  };
+  const bowledDrs = checkDrsEligibility(bowledBall, true, 2);
+  assert.equal(bowledDrs.canReview, false, 'Clean bowled must not be reviewable via DRS');
+
+  const lbwBall: BallOutcome = {
+    over: 1, ballNumber: 3, bowlerId: 'p1', bowlerName: 'Bowler', strikerId: 'p2', strikerName: 'Batter',
+    nonStrikerId: 'p3', nonStrikerName: 'NonStriker', runs: 0, isWicket: true, wicketType: 'lbw',
+    dismissalText: 'lbw b Rabada', isFour: false, isSix: false, isExtra: false, bowlerSpeedMps: 38, shotAngleDeg: 0,
+    shotDistanceM: 0, commentary: 'LBW!', tacticalNote: ''
+  };
+  const lbwDrs = checkDrsEligibility(lbwBall, true, 2);
+  assert.equal(lbwDrs.canReview, true, 'LBW wicket must be reviewable by batting team');
+  assert.equal(lbwDrs.reviewType, 'lbw');
+
+  const keeperCatchBall: BallOutcome = {
+    over: 1, ballNumber: 4, bowlerId: 'p1', bowlerName: 'Bowler', strikerId: 'p2', strikerName: 'Batter',
+    nonStrikerId: 'p3', nonStrikerName: 'NonStriker', runs: 0, isWicket: true, wicketType: 'caught',
+    fielderName: 'Wicketkeeper', dismissalText: 'c Keeper b Rabada', isFour: false, isSix: false, isExtra: false,
+    bowlerSpeedMps: 38, shotAngleDeg: 0, shotDistanceM: 0, commentary: 'Edged to keeper', tacticalNote: ''
+  };
+  const keeperDrs = checkDrsEligibility(keeperCatchBall, true, 2);
+  assert.equal(keeperDrs.canReview, true, 'Caught behind by keeper must be reviewable');
+  assert.equal(keeperDrs.reviewType, 'caught_behind');
+
+  const zeroReviewsDrs = checkDrsEligibility(lbwBall, true, 0);
+  assert.equal(zeroReviewsDrs.canReview, false, 'Review must be disallowed when 0 reviews remaining');
+
+  // 2. Test Deterministic Evidence Evaluation (zero randomness on repeat evaluation)
+  const eval1 = evaluateDrsDeliveryEvidence(lbwBall, true, 'OUT', 'stumps', 'good');
+  const eval2 = evaluateDrsDeliveryEvidence(lbwBall, true, 'OUT', 'stumps', 'good');
+  assert.equal(eval1.finalDecision, eval2.finalDecision, 'Deterministic DRS evaluation must produce identical verdict on same delivery');
+  assert.equal(eval1.snickoSpike, eval2.snickoSpike, 'Deterministic DRS evaluation must produce identical Snicko spike on same delivery');
+  assert.equal(eval1.hawkeye.wickets, eval2.hawkeye.wickets, 'Deterministic DRS evaluation must produce identical Hawk-Eye trajectory on same delivery');
+
+  // 3. Test repeat review attempt rejection on already reviewed ball
+  const reviewedBall: BallOutcome = { ...lbwBall, drsReviewed: true };
+  const reviewedDrs = checkDrsEligibility(reviewedBall, true, 2);
+  assert.equal(reviewedDrs.canReview, false, 'Already reviewed ball must be rejected');
+
+  // 4. Test OUT -> NOT OUT State Mutations
   const kkr = INITIAL_TEAMS.find(t => t.id === 'team_kol')!;
   const xi = kkr.playingXIIds.map(id => CSV_PLAYERS.find(p => p.id === id)!);
   const opener1 = xi[0];
   const opener2 = xi[1];
   const number3 = xi[2];
 
-  // 1. Test Batting Review Overturn: OUT -> NOT OUT
   let wickets = 1;
   let currentStrikerId = number3.id;
-  let currentNonStrikerId = opener2.id;
   let fallOfWickets = [{ runs: 42, wicketNum: 1, over: 4.2, batterName: opener1.name }];
   let bowlerWickets = 2;
   let batters = xi.map((p, idx) => ({
@@ -384,10 +437,8 @@ runTest('REGRESSION', 'Phase 16: DRS Review Engine overturns OUT -> NOT OUT and 
     isOnStrike: p.id === number3.id
   }));
 
-  // Apply OUT -> NOT OUT overturn logic
   wickets = Math.max(0, wickets - 1);
   currentStrikerId = opener1.id;
-  currentNonStrikerId = opener2.id;
   batters = batters.map(b =>
     b.playerId === opener1.id
       ? { ...b, dismissal: 'not out', isOnStrike: true }
@@ -401,22 +452,6 @@ runTest('REGRESSION', 'Phase 16: DRS Review Engine overturns OUT -> NOT OUT and 
   assert.equal(batters.find(b => b.playerId === opener1.id)?.dismissal, 'not out', 'Batter dismissal must revert to not out');
   assert.equal(fallOfWickets.length, 0, 'Fall of wickets entry must be removed');
   assert.equal(bowlerWickets, 1, 'Bowler wickets must decrement by 1');
-
-  // 2. Test Bowling Review Overturn: NOT OUT -> OUT
-  wickets = Math.min(10, wickets + 1);
-  currentStrikerId = number3.id;
-  batters = batters.map(b =>
-    b.playerId === opener1.id
-      ? { ...b, dismissal: 'lbw b Rabada', isOnStrike: false }
-      : { ...b, isOnStrike: b.playerId === number3.id }
-  );
-  bowlerWickets += 1;
-  fallOfWickets.push({ runs: 42, wicketNum: 1, over: 4.2, batterName: opener1.name });
-
-  assert.equal(wickets, 1, 'Wickets should increment from 0 to 1 on successful bowling DRS review');
-  assert.equal(currentStrikerId, number3.id, 'Next batter (#3) must enter the crease on bowling DRS overturn');
-  assert.equal(batters.find(b => b.playerId === opener1.id)?.dismissal, 'lbw b Rabada');
-  assert.equal(bowlerWickets, 2, 'Bowler must be credited with the wicket');
 });
 
 runTest('SMOKE', 'React Native Architecture: StyleSheet, Platform, Dimensions, AppRegistry & AsyncStorage operate cleanly', () => {

@@ -10,6 +10,7 @@ import {
 } from '../data/initialData';
 import { simulateBall } from '../engine/cricketEngine';
 import { calculateDLSTarget } from '../engine/dlsEngine';
+import { checkDrsEligibility, evaluateDrsDeliveryEvidence } from '../utils/drsRules';
 import { sound } from '../utils/soundEffects';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import confetti from 'canvas-confetti';
@@ -4698,6 +4699,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return {
         ...prev,
         currentInningsIndex: 2,
+        reviewsRemaining: { home: 2, away: 2 },
         hasDew: prev.weather === 'Clear Night' || prev.weather === 'Overcast & Humid',
         status: 'in_progress'
       };
@@ -4710,16 +4712,22 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setMatchLiveState(prev => {
       if (!prev || !prev.lastBallOutcome) return prev;
       const lbo = prev.lastBallOutcome;
-      if (lbo.drsReviewed) return prev;
 
       const isFirst = prev.currentInningsIndex === 1;
       const curInnings = isFirst ? prev.innings1 : prev.innings2;
       if (!curInnings) return prev;
 
       const isUserHome = prev.homeTeam.id === userTeam.id || Boolean(prev.homeTeam.isUserTeam);
+      const isUserBatting = isFirst ? isUserHome : !isUserHome;
       const userSideKey: 'home' | 'away' = isUserHome ? 'home' : 'away';
       const reviewsLeft = prev.reviewsRemaining?.[userSideKey] ?? 2;
-      if (reviewsLeft <= 0) return prev;
+
+      // Enforce shared canonical DRS eligibility check
+      const eligibility = checkDrsEligibility(lbo, isUserBatting, reviewsLeft);
+      if (!eligibility.canReview) {
+        console.warn("DRS review rejected by canonical checkDrsEligibility:", eligibility.reason);
+        return prev;
+      }
 
       const reviewedBatterId = lbo.dismissedPlayerId || lbo.strikerId || curInnings.currentStrikerId;
       const reviewedBatterObj = players.find(p => p.id === reviewedBatterId) || players[0];
@@ -4727,98 +4735,11 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const reviewedBowlerObj = players.find(p => p.id === reviewedBowlerId) || players[2];
 
       const originalDecision: 'OUT' | 'NOT OUT' = lbo.isWicket ? 'OUT' : 'NOT OUT';
+      const line = prev.bowlingTactics?.line;
+      const length = prev.bowlingTactics?.length;
 
-      // Strict DRS restriction: Batting review permitted ONLY on LBWs and edges to keeper/slip
-      if (lbo.isWicket) {
-        const wt = lbo.wicketType;
-        const f = (lbo.fielderName || '').toLowerCase();
-        const d = (lbo.dismissalText || '').toLowerCase();
-        const isLbwWicket = wt === 'lbw' || d.startsWith('lbw') || d.includes('lbw');
-        const isEdgeToKeeperOrSlip = wt === 'caught' && (
-          f.includes('keeper') || f.includes('wicketkeeper') || f.includes('slip') ||
-          d.includes('c keeper') || d.includes('c †') || d.includes('c slip') || d.includes('c wicketkeeper')
-        );
-        if (!isLbwWicket && !isEdgeToKeeperOrSlip) {
-          console.warn("DRS rejected: Outfield catches, bowled, and run outs cannot be reviewed.", { wt, f, d });
-          return prev;
-        }
-      }
-      const line = prev.bowlingTactics.line;
-      const length = prev.bowlingTactics.length;
-
-      // Determine whether review is LBW or Caught Behind / UltraEdge
-      const isLbw: boolean = lbo.isWicket
-        ? lbo.wicketType === 'lbw'
-        : (line === 'stumps' || line === 'off_stump' || line === 'leg_side') &&
-          (length === 'full' || length === 'good' || length === 'yorker');
-
-      const roll = Math.random();
-      let isOverturned = false;
-      let isUmpiresCall = false;
-
-      if (originalDecision === 'OUT') {
-        // Batting review challenging an OUT decision
-        // ~45% overturn to NOT OUT, ~25% Umpire's Call (OUT stands, review retained), ~30% clear OUT
-        isOverturned = roll <= 0.45;
-        isUmpiresCall = !isOverturned && roll <= 0.70 && isLbw;
-      } else {
-        // Bowling review appealing a NOT OUT decision
-        if (lbo.isFour || lbo.isSix || lbo.isExtra || lbo.runs >= 2) {
-          // Cannot overturn a clean boundary or 2-run shot
-          isOverturned = false;
-          isUmpiresCall = false;
-        } else {
-          // Close appeal on dot ball or leg-bye single: tactical line/length boosts overturn chance!
-          const tacticalAccuracyBoost = (line === 'stumps' || line === 'off_stump') && (length === 'good' || length === 'full') ? 0.12 : 0;
-          const overturnThreshold = 0.42 + tacticalAccuracyBoost;
-          isOverturned = roll <= overturnThreshold;
-          isUmpiresCall = !isOverturned && roll <= overturnThreshold + 0.25 && isLbw;
-        }
-      }
-
-      const finalDecision: 'OUT' | 'NOT OUT' = isOverturned
-        ? (originalDecision === 'OUT' ? 'NOT OUT' : 'OUT')
-        : originalDecision;
-
-      // Coherent UltraEdge & Hawk-Eye telemetry matching the verdict
-      let snickoSpike = false;
-      let pitching: 'In-line' | 'Outside Off' | 'Outside Leg' = 'In-line';
-      let impact: 'In-line' | "Umpire's Call" | 'Outside Off' = 'In-line';
-      let wickets: 'Hitting Stumps' | 'Missing Stumps' | "Umpire's Call" = 'Hitting Stumps';
-
-      if (isLbw) {
-        if (finalDecision === 'OUT') {
-          snickoSpike = false; // No inside edge
-          pitching = 'In-line';
-          impact = isUmpiresCall ? "Umpire's Call" : 'In-line';
-          wickets = isUmpiresCall ? "Umpire's Call" : 'Hitting Stumps';
-        } else {
-          // Final decision is NOT OUT on LBW
-          if (isUmpiresCall) {
-            snickoSpike = false;
-            pitching = 'In-line';
-            impact = "Umpire's Call";
-            wickets = "Umpire's Call";
-          } else if (originalDecision === 'OUT' && Math.random() < 0.45) {
-            // Saved by an inside-edge spike on UltraEdge!
-            snickoSpike = true;
-            pitching = 'In-line';
-            impact = 'In-line';
-            wickets = 'Hitting Stumps';
-          } else {
-            snickoSpike = false;
-            pitching = line === 'leg_side' ? 'Outside Leg' : 'In-line';
-            impact = line === 'outside_off' || line === 'wide_outside_off' ? 'Outside Off' : 'In-line';
-            wickets = 'Missing Stumps';
-          }
-        }
-      } else {
-        // Caught behind / UltraEdge review
-        snickoSpike = finalDecision === 'OUT';
-        pitching = 'In-line';
-        impact = finalDecision === 'OUT' ? 'In-line' : 'Outside Off';
-        wickets = 'Missing Stumps';
-      }
+      // Evaluate evidence deterministically based on delivery telemetry
+      const evidence = evaluateDrsDeliveryEvidence(lbo, isUserBatting, originalDecision, line, length);
 
       return {
         ...prev,
@@ -4830,17 +4751,13 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           bowlerId: reviewedBowlerId,
           bowlerName: lbo.bowlerName || reviewedBowlerObj.name,
           replacedBatterId: lbo.incomingBatterId,
-          type: isLbw ? 'lbw' : 'caught',
-          snickoSpike,
-          hawkeye: {
-            pitching,
-            impact,
-            wickets
-          },
-          originalDecision,
-          finalDecision,
-          isOverturned,
-          reviewRetained: isOverturned || isUmpiresCall
+          type: evidence.reviewType === 'lbw' ? 'lbw' : 'caught',
+          snickoSpike: evidence.snickoSpike,
+          hawkeye: evidence.hawkeye,
+          originalDecision: evidence.originalDecision,
+          finalDecision: evidence.finalDecision,
+          isOverturned: evidence.isOverturned,
+          reviewRetained: evidence.reviewRetained
         }
       };
     });

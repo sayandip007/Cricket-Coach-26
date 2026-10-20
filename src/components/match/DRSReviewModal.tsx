@@ -22,7 +22,7 @@ export const DRSReviewModal: React.FC<DRSReviewModalProps> = ({
 
   useEffect(() => {
     if (!isOpen) {
-      setStage('snicko');
+      setStage(reviewState.type === 'lbw' ? 'hawkeye' : 'snicko');
       setFrameIndex(0);
       return;
     }

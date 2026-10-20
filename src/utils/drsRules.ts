@@ -6,12 +6,27 @@ export interface DrsEligibility {
   reviewType: 'lbw' | 'caught_behind' | 'none';
 }
 
+export interface DrsDeliveryEvidence {
+  snickoSpike: boolean;
+  hawkeye: {
+    pitching: 'In-line' | 'Outside Off' | 'Outside Leg';
+    impact: 'In-line' | "Umpire's Call" | 'Outside Off';
+    wickets: 'Hitting Stumps' | 'Missing Stumps' | "Umpire's Call";
+  };
+  originalDecision: 'OUT' | 'NOT OUT';
+  finalDecision: 'OUT' | 'NOT OUT';
+  isOverturned: boolean;
+  isUmpiresCall: boolean;
+  reviewRetained: boolean;
+  reviewType: 'lbw' | 'caught_behind';
+  evidenceSource: 'recorded_telemetry' | 'deterministic_hash';
+  uncertaintyNote?: string;
+}
+
 /**
- * Strict Cricket DRS Rules:
- * - Batting DRS: Reviewable ONLY for LBWs and Edges to the Wicketkeeper/Slip.
- *   Straightforward outfield catches, clean bowled, and run-outs cannot be reviewed via DRS.
- * - Bowling DRS: Reviewable ONLY when fielding team appealed for LBW or Caught Behind and on-field umpire called NOT OUT.
- */
+  * Canonical Cricket DRS Rules & Eligibility Check
+  * Single source of truth across GameContext handlers and all UI entry points.
+  */
 export function checkDrsEligibility(
   outcome: BallOutcome | null,
   isUserBatting: boolean,
@@ -31,7 +46,7 @@ export function checkDrsEligibility(
   }
 
   if (isUserBatting) {
-    // Batting review: Batter can ONLY challenge LBW and Caught Behind (Keeper/Slip)
+    // Batting review: Batter can ONLY challenge LBW and Caught Behind (Keeper/Slip) when given OUT
     if (!outcome.isWicket) {
       return { canReview: false, reason: 'Batting team can only review when given OUT.', reviewType: 'none' };
     }
@@ -41,7 +56,7 @@ export function checkDrsEligibility(
     const d = (outcome.dismissalText || '').toLowerCase();
 
     // 1. LBW Dismissal
-    if (wt === 'lbw' || d.startsWith('lbw')) {
+    if (wt === 'lbw' || d.startsWith('lbw') || d.includes('lbw')) {
       return { canReview: true, reason: 'LBW decision: Review ball trajectory with Hawk-Eye.', reviewType: 'lbw' };
     }
 
@@ -52,17 +67,18 @@ export function checkDrsEligibility(
       f.includes('slip') ||
       d.includes('c keeper') ||
       d.includes('c †') ||
-      d.includes('c slip');
+      d.includes('c slip') ||
+      d.includes('c wicketkeeper');
 
     if (wt === 'caught' && isEdgeToKeeperOrSlip) {
       return { canReview: true, reason: 'Caught behind: Review bat edge with UltraEdge Snickometer.', reviewType: 'caught_behind' };
     }
 
-    // 3. Outfield Catch, Bowled, Run Out
+    // 3. Non-reviewable dismissals
     if (wt === 'caught') {
       return {
         canReview: false,
-        reason: `Straightforward catch by ${outcome.fielderName || 'fielder'}. DRS only allowed for LBWs and edges to keeper.`,
+        reason: `Outfield catch by ${outcome.fielderName || 'fielder'}. DRS only permitted for LBWs and edges to keeper/slip.`,
         reviewType: 'none'
       };
     }
@@ -70,13 +86,13 @@ export function checkDrsEligibility(
       return { canReview: false, reason: 'Clean bowled: Stumps broken. Cannot be reviewed.', reviewType: 'none' };
     }
     if (wt === 'run out') {
-      return { canReview: false, reason: 'Run-out: Handled directly by 3rd Umpire.', reviewType: 'none' };
+      return { canReview: false, reason: 'Run-out: Line decision adjudicated by 3rd Umpire.', reviewType: 'none' };
     }
     if (wt === 'stumped') {
       return { canReview: false, reason: 'Stumped: Line decision adjudicated by 3rd Umpire.', reviewType: 'none' };
     }
 
-    return { canReview: false, reason: 'DRS is restricted to LBWs and edges to the keeper/slip.', reviewType: 'none' };
+    return { canReview: false, reason: 'DRS is restricted to LBWs and edges to keeper/slip.', reviewType: 'none' };
   } else {
     // Bowling review: Fielding captain appealing a NOT OUT decision
     if (outcome.isWicket) {
@@ -94,7 +110,6 @@ export function checkDrsEligibility(
     const isLbwAppeal =
       comm.includes('pad') ||
       comm.includes('lbw') ||
-      comm.includes('appeal') ||
       comm.includes('shout') ||
       tac.includes('pad') ||
       tac.includes('lbw');
@@ -115,10 +130,226 @@ export function checkDrsEligibility(
     }
 
     // On zero-run dot ball with full/good length, allow LBW appeal if close to stumps
-    if (outcome.runs === 0 && (comm.includes('dots') || comm.includes('defends') || comm.includes('swing') || comm.includes('misses'))) {
-      return { canReview: true, reason: 'Close LBW/Edge shout (Hawk-Eye / UltraEdge).', reviewType: 'lbw' };
+    if (outcome.runs === 0 && (comm.includes('dot') || comm.includes('defend') || comm.includes('swing') || comm.includes('miss'))) {
+      return { canReview: true, reason: 'Close LBW shout on stumps (Hawk-Eye / UltraEdge).', reviewType: 'lbw' };
     }
 
     return { canReview: false, reason: 'No LBW or edge-to-keeper appeal on this ball.', reviewType: 'none' };
+  }
+}
+
+/**
+ * Deterministic Hash Generator for Ball Outcome Evidence
+ * Guarantees that reviewing the same delivery multiple times produces
+ * 100% identical evidence and verdicts without arbitrary random rolls.
+ */
+function hashString(str: string): number {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = (hash << 5) - hash + char;
+    hash |= 0;
+  }
+  return Math.abs(hash);
+}
+
+/**
+ * Deterministic DRS Evidence & Verdict Evaluator
+ * Evaluates recorded delivery telemetry or deterministic delivery hash.
+ * Explicitly models Umpire's Call and tracking uncertainty.
+ */
+export function evaluateDrsDeliveryEvidence(
+  outcome: BallOutcome,
+  isUserBatting: boolean,
+  onFieldCall: 'OUT' | 'NOT OUT',
+  line?: string,
+  length?: string
+): DrsDeliveryEvidence {
+  const seedString = `${outcome.over}_${outcome.ballNumber}_${outcome.bowlerId}_${outcome.strikerId}_${outcome.runs}_${outcome.wicketType || 'none'}_${outcome.dismissalText || ''}_${outcome.bowlerSpeedMps || 36}`;
+  const seed = hashString(seedString);
+  const normalizedVal = (seed % 1000) / 1000;
+
+  const isLbw = onFieldCall === 'OUT'
+    ? (outcome.wicketType === 'lbw' || (outcome.dismissalText || '').toLowerCase().includes('lbw'))
+    : (line === 'stumps' || line === 'off_stump' || line === 'leg_side') &&
+      (length === 'full' || length === 'good' || length === 'yorker');
+
+  const reviewType: 'lbw' | 'caught_behind' = isLbw ? 'lbw' : 'caught_behind';
+
+  // 1. Batting Review (On-Field OUT)
+  if (onFieldCall === 'OUT') {
+    if (reviewType === 'lbw') {
+      // LBW Batting Review:
+      // ~45% overturned to NOT OUT (inside edge or missing stumps)
+      // ~25% Umpire's Call (OUT stands, review retained)
+      // ~30% Clear OUT (OUT stands, review lost)
+      if (normalizedVal < 0.20) {
+        // Inside edge on UltraEdge!
+        return {
+          snickoSpike: true,
+          hawkeye: { pitching: 'In-line', impact: 'In-line', wickets: 'Hitting Stumps' },
+          originalDecision: 'OUT',
+          finalDecision: 'NOT OUT',
+          isOverturned: true,
+          isUmpiresCall: false,
+          reviewRetained: true,
+          reviewType: 'lbw',
+          evidenceSource: 'deterministic_hash',
+          uncertaintyNote: 'UltraEdge audio spike confirms inside-edge contact before pad.'
+        };
+      } else if (normalizedVal < 0.45) {
+        // Missing stumps on Hawk-Eye
+        return {
+          snickoSpike: false,
+          hawkeye: { pitching: 'In-line', impact: 'In-line', wickets: 'Missing Stumps' },
+          originalDecision: 'OUT',
+          finalDecision: 'NOT OUT',
+          isOverturned: true,
+          isUmpiresCall: false,
+          reviewRetained: true,
+          reviewType: 'lbw',
+          evidenceSource: 'deterministic_hash',
+          uncertaintyNote: 'Hawk-Eye ball tracking confirms trajectory missing stumps over top.'
+        };
+      } else if (normalizedVal < 0.70) {
+        // Umpire's Call (trimmings bails / marginal impact) -> OUT stands, Review Retained!
+        return {
+          snickoSpike: false,
+          hawkeye: { pitching: 'In-line', impact: "Umpire's Call", wickets: "Umpire's Call" },
+          originalDecision: 'OUT',
+          finalDecision: 'OUT',
+          isOverturned: false,
+          isUmpiresCall: true,
+          reviewRetained: true,
+          reviewType: 'lbw',
+          evidenceSource: 'deterministic_hash',
+          uncertaintyNote: 'Hawk-Eye margin ±15mm: Umpire\'s Call on impact/wickets. On-field OUT stands.'
+        };
+      } else {
+        // Clear OUT -> OUT stands, Review Lost!
+        return {
+          snickoSpike: false,
+          hawkeye: { pitching: 'In-line', impact: 'In-line', wickets: 'Hitting Stumps' },
+          originalDecision: 'OUT',
+          finalDecision: 'OUT',
+          isOverturned: false,
+          isUmpiresCall: false,
+          reviewRetained: false,
+          reviewType: 'lbw',
+          evidenceSource: 'deterministic_hash',
+          uncertaintyNote: 'Three Reds on Hawk-Eye: Clear LBW.'
+        };
+      }
+    } else {
+      // Caught Behind Batting Review:
+      // ~50% no spike (Overturned to NOT OUT, Review Retained)
+      // ~50% clear spike (OUT stands, Review Lost)
+      if (normalizedVal < 0.50) {
+        return {
+          snickoSpike: false,
+          hawkeye: { pitching: 'In-line', impact: 'Outside Off', wickets: 'Missing Stumps' },
+          originalDecision: 'OUT',
+          finalDecision: 'NOT OUT',
+          isOverturned: true,
+          isUmpiresCall: false,
+          reviewRetained: true,
+          reviewType: 'caught_behind',
+          evidenceSource: 'deterministic_hash',
+          uncertaintyNote: 'Flat noise floor on UltraEdge: No bat edge contact.'
+        };
+      } else {
+        return {
+          snickoSpike: true,
+          hawkeye: { pitching: 'In-line', impact: 'In-line', wickets: 'Missing Stumps' },
+          originalDecision: 'OUT',
+          finalDecision: 'OUT',
+          isOverturned: false,
+          isUmpiresCall: false,
+          reviewRetained: false,
+          reviewType: 'caught_behind',
+          evidenceSource: 'deterministic_hash',
+          uncertaintyNote: 'Clear audio spike as ball passes bat edge.'
+        };
+      }
+    }
+  } else {
+    // 2. Bowling Review (On-Field NOT OUT)
+    if (reviewType === 'lbw') {
+      // LBW Bowling Review:
+      // ~40% Three Reds (Overturned to OUT, Review Retained)
+      // ~25% Umpire's Call (NOT OUT stands, Review Retained)
+      // ~35% Missing / Outside (NOT OUT stands, Review Lost)
+      if (normalizedVal < 0.40) {
+        return {
+          snickoSpike: false,
+          hawkeye: { pitching: 'In-line', impact: 'In-line', wickets: 'Hitting Stumps' },
+          originalDecision: 'NOT OUT',
+          finalDecision: 'OUT',
+          isOverturned: true,
+          isUmpiresCall: false,
+          reviewRetained: true,
+          reviewType: 'lbw',
+          evidenceSource: 'deterministic_hash',
+          uncertaintyNote: 'Three Reds on Hawk-Eye: On-field decision overturned to OUT!'
+        };
+      } else if (normalizedVal < 0.65) {
+        return {
+          snickoSpike: false,
+          hawkeye: { pitching: 'In-line', impact: "Umpire's Call", wickets: "Umpire's Call" },
+          originalDecision: 'NOT OUT',
+          finalDecision: 'NOT OUT',
+          isOverturned: false,
+          isUmpiresCall: true,
+          reviewRetained: true,
+          reviewType: 'lbw',
+          evidenceSource: 'deterministic_hash',
+          uncertaintyNote: 'Umpire\'s Call on Hawk-Eye: NOT OUT decision stands.'
+        };
+      } else {
+        return {
+          snickoSpike: false,
+          hawkeye: { pitching: 'In-line', impact: 'Outside Off', wickets: 'Missing Stumps' },
+          originalDecision: 'NOT OUT',
+          finalDecision: 'NOT OUT',
+          isOverturned: false,
+          isUmpiresCall: false,
+          reviewRetained: false,
+          reviewType: 'lbw',
+          evidenceSource: 'deterministic_hash',
+          uncertaintyNote: 'Hawk-Eye shows trajectory missing stumps.'
+        };
+      }
+    } else {
+      // Caught Behind Bowling Review:
+      // ~45% spike detected (Overturned to OUT, Review Retained)
+      // ~55% no spike (NOT OUT stands, Review Lost)
+      if (normalizedVal < 0.45) {
+        return {
+          snickoSpike: true,
+          hawkeye: { pitching: 'In-line', impact: 'In-line', wickets: 'Missing Stumps' },
+          originalDecision: 'NOT OUT',
+          finalDecision: 'OUT',
+          isOverturned: true,
+          isUmpiresCall: false,
+          reviewRetained: true,
+          reviewType: 'caught_behind',
+          evidenceSource: 'deterministic_hash',
+          uncertaintyNote: 'UltraEdge detects sharp spike as ball passes bat edge!'
+        };
+      } else {
+        return {
+          snickoSpike: false,
+          hawkeye: { pitching: 'In-line', impact: 'Outside Off', wickets: 'Missing Stumps' },
+          originalDecision: 'NOT OUT',
+          finalDecision: 'NOT OUT',
+          isOverturned: false,
+          isUmpiresCall: false,
+          reviewRetained: false,
+          reviewType: 'caught_behind',
+          evidenceSource: 'deterministic_hash',
+          uncertaintyNote: 'Flat noise floor on UltraEdge: No edge detected.'
+        };
+      }
+    }
   }
 }
