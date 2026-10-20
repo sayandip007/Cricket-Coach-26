@@ -1,0 +1,8 @@
+{
+  "name": "Masterstroke: Cricket Manager",
+  "description": "Deep cricket management simulator with live auctions, ball-by-ball tactical pitch engine, 5 franchise leagues, World Cups, Test matches, wagon wheel analysis, and career progression.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

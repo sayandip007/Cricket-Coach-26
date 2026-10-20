@@ -1,0 +1,37 @@
+{
+  "expo": {
+    "name": "Masterstroke: Cricket Manager",
+    "slug": "masterstroke-cricket-manager",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./public/pwa-512x512.png",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#070B13",
+    "primaryColor": "#F5B82E",
+    "splash": {
+      "image": "./public/pwa-512x512.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#070B13"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.masterstroke.cricket"
+    },
+    "android": {
+      "package": "com.masterstroke.cricket",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "foregroundImage": "./public/pwa-maskable-512x512.png",
+        "backgroundColor": "#070B13"
+      },
+      "permissions": [
+        "android.permission.INTERNET",
+        "android.permission.VIBRATE"
+      ]
+    },
+    "web": {
+      "bundler": "metro",
+      "favicon": "./public/icon.svg"
+    }
+  }
+}

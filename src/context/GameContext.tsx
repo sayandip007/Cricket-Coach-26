@@ -1,0 +1,5774 @@
+import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import {
+  Player, Team, League, Nation, Achievement, JobOffer, CoachProfile,
+  MatchLiveState, InningsData, AuctionLot, BatterInningsScorecard, BowlerInningsScorecard, FielderPosition, BallOutcome,
+  CompletedMatchRecord, InboxMessage
+} from '../types/cricket';
+import {
+  INITIAL_PLAYERS, INITIAL_TEAMS, INITIAL_LEAGUES, INITIAL_NATIONS,
+  INITIAL_ACHIEVEMENTS, INITIAL_JOB_OFFERS, INITIAL_COACH_PROFILE, INITIAL_DEFAULT_FIELD, createInitialPlayoffs, createFreshPlayers
+} from '../data/initialData';
+import { simulateBall } from '../engine/cricketEngine';
+import { calculateDLSTarget } from '../engine/dlsEngine';
+import { sound } from '../utils/soundEffects';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import confetti from 'canvas-confetti';
+
+export type MainTab = 'landing' | 'hub' | 'team' | 'league' | 'world' | 'profile' | 'auction' | 'live_match';
+
+const INITIAL_COMPLETED_MATCHES: CompletedMatchRecord[] = [];
+
+export const CRICBUZZ_2026_INTL_TOURS: {
+  id: string;
+  dateStr: string;
+  dayOfWeek: string;
+  dayNumber: number;
+  month: string;
+  seriesName: string;
+  matchTitle: string;
+  homeNation: string;
+  awayNation: string;
+  homeCode: string;
+  awayCode: string;
+  homeFlag: string;
+  awayFlag: string;
+  venue: string;
+  format: 'T20' | 'ODI' | 'TEST';
+  completed?: boolean;
+  resultSummary?: string;
+}[] = [
+  {
+    id: 'cb_intl_1',
+    dateStr: '2026-04-18',
+    dayOfWeek: 'SAT',
+    dayNumber: 18,
+    month: 'Apr',
+    seriesName: 'New Zealand tour of Bangladesh, 2026',
+    matchTitle: '1st ODI · BAN vs NZ',
+    homeNation: 'Bangladesh',
+    awayNation: 'New Zealand',
+    homeCode: 'BAN',
+    awayCode: 'NZ',
+    homeFlag: '🇧🇩',
+    awayFlag: '🇳🇿',
+    venue: 'Shere Bangla National Stadium, Dhaka',
+    format: 'ODI',
+    completed: false
+  },
+  {
+    id: 'cb_intl_2',
+    dateStr: '2026-04-21',
+    dayOfWeek: 'TUE',
+    dayNumber: 21,
+    month: 'Apr',
+    seriesName: 'New Zealand tour of Bangladesh, 2026',
+    matchTitle: '2nd ODI · BAN vs NZ',
+    homeNation: 'Bangladesh',
+    awayNation: 'New Zealand',
+    homeCode: 'BAN',
+    awayCode: 'NZ',
+    homeFlag: '🇧🇩',
+    awayFlag: '🇳🇿',
+    venue: 'Shere Bangla National Stadium, Dhaka',
+    format: 'ODI',
+    completed: false
+  },
+  {
+    id: 'cb_intl_3',
+    dateStr: '2026-04-24',
+    dayOfWeek: 'FRI',
+    dayNumber: 24,
+    month: 'Apr',
+    seriesName: 'New Zealand tour of Bangladesh, 2026',
+    matchTitle: '3rd ODI · BAN vs NZ',
+    homeNation: 'Bangladesh',
+    awayNation: 'New Zealand',
+    homeCode: 'BAN',
+    awayCode: 'NZ',
+    homeFlag: '🇧🇩',
+    awayFlag: '🇳🇿',
+    venue: 'Zahur Ahmed Chowdhury Stadium, Chattogram',
+    format: 'ODI',
+    completed: false
+  },
+  {
+    id: 'cb_intl_4',
+    dateStr: '2026-05-15',
+    dayOfWeek: 'FRI',
+    dayNumber: 15,
+    month: 'May',
+    seriesName: 'New Zealand tour of Ireland, 2026',
+    matchTitle: 'Only Test · IRE vs NZ',
+    homeNation: 'Ireland',
+    awayNation: 'New Zealand',
+    homeCode: 'IRE',
+    awayCode: 'NZ',
+    homeFlag: '☘️',
+    awayFlag: '🇳🇿',
+    venue: 'Civil Service Cricket Club, Belfast',
+    format: 'TEST',
+    completed: false
+  },
+  {
+    id: 'cb_intl_5',
+    dateStr: '2026-06-01',
+    dayOfWeek: 'MON',
+    dayNumber: 1,
+    month: 'Jun',
+    seriesName: 'Afghanistan tour of India, 2026',
+    matchTitle: 'Only Test · IND vs AFG',
+    homeNation: 'India',
+    awayNation: 'Afghanistan',
+    homeCode: 'IND',
+    awayCode: 'AFG',
+    homeFlag: '🇮🇳',
+    awayFlag: '🇦🇫',
+    venue: 'PCA New Stadium, New Chandigarh',
+    format: 'TEST',
+    completed: false
+  },
+  {
+    id: 'cb_intl_6',
+    dateStr: '2026-06-04',
+    dayOfWeek: 'THU',
+    dayNumber: 4,
+    month: 'Jun',
+    seriesName: 'New Zealand tour of England, 2026',
+    matchTitle: '1st Test · ENG vs NZ',
+    homeNation: 'England',
+    awayNation: 'New Zealand',
+    homeCode: 'ENG',
+    awayCode: 'NZ',
+    homeFlag: '🏴󠁧󠁢󠁥󠁮󠁧󠁿',
+    awayFlag: '🇳🇿',
+    venue: "Lord's Cricket Ground, London",
+    format: 'TEST',
+    completed: false
+  },
+  {
+    id: 'cb_intl_7',
+    dateStr: '2026-06-06',
+    dayOfWeek: 'SAT',
+    dayNumber: 6,
+    month: 'Jun',
+    seriesName: 'Afghanistan tour of India, 2026',
+    matchTitle: '1st ODI · IND vs AFG',
+    homeNation: 'India',
+    awayNation: 'Afghanistan',
+    homeCode: 'IND',
+    awayCode: 'AFG',
+    homeFlag: '🇮🇳',
+    awayFlag: '🇦🇫',
+    venue: 'HPCA Stadium, Dharamsala',
+    format: 'ODI',
+    completed: false
+  },
+  {
+    id: 'cb_intl_8',
+    dateStr: '2026-06-09',
+    dayOfWeek: 'TUE',
+    dayNumber: 9,
+    month: 'Jun',
+    seriesName: 'Afghanistan tour of India, 2026',
+    matchTitle: '2nd ODI · IND vs AFG',
+    homeNation: 'India',
+    awayNation: 'Afghanistan',
+    homeCode: 'IND',
+    awayCode: 'AFG',
+    homeFlag: '🇮🇳',
+    awayFlag: '🇦🇫',
+    venue: 'Ekana Cricket Stadium, Lucknow',
+    format: 'ODI',
+    completed: false
+  },
+  {
+    id: 'cb_intl_9',
+    dateStr: '2026-06-11',
+    dayOfWeek: 'THU',
+    dayNumber: 11,
+    month: 'Jun',
+    seriesName: 'Afghanistan tour of India, 2026',
+    matchTitle: '3rd ODI · IND vs AFG',
+    homeNation: 'India',
+    awayNation: 'Afghanistan',
+    homeCode: 'IND',
+    awayCode: 'AFG',
+    homeFlag: '🇮🇳',
+    awayFlag: '🇦🇫',
+    venue: 'M.A. Chidambaram Stadium, Chennai',
+    format: 'ODI',
+    completed: false
+  },
+  {
+    id: 'cb_intl_10',
+    dateStr: '2026-06-17',
+    dayOfWeek: 'WED',
+    dayNumber: 17,
+    month: 'Jun',
+    seriesName: 'New Zealand tour of England, 2026',
+    matchTitle: '2nd Test · ENG vs NZ',
+    homeNation: 'England',
+    awayNation: 'New Zealand',
+    homeCode: 'ENG',
+    awayCode: 'NZ',
+    homeFlag: '🏴󠁧󠁢󠁥󠁮󠁧󠁿',
+    awayFlag: '🇳🇿',
+    venue: 'Kennington Oval, London',
+    format: 'TEST',
+    completed: false
+  },
+  {
+    id: 'cb_intl_11',
+    dateStr: '2026-06-25',
+    dayOfWeek: 'THU',
+    dayNumber: 25,
+    month: 'Jun',
+    seriesName: 'New Zealand tour of England, 2026',
+    matchTitle: '3rd Test · ENG vs NZ',
+    homeNation: 'England',
+    awayNation: 'New Zealand',
+    homeCode: 'ENG',
+    awayCode: 'NZ',
+    homeFlag: '🏴󠁧󠁢󠁥󠁮󠁧󠁿',
+    awayFlag: '🇳🇿',
+    venue: 'Trent Bridge, Nottingham',
+    format: 'TEST',
+    completed: false
+  },
+  {
+    id: 'cb_intl_12',
+    dateStr: '2026-07-01',
+    dayOfWeek: 'WED',
+    dayNumber: 1,
+    month: 'Jul',
+    seriesName: 'India tour of England, 2026',
+    matchTitle: '1st T20I · ENG vs IND',
+    homeNation: 'England',
+    awayNation: 'India',
+    homeCode: 'ENG',
+    awayCode: 'IND',
+    homeFlag: '🏴󠁧󠁢󠁥󠁮󠁧󠁿',
+    awayFlag: '🇮🇳',
+    venue: 'Riverside Ground, Chester-le-Street',
+    format: 'T20',
+    completed: false
+  },
+  {
+    id: 'cb_intl_13',
+    dateStr: '2026-07-04',
+    dayOfWeek: 'SAT',
+    dayNumber: 4,
+    month: 'Jul',
+    seriesName: 'India tour of England, 2026',
+    matchTitle: '2nd T20I · ENG vs IND',
+    homeNation: 'England',
+    awayNation: 'India',
+    homeCode: 'ENG',
+    awayCode: 'IND',
+    homeFlag: '🏴󠁧󠁢󠁥󠁮󠁧󠁿',
+    awayFlag: '🇮🇳',
+    venue: 'Old Trafford, Manchester',
+    format: 'T20',
+    completed: false
+  },
+  {
+    id: 'cb_intl_14',
+    dateStr: '2026-07-07',
+    dayOfWeek: 'TUE',
+    dayNumber: 7,
+    month: 'Jul',
+    seriesName: 'India tour of England, 2026',
+    matchTitle: '3rd T20I · ENG vs IND',
+    homeNation: 'England',
+    awayNation: 'India',
+    homeCode: 'ENG',
+    awayCode: 'IND',
+    homeFlag: '🏴󠁧󠁢󠁥󠁮󠁧󠁿',
+    awayFlag: '🇮🇳',
+    venue: 'Trent Bridge, Nottingham',
+    format: 'T20',
+    completed: false
+  },
+  {
+    id: 'cb_intl_15',
+    dateStr: '2026-07-09',
+    dayOfWeek: 'THU',
+    dayNumber: 9,
+    month: 'Jul',
+    seriesName: 'India tour of England, 2026',
+    matchTitle: '4th T20I · ENG vs IND',
+    homeNation: 'England',
+    awayNation: 'India',
+    homeCode: 'ENG',
+    awayCode: 'IND',
+    homeFlag: '🏴󠁧󠁢󠁥󠁮󠁧󠁿',
+    awayFlag: '🇮🇳',
+    venue: 'County Ground, Bristol',
+    format: 'T20',
+    completed: false
+  },
+  {
+    id: 'cb_intl_16',
+    dateStr: '2026-07-11',
+    dayOfWeek: 'SAT',
+    dayNumber: 11,
+    month: 'Jul',
+    seriesName: 'India tour of England, 2026',
+    matchTitle: '5th T20I · ENG vs IND',
+    homeNation: 'England',
+    awayNation: 'India',
+    homeCode: 'ENG',
+    awayCode: 'IND',
+    homeFlag: '🏴󠁧󠁢󠁥󠁮󠁧󠁿',
+    awayFlag: '🇮🇳',
+    venue: 'The Rose Bowl, Southampton',
+    format: 'T20',
+    completed: false
+  },
+  {
+    id: 'cb_intl_17',
+    dateStr: '2026-07-14',
+    dayOfWeek: 'TUE',
+    dayNumber: 14,
+    month: 'Jul',
+    seriesName: 'India tour of England, 2026',
+    matchTitle: '1st ODI · ENG vs IND',
+    homeNation: 'England',
+    awayNation: 'India',
+    homeCode: 'ENG',
+    awayCode: 'IND',
+    homeFlag: '🏴󠁧󠁢󠁥󠁮󠁧󠁿',
+    awayFlag: '🇮🇳',
+    venue: 'Edgbaston, Birmingham',
+    format: 'ODI',
+    completed: false
+  },
+  {
+    id: 'cb_intl_18',
+    dateStr: '2026-07-19',
+    dayOfWeek: 'SUN',
+    dayNumber: 19,
+    month: 'Jul',
+    seriesName: 'India tour of England, 2026',
+    matchTitle: '3rd ODI · ENG vs IND',
+    homeNation: 'England',
+    awayNation: 'India',
+    homeCode: 'ENG',
+    awayCode: 'IND',
+    homeFlag: '🏴󠁧󠁢󠁥󠁮󠁧󠁿',
+    awayFlag: '🇮🇳',
+    venue: "Lord's Cricket Ground, London",
+    format: 'ODI',
+    completed: false
+  },
+  {
+    id: 'cb_intl_19',
+    dateStr: '2026-07-24',
+    dayOfWeek: 'FRI',
+    dayNumber: 24,
+    month: 'Jul',
+    seriesName: 'India tour of Sri Lanka, 2026 (WTC)',
+    matchTitle: '1st Test · SL vs IND',
+    homeNation: 'Sri Lanka',
+    awayNation: 'India',
+    homeCode: 'SL',
+    awayCode: 'IND',
+    homeFlag: '🇱🇰',
+    awayFlag: '🇮🇳',
+    venue: 'Galle International Stadium, Galle',
+    format: 'TEST',
+    completed: false
+  },
+  {
+    id: 'cb_intl_20',
+    dateStr: '2026-08-13',
+    dayOfWeek: 'THU',
+    dayNumber: 13,
+    month: 'Aug',
+    seriesName: 'Bangladesh tour of Australia, 2026',
+    matchTitle: '1st Test · AUS vs BAN',
+    homeNation: 'Australia',
+    awayNation: 'Bangladesh',
+    homeCode: 'AUS',
+    awayCode: 'BAN',
+    homeFlag: '🇦🇺',
+    awayFlag: '🇧🇩',
+    venue: 'Marrara Oval, Darwin',
+    format: 'TEST',
+    completed: false
+  },
+  {
+    id: 'cb_intl_21',
+    dateStr: '2026-08-19',
+    dayOfWeek: 'WED',
+    dayNumber: 19,
+    month: 'Aug',
+    seriesName: 'Pakistan tour of England, 2026',
+    matchTitle: '1st Test · ENG vs PAK',
+    homeNation: 'England',
+    awayNation: 'Pakistan',
+    homeCode: 'ENG',
+    awayCode: 'PAK',
+    homeFlag: '🏴󠁧󠁢󠁥󠁮󠁧󠁿',
+    awayFlag: '🇵🇰',
+    venue: 'Headingley, Leeds',
+    format: 'TEST',
+    completed: false
+  },
+  {
+    id: 'cb_intl_22',
+    dateStr: '2026-09-18',
+    dayOfWeek: 'FRI',
+    dayNumber: 18,
+    month: 'Sep',
+    seriesName: 'Australia tour of South Africa, 2026',
+    matchTitle: '1st T20I · SA vs AUS',
+    homeNation: 'South Africa',
+    awayNation: 'Australia',
+    homeCode: 'SA',
+    awayCode: 'AUS',
+    homeFlag: '🇿🇦',
+    awayFlag: '🇦🇺',
+    venue: 'Kingsmead, Durban',
+    format: 'T20',
+    completed: false
+  },
+  {
+    id: 'cb_intl_23',
+    dateStr: '2026-10-08',
+    dayOfWeek: 'THU',
+    dayNumber: 8,
+    month: 'Oct',
+    seriesName: 'West Indies tour of India, 2026',
+    matchTitle: '1st T20I · IND vs WI',
+    homeNation: 'India',
+    awayNation: 'West Indies',
+    homeCode: 'IND',
+    awayCode: 'WI',
+    homeFlag: '🇮🇳',
+    awayFlag: '🌴',
+    venue: 'Wankhede Stadium, Mumbai',
+    format: 'T20',
+    completed: false
+  },
+  {
+    id: 'cb_intl_24',
+    dateStr: '2026-10-28',
+    dayOfWeek: 'WED',
+    dayNumber: 28,
+    month: 'Oct',
+    seriesName: 'India tour of New Zealand, 2026',
+    matchTitle: '1st T20I · NZ vs IND',
+    homeNation: 'New Zealand',
+    awayNation: 'India',
+    homeCode: 'NZ',
+    awayCode: 'IND',
+    homeFlag: '🇳🇿',
+    awayFlag: '🇮🇳',
+    venue: 'Eden Park, Auckland',
+    format: 'T20',
+    completed: false
+  },
+  {
+    id: 'cb_intl_25',
+    dateStr: '2026-11-22',
+    dayOfWeek: 'SUN',
+    dayNumber: 22,
+    month: 'Nov',
+    seriesName: 'England tour of Australia, 2026',
+    matchTitle: '1st T20I · AUS vs ENG',
+    homeNation: 'Australia',
+    awayNation: 'England',
+    homeCode: 'AUS',
+    awayCode: 'ENG',
+    homeFlag: '🇦🇺',
+    awayFlag: '🏴󠁧󠁢󠁥󠁮󠁧󠁿',
+    venue: 'Optus Stadium, Perth',
+    format: 'T20',
+    completed: false
+  }
+];
+
+export function buildSeasonCalendarForTeam(
+  userTeamId: string,
+  allTeams: Team[],
+  includeSampleCompleted: boolean = false,
+  seasonYear: number = 2026
+): League['calendarDates'] {
+  const userT = allTeams.find(t => t.id === userTeamId) || allTeams[0];
+  const otherTeams = allTeams.filter(t => t.id !== userT.id);
+  // Build 14 fixtures against all 9 other franchises (9 once + first 5 again, alternating Home & Away)
+  const opponents14: Team[] = [];
+  for (let i = 0; i < 14; i++) {
+    opponents14.push(otherTeams[i % otherTeams.length] || allTeams[1]);
+  }
+
+  const dayNames = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+  const monthMeta: Record<number, { name: string; days: number }> = {
+    4: { name: 'Apr', days: 30 },
+    5: { name: 'May', days: 31 },
+    6: { name: 'Jun', days: 30 },
+    7: { name: 'Jul', days: 31 },
+    8: { name: 'Aug', days: 31 }
+  };
+  // Start date: April 17 (Friday -> index 4) so Day index 9 is SUN 26 APR
+  let curMonth = 4;
+  let curDay = 17;
+  let dowIdx = 4; // FRI
+
+  const nextDate = () => {
+    const mInfo = monthMeta[curMonth] || { name: 'May', days: 31 };
+    const monthStr = mInfo.name;
+    const dateStr = `${seasonYear}-${String(curMonth).padStart(2, '0')}-${String(curDay).padStart(2, '0')}`;
+    const dayOfWeek = dayNames[dowIdx % 7];
+    const dayNumber = curDay;
+    dowIdx++;
+    curDay++;
+    if (curDay > mInfo.days) {
+      curMonth++;
+      curDay = 1;
+    }
+    return { dateStr, dayOfWeek, dayNumber, month: monthStr };
+  };
+
+  // Helper to generate realistic other-team league fixtures for any day index
+  const buildOtherTeamFixturesForDay = (dayIdx: number, excludeTeamIds: string[], isPastDay: boolean) => {
+    const pool = allTeams.filter(t => !excludeTeamIds.includes(t.id));
+    if (pool.length < 2) return [];
+    const fixturesCount = excludeTeamIds.length > 1 ? 1 : 2; // 2 matches on non-user days, 1 double-header match on user match days
+    const list: NonNullable<League['calendarDates'][0]['otherMatches']> = [];
+
+    for (let f = 0; f < fixturesCount; f++) {
+      const idxA = (dayIdx * 3 + f * 2) % pool.length;
+      const idxB = (idxA + 1 + ((dayIdx + f) % Math.max(1, pool.length - 1))) % pool.length;
+      const teamA = pool[idxA];
+      const teamB = pool[idxB === idxA ? (idxA + 1) % pool.length : idxB];
+      if (!teamA || !teamB || teamA.id === teamB.id) continue;
+
+      const runsA = 162 + ((dayIdx * 13 + f * 19) % 48);
+      const wktsA = 3 + ((dayIdx + f * 3) % 6);
+      const runsB = 148 + ((dayIdx * 17 + f * 23) % 52);
+      const wktsB = 4 + ((dayIdx * 2 + f) % 6);
+      const aWon = runsA >= runsB;
+      const summary = aWon
+        ? `${teamA.shortName} ${runsA}/${wktsA} beat ${teamB.shortName} ${Math.min(runsA - 4, runsB)}/${wktsB} by ${ Math.max(4, runsA - Math.min(runsA - 4, runsB))} runs`
+        : `${teamB.shortName} ${runsB}/${wktsB} beat ${teamA.shortName} ${runsA}/${wktsA} by ${Math.max(3, 10 - wktsB)} wkts`;
+
+      list.push({
+        id: `other_fix_${dayIdx}_${f}_${teamA.id}_${teamB.id}`,
+        homeTeamId: teamA.id,
+        awayTeamId: teamB.id,
+        homeShortName: teamA.shortName,
+        awayShortName: teamB.shortName,
+        homeLogo: teamA.logoEmoji || '🏏',
+        awayLogo: teamB.logoEmoji || '🏏',
+        venue: `${teamA.city} Cricket Stadium`,
+        timeStr: f === 0 && fixturesCount === 2 ? '15:30 IST' : '19:30 IST',
+        completed: isPastDay,
+        resultSummary: isPastDay ? summary : undefined,
+        format: 'T20'
+      });
+    }
+    return list;
+  };
+
+  const getIntlMatchesForDateStr = (dateStr: string) => {
+    return CRICBUZZ_2026_INTL_TOURS.filter(t => t.dateStr === dateStr).map(t => ({
+      id: t.id,
+      homeTeamId: t.homeNation,
+      awayTeamId: t.awayNation,
+      homeShortName: t.homeCode,
+      awayShortName: t.awayCode,
+      homeLogo: t.homeFlag,
+      awayLogo: t.awayFlag,
+      venue: t.venue,
+      timeStr: '14:00 GMT',
+      completed: Boolean(t.completed),
+      resultSummary: t.resultSummary,
+      isInternational: true,
+      seriesName: t.seriesName,
+      format: t.format
+    }));
+  };
+
+  const dates: League['calendarDates'] = [];
+  let runningDayIdx = 0;
+
+  for (let mIdx = 0; mIdx < 14; mIdx++) {
+    const opp = opponents14[mIdx];
+    const isHome = mIdx % 2 === 0;
+    const isCompleted = includeSampleCompleted && mIdx < 3; // First 3 fixtures completed in default 2026 start
+
+    // 1. Training Day before match (plus other league teams playing today!)
+    const dTrain = nextDate();
+    const isTrainPast = includeSampleCompleted && runningDayIdx < 9;
+    dates.push({
+      id: `cal_train_${mIdx + 1}`,
+      ...dTrain,
+      type: 'training',
+      title: `Prepare for ${opp.shortName}`,
+      isHome,
+      opponentTeamId: opp.id,
+      otherMatches: buildOtherTeamFixturesForDay(runningDayIdx, [userT.id], isTrainPast),
+      internationalMatches: getIntlMatchesForDateStr(dTrain.dateStr)
+    });
+    runningDayIdx++;
+
+    // 2. Match Day (User match + double-header other match)
+    const dMatch = nextDate();
+    const homeTeamObj = isHome ? userT : opp;
+    const awayTeamObj = isHome ? opp : userT;
+    const venue = `${homeTeamObj.city} Cricket Stadium`;
+    const sampleResults = [
+      `${userT.shortName} 188/5 beat ${opp.shortName} 174/8 by 14 runs`,
+      `${userT.shortName} 166/3 beat ${opp.shortName} 162/7 by 7 wkts`,
+      `${opp.shortName} 195/4 beat ${userT.shortName} 181/9 by 14 runs`
+    ];
+    dates.push({
+      id: `cal_match_${mIdx + 1}`,
+      ...dMatch,
+      type: 'match',
+      title: `${isHome ? 'vs' : '@'} ${opp.city}`,
+      isHome,
+      opponentTeamId: opp.id,
+      matchFixture: {
+        id: `fix_${mIdx + 1}_${homeTeamObj.id}_${awayTeamObj.id}`,
+        homeTeamId: homeTeamObj.id,
+        awayTeamId: awayTeamObj.id,
+        homeShortName: homeTeamObj.shortName,
+        awayShortName: awayTeamObj.shortName,
+        homeLogo: homeTeamObj.logoEmoji,
+        awayLogo: awayTeamObj.logoEmoji,
+        venue,
+        timeStr: '19:30 IST',
+        completed: isCompleted,
+        resultSummary: isCompleted ? sampleResults[mIdx % sampleResults.length] : undefined,
+        format: 'T20'
+      },
+      otherMatches: buildOtherTeamFixturesForDay(runningDayIdx, [userT.id, opp.id], isCompleted),
+      internationalMatches: getIntlMatchesForDateStr(dMatch.dateStr)
+    });
+    runningDayIdx++;
+
+    // 3. Post-match Training Day (User can choose to SIM TRAINING or REST)
+    const dTrain2 = nextDate();
+    const isTrain2Past = includeSampleCompleted && runningDayIdx < 9;
+    const nextOpp = opponents14[Math.min(13, mIdx + 1)];
+    dates.push({
+      id: `cal_train2_${mIdx + 1}`,
+      ...dTrain2,
+      type: 'training',
+      title: `Prepare for ${nextOpp.shortName}`,
+      isHome: (mIdx + 1) % 2 === 0,
+      opponentTeamId: nextOpp.id,
+      otherMatches: buildOtherTeamFixturesForDay(runningDayIdx, [userT.id], isTrain2Past),
+      internationalMatches: getIntlMatchesForDateStr(dTrain2.dateStr)
+    });
+    runningDayIdx++;
+  }
+
+  // Append Post-IPL International Tour Window Dates (June – November 2026 Cricbuzz Calendar)
+  CRICBUZZ_2026_INTL_TOURS.filter(t => !dates.some(d => d.dateStr === t.dateStr)).forEach(tour => {
+    const intlFix = {
+      id: tour.id,
+      homeTeamId: tour.homeNation,
+      awayTeamId: tour.awayNation,
+      homeShortName: tour.homeCode,
+      awayShortName: tour.awayCode,
+      homeLogo: tour.homeFlag,
+      awayLogo: tour.awayFlag,
+      venue: tour.venue,
+      timeStr: '14:00 LOCAL',
+      completed: Boolean(tour.completed),
+      resultSummary: tour.resultSummary,
+      isInternational: true,
+      seriesName: tour.seriesName,
+      format: tour.format
+    };
+    dates.push({
+      id: `cal_intl_${tour.id}`,
+      dateStr: tour.dateStr,
+      dayOfWeek: tour.dayOfWeek,
+      dayNumber: tour.dayNumber,
+      month: tour.month,
+      type: 'international',
+      title: tour.matchTitle,
+      isHome: true,
+      matchFixture: intlFix,
+      otherMatches: [],
+      internationalMatches: [intlFix]
+    });
+  });
+
+  return dates;
+}
+
+function buildInitialInboxMessages(team: Team, allPlayers: Player[]): InboxMessage[] {
+  const squad = allPlayers.filter(p => p.clubId === team.id);
+  const captain = squad.find(p => p.id === team.captainId || p.isCaptain) || squad[0];
+  const benchPlayers = squad.filter(p => !team.playingXIIds.includes(p.id)).sort((a, b) => Math.max(b.ratings.bat, b.ratings.bowl) - Math.max(a.ratings.bat, a.ratings.bowl));
+  const benchStar = benchPlayers[0] || squad[squad.length - 1] || captain;
+  const seniorPro = squad.find(p => p.id !== captain?.id && p.id !== benchStar?.id && (p.role === 'Pace' || p.role === 'Spin' || p.role === 'All-rounder')) || squad[1] || captain;
+
+  const msgs: InboxMessage[] = [];
+  if (captain) {
+    msgs.push({
+      id: `msg_capt_${team.id}`,
+      playerId: captain.id,
+      playerName: captain.name,
+      jerseyNumber: captain.jerseyNumber || 41,
+      isCaptain: true,
+      role: captain.role,
+      dateLabel: 'SUN 26 APR',
+      subject: 'The dressing room is restless',
+      body: `"Coach, a few of the lads on the ${team.shortName} bench are asking about game time, promises, and role clarity ahead of the next fixture. Worth a word before it spreads."`,
+      resolved: false
+    });
+  }
+  if (benchStar && benchStar.id !== captain?.id) {
+    msgs.push({
+      id: `msg_bench_${team.id}`,
+      playerId: benchStar.id,
+      playerName: benchStar.name,
+      jerseyNumber: benchStar.jerseyNumber || 27,
+      isCaptain: false,
+      role: benchStar.role,
+      dateLabel: 'SAT 25 APR',
+      subject: 'Pushing for a spot in the Starting XI',
+      body: `"Gaffer, I've been striking the ball cleanly in the nets all week. Give me a run in the Starting XI or as Impact Sub next match and I won't let ${team.shortName} down."`,
+      resolved: false
+    });
+  }
+  if (seniorPro && seniorPro.id !== captain?.id && seniorPro.id !== benchStar?.id) {
+    msgs.push({
+      id: `msg_senior_${team.id}`,
+      playerId: seniorPro.id,
+      playerName: seniorPro.name,
+      jerseyNumber: seniorPro.jerseyNumber || 99,
+      isCaptain: false,
+      role: seniorPro.role,
+      dateLabel: 'FRI 24 APR',
+      subject: 'Death-overs execution & pitch plans',
+      body: `"Coach, our bowling unit has been reviewing footage of the opposition top order. Extra yorker and slower-ball drills in the next session could give us the edge."`,
+      resolved: false
+    });
+  }
+  return msgs;
+}
+
+export interface TrainingTraineeGain {
+  playerId: string;
+  name: string;
+  role: string;
+  xp: number;
+  statBoosted: string;
+}
+
+export interface InternationalSeriesMatch {
+  matchNumber: number;
+  venue: string;
+  city: string;
+  completed: boolean;
+  summary?: string;
+}
+
+export interface InternationalSeriesState {
+  userNationId: string;
+  userNationName: string;
+  userNationCode: string;
+  userNationFlag: string;
+  opponentNationId: string;
+  opponentNationName: string;
+  opponentNationCode: string;
+  opponentNationFlag: string;
+  seriesWins: number;
+  seriesLosses: number;
+  matches: InternationalSeriesMatch[];
+  wtcTestCompleted?: boolean;
+  wtcTestSummary?: string;
+}
+
+function buildInitialSeriesForNation(userNat: Nation, allNations: Nation[]): InternationalSeriesState {
+  const oppNat = userNat.name === 'South Africa'
+    ? (allNations.find(n => n.name === 'India') || allNations[0])
+    : (allNations.find(n => n.name === 'South Africa') || allNations[3] || allNations[1]);
+  const uCode = userNat.code || userNat.name.slice(0, 3).toUpperCase();
+  const oCode = oppNat.code || oppNat.name.slice(0, 3).toUpperCase();
+  const venuesByHost: Record<string, { city: string; venue: string }[]> = {
+    'South Africa': [
+      { city: 'Durban', venue: 'Kingsmead, Durban' },
+      { city: 'Centurion', venue: 'SuperSport Park, Centurion' },
+      { city: 'Johannesburg', venue: 'Wanderers Stadium, Johannesburg' },
+      { city: 'Gqeberha', venue: "St George's Park, Gqeberha" },
+      { city: 'Cape Town', venue: 'Newlands, Cape Town' }
+    ],
+    'India': [
+      { city: 'Mumbai', venue: 'Wankhede Stadium, Mumbai' },
+      { city: 'Kolkata', venue: 'Eden Gardens, Kolkata' },
+      { city: 'Chennai', venue: 'M.A. Chidambaram Stadium, Chennai' },
+      { city: 'Bengaluru', venue: 'M. Chinnaswamy Stadium, Bengaluru' },
+      { city: 'Ahmedabad', venue: 'Narendra Modi Stadium, Ahmedabad' }
+    ]
+  };
+  const venues = venuesByHost[oppNat.name] || venuesByHost['South Africa'];
+
+  return {
+    userNationId: userNat.id,
+    userNationName: userNat.name,
+    userNationCode: uCode,
+    userNationFlag: userNat.flag || '🏏',
+    opponentNationId: oppNat.id,
+    opponentNationName: oppNat.name,
+    opponentNationCode: oCode,
+    opponentNationFlag: oppNat.flag || '🏏',
+    seriesWins: 0,
+    seriesLosses: 0,
+    matches: venues.map((v, idx) => ({
+      matchNumber: idx + 1,
+      city: v.city,
+      venue: v.venue,
+      completed: false,
+      summary: undefined
+    })),
+    wtcTestCompleted: false
+  };
+}
+
+export interface GameSettings {
+  coachTips: boolean;
+  tacticsAuto: 'key_moments' | 'every_over' | 'never';
+  matchAnimations: 'full' | 'quick' | 'classic';
+}
+
+export interface SaveSlotMeta {
+  slotNumber: 1 | 2 | 3;
+  hasSave: boolean;
+  teamName: string;
+  teamShortName: string;
+  logoEmoji: string;
+  seasonName: string;
+  savedAt: string;
+}
+
+interface GameContextType {
+  activeTab: MainTab;
+  setActiveTab: (tab: MainTab) => void;
+  players: Player[];
+  setPlayers: React.Dispatch<React.SetStateAction<Player[]>>;
+  updatePlayer: (updated: Player) => void;
+  teams: Team[];
+  setTeams: React.Dispatch<React.SetStateAction<Team[]>>;
+  userTeam: Team;
+  selectUserTeam: (teamId: string) => void;
+  startNewCareer: (teamId: string, coachOverrides?: Partial<CoachProfile>, targetSlot?: 1 | 2 | 3) => void;
+  activeSaveSlot: 1 | 2 | 3;
+  setActiveSaveSlot: (slot: 1 | 2 | 3) => void;
+  updateUserTeamXI: (newXIIds: string[]) => void;
+  setTeamCaptain: (playerId: string) => void;
+  leagues: League[];
+  currentLeagueId: string;
+  setCurrentLeagueId: (id: string) => void;
+  nations: Nation[];
+  nationalSquadIds: string[];
+  setNationalSquadIds: (ids: string[]) => void;
+  internationalSeries: InternationalSeriesState;
+  coachProfile: CoachProfile;
+  updateCoachProfile: (updater: Partial<CoachProfile>) => void;
+  achievements: Achievement[];
+  unlockAchievement: (id: string) => void;
+  jobOffers: JobOffer[];
+  acceptJobOffer: (offer: JobOffer) => void;
+  resignNationalJob: () => void;
+  advanceCalendarDay: () => void;
+  setCalendarDateIndex: (idx: number) => void;
+  // Phase 13 Settings & Multi-Slot Save Manager
+  settings: GameSettings;
+  updateSettings: (partial: Partial<GameSettings>) => void;
+  saveSlots: SaveSlotMeta[];
+  saveToSlot: (slotNumber: 1 | 2 | 3) => void;
+  loadFromSlot: (slotNumber: 1 | 2 | 3) => boolean;
+  deleteSlot: (slotNumber: 1 | 2 | 3) => void;
+  simSingleIntlMatch: (homeNationName: string, awayNationName: string, format: 'T20' | 'ODI' | 'TEST') => string;
+  // Phase 11 Hub, Pitch, Sim Tokens, History & Inbox
+  homePitch: string;
+  setHomePitch: (pitch: string) => void;
+  simTokens: number;
+  setSimTokens: React.Dispatch<React.SetStateAction<number>>;
+  squadStamina: number;
+  setSquadStamina: React.Dispatch<React.SetStateAction<number>>;
+  completedMatchesHistory: CompletedMatchRecord[];
+  inboxMessages: InboxMessage[];
+  replyToInboxMessage: (messageId: string, replyOption: 'promise_game_time' | 'demand_nets' | 'back_current_xi') => void;
+  // Match Engine
+  matchLiveState: MatchLiveState | null;
+  startMatch: (opponentTeamId?: string, format?: 'T20' | 'ODI' | 'TEST' | '100BALL', isAwayMatch?: boolean) => void;
+  createFranchiseMatchState: (homeTeamObj: Team, awayTeamObj: Team, leagueId: string, format: 'T20' | 'ODI' | 'TEST' | '100BALL') => MatchLiveState;
+  startInternationalMatch: (homeCountry?: string, awayCountry?: string, venue?: string, format?: 'T20' | 'ODI' | 'TEST' | '100BALL') => void;
+  playPlayoffMatch: (leagueId: string, stage: 'q1' | 'eliminator' | 'q2' | 'final') => void;
+  simPlayoffMatch: (leagueId: string, stage: 'q1' | 'eliminator' | 'q2' | 'final') => void;
+  resetPlayoffBracket: (leagueId: string) => void;
+  pendingRetentionModal: boolean;
+  setPendingRetentionModal: React.Dispatch<React.SetStateAction<boolean>>;
+  finishMatch: () => void;
+  runBallSimulation: () => void;
+  simCurrentOver: (oversCount?: number) => void;
+  simEntireMatch: () => void;
+  updateBowlingTactics: (tactics: Partial<MatchLiveState['bowlingTactics']>) => void;
+  updateBattingTactics: (tactics: Partial<MatchLiveState['battingTactics']>) => void;
+  updateFielders: (fielders: FielderPosition[]) => void;
+  activateImpactPlayer: (benchPlayerId: string, outPlayerId: string) => void;
+  startSecondInnings: () => void;
+  selectNewBowler: (bowlerId: string) => void;
+  selectNextBatter: (batterId: string) => void;
+  selectOpeners: (strikerId: string, nonStrikerId: string) => void;
+  setTossDecision: (decision: 'bat' | 'bowl') => void;
+  // Feature 6.1, 6.2, 6.6 Match Engine Extensions
+  triggerDrsReview: () => void;
+  resolveDrsReview: (finalVerdict: 'OUT' | 'NOT OUT', reviewRetained: boolean) => void;
+  triggerRainDLSInterruption: () => void;
+  activatePowerSurge: () => void;
+  declareInnings: () => void;
+  // Training & Morale
+  trainSquad: (drillType: string, intensity?: string) => { success: boolean; message: string; xpGains: TrainingTraineeGain[] };
+  claimDoubleTrainingXp: (drillType: string, topPlayerIds: string[]) => void;
+  boostTeamMorale: (teamId: string, delta?: number) => void;
+  // Dynasty & Roster Persistence
+  releasePlayersForAuction: (teamId: string, releasedPlayerIds: string[], updatedPurseCr: number) => void;
+  startNewSeason: (selectedClubId?: string, selectedNationId?: string | null, nextYear?: number) => void;
+  // Auction
+  auctionLot: AuctionLot | null;
+  startAuctionSession: () => void;
+  placeUserBid: () => void;
+  skipAuctionLot: () => void;
+  useRtmCard: () => void;
+  nextAuctionLot: () => void;
+  isAiBidding: boolean;
+  aiBiddingSpeed: 'instant' | 'fast' | 'normal';
+  setAiBiddingSpeed: (speed: 'instant' | 'fast' | 'normal') => void;
+}
+
+const GameContext = createContext<GameContextType | undefined>(undefined);
+
+function applyMatchToPlayerList(playerList: Player[], finishedMatch: MatchLiveState): Player[] {
+  const inn1 = finishedMatch.innings1;
+  const inn2 = finishedMatch.innings2;
+
+  const batterMap = new Map<string, BatterInningsScorecard>();
+  const bowlerMap = new Map<string, BowlerInningsScorecard>();
+
+  [...(inn1?.batters || []), ...(inn2?.batters || [])].forEach(b => {
+    batterMap.set(b.playerId, b);
+  });
+  [...(inn1?.bowlers || []), ...(inn2?.bowlers || [])].forEach(bw => {
+    bowlerMap.set(bw.playerId, bw);
+  });
+
+  return playerList.map(p => {
+    const bCard = batterMap.get(p.id);
+    const bwCard = bowlerMap.get(p.id);
+    if (!bCard && !bwCard) return p;
+
+    const prevStats = p.stats || {
+      matches: 0, runs: 0, balls: 0, fours: 0, sixes: 0,
+      fifties: 0, hundreds: 0, highestScore: 0, wickets: 0,
+      oversBowled: 0, runsConceded: 0, maidens: 0, bestBowling: '0/0'
+    };
+
+    const newMatches = (prevStats.matches || 0) + 1;
+    const addRuns = bCard ? bCard.runs : 0;
+    const addBalls = bCard ? bCard.balls : 0;
+    const addFours = bCard ? bCard.fours : 0;
+    const addSixes = bCard ? bCard.sixes : 0;
+    const addFifty = bCard && bCard.runs >= 50 && bCard.runs < 100 ? 1 : 0;
+    const addHundred = bCard && bCard.runs >= 100 ? 1 : 0;
+
+    const newRuns = (prevStats.runs || 0) + addRuns;
+    const newBalls = (prevStats.balls || 0) + addBalls;
+    const newFours = (prevStats.fours || 0) + addFours;
+    const newSixes = (prevStats.sixes || 0) + addSixes;
+    const newFifties = (prevStats.fifties || 0) + addFifty;
+    const newHundreds = (prevStats.hundreds || 0) + addHundred;
+    const newHighest = Math.max(prevStats.highestScore || 0, addRuns);
+
+    const addWkts = bwCard ? bwCard.wickets : 0;
+    const addOvers = bwCard ? (Math.floor(bwCard.overs) + (bwCard.ballsInCurrentOver || 0) / 6) : 0;
+    const addConceded = bwCard ? bwCard.runs : 0;
+    const addMaidens = bwCard ? (bwCard.maidens || 0) : 0;
+
+    const newWickets = (prevStats.wickets || 0) + addWkts;
+    const newOversBowled = Number(((prevStats.oversBowled || 0) + addOvers).toFixed(1));
+    const newRunsConceded = (prevStats.runsConceded || 0) + addConceded;
+    const newMaidens = (prevStats.maidens || 0) + addMaidens;
+
+    let bestBowling = prevStats.bestBowling || '0/0';
+    if (bwCard && (bwCard.overs > 0 || bwCard.ballsInCurrentOver > 0)) {
+      const [prevBestW, prevBestR] = bestBowling.split('/').map(Number);
+      if (
+        bwCard.wickets > (prevBestW || 0) ||
+        (bwCard.wickets === (prevBestW || 0) && bwCard.runs < (prevBestR || 999) && bwCard.wickets > 0)
+      ) {
+        bestBowling = `${bwCard.wickets}/${bwCard.runs}`;
+      }
+    }
+
+    const estDismissals = Math.max(1, Math.round(newMatches * 0.75));
+    const average = newRuns > 0 ? Number((newRuns / estDismissals).toFixed(1)) : 0;
+    const strikeRate = newBalls > 0 ? Number(((newRuns / newBalls) * 100).toFixed(1)) : 0;
+    const economy = newOversBowled > 0 ? Number((newRunsConceded / newOversBowled).toFixed(1)) : 0;
+
+    return {
+      ...p,
+      form: Math.max(40, Math.min(100, p.form + (addRuns >= 35 || addWkts >= 2 ? 4 : -1))),
+      stats: {
+        matches: newMatches,
+        runs: newRuns,
+        balls: newBalls,
+        fours: newFours,
+        sixes: newSixes,
+        fifties: newFifties,
+        hundreds: newHundreds,
+        highestScore: newHighest,
+        wickets: newWickets,
+        oversBowled: newOversBowled,
+        runsConceded: newRunsConceded,
+        maidens: newMaidens,
+        bestBowling,
+        average,
+        strikeRate,
+        economy
+      }
+    };
+  });
+}
+
+function simulateAiFixtureScorecard(
+  fixtureId: string,
+  homeTeamObj: Team,
+  awayTeamObj: Team,
+  venue: string,
+  format: 'T20' | 'ODI' | 'TEST' | '100BALL',
+  leagueId: string,
+  allPlayers: Player[],
+  seed: number = 1
+): {
+  matchState: MatchLiveState;
+  summary: string;
+  winnerId: string;
+  loserId: string;
+  nrrDelta: number;
+} {
+  const resolveTeamXI = (team: Team): Player[] => {
+    if (team.playingXIIds && team.playingXIIds.length >= 11) {
+      const xi = team.playingXIIds.map(id => allPlayers.find(p => p.id === id)).filter((p): p is Player => Boolean(p));
+      if (xi.length >= 11) return xi.slice(0, 11);
+    }
+    const clubPool = allPlayers.filter(p => p.clubId === team.id);
+    if (clubPool.length >= 11) return clubPool.slice(0, 11);
+    const countryPool = allPlayers.filter(p => p.country.toLowerCase() === team.name.toLowerCase());
+    if (countryPool.length >= 11) return countryPool.slice(0, 11);
+    if (team.squad && team.squad.length >= 11) return team.squad.slice(0, 11);
+    return [...countryPool, ...clubPool, ...allPlayers].slice(0, 11);
+  };
+
+  const homeXI = resolveTeamXI(homeTeamObj);
+  const awayXI = resolveTeamXI(awayTeamObj);
+
+  const maxOvers = format === 'ODI' ? 50 : format === 'TEST' ? 90 : format === '100BALL' ? 16.4 : 20;
+  const maxBalls = format === '100BALL' ? 100 : Math.round(maxOvers * 6);
+
+  const avgBat = (xi: Player[]) => xi.slice(0, 7).reduce((s, p) => s + (p.ratings.bat || 75), 0) / Math.max(1, Math.min(7, xi.length));
+  const avgBowl = (xi: Player[]) => xi.slice(5, 11).reduce((s, p) => s + (p.ratings.bowl || 75), 0) / Math.max(1, Math.min(6, xi.slice(5, 11).length));
+
+  const homeBatRating = avgBat(homeXI);
+  const awayBowlRating = avgBowl(awayXI);
+  const awayBatRating = avgBat(awayXI);
+  const homeBowlRating = avgBowl(homeXI);
+
+  const pseudoRand = (n: number) => {
+    const x = Math.sin(seed * 97 + n * 31) * 10000;
+    return x - Math.floor(x);
+  };
+
+  const baseTargetRuns = format === 'ODI' ? 265 : format === 'TEST' ? 320 : 168;
+  const spreadRuns = format === 'ODI' ? 60 : format === 'TEST' ? 85 : 46;
+
+  const inn1TotalRuns = Math.max(
+    115,
+    Math.round(baseTargetRuns + (homeBatRating - awayBowlRating) * 1.1 + (pseudoRand(1) - 0.45) * spreadRuns)
+  );
+  const inn1Wickets = Math.min(10, Math.max(2, Math.round(4 + (awayBowlRating - homeBatRating) * 0.1 + pseudoRand(2) * 5)));
+  const inn1Balls = inn1Wickets === 10 ? Math.max(78, maxBalls - Math.floor(pseudoRand(3) * 18)) : maxBalls;
+
+  const rawInn2Runs = Math.max(
+    108,
+    Math.round(baseTargetRuns + (awayBatRating - homeBowlRating) * 1.1 + (pseudoRand(4) - 0.45) * spreadRuns)
+  );
+
+  const awayChased = rawInn2Runs >= inn1TotalRuns + 1;
+  const inn2TotalRuns = awayChased
+    ? inn1TotalRuns + 1 + Math.floor(pseudoRand(5) * 4)
+    : Math.min(inn1TotalRuns - 1, rawInn2Runs);
+  const inn2Wickets = awayChased
+    ? Math.min(9, Math.max(1, Math.round(2 + pseudoRand(6) * 5)))
+    : Math.min(10, Math.max(4, Math.round(5 + pseudoRand(7) * 5)));
+  const inn2Balls = awayChased
+    ? Math.max(72, maxBalls - Math.floor(1 + pseudoRand(8) * 16))
+    : (inn2Wickets === 10 ? Math.max(78, maxBalls - Math.floor(pseudoRand(9) * 14)) : maxBalls);
+
+  const buildInningsData = (
+    batTeam: Team,
+    bowlTeam: Team,
+    batXI: Player[],
+    bowlXI: Player[],
+    totalRuns: number,
+    wicketsFallen: number,
+    ballsComp: number,
+    seedShift: number
+  ): InningsData => {
+    const battersWhoBattedCount = Math.min(11, wicketsFallen + 2);
+    const weights = batXI.slice(0, battersWhoBattedCount).map((p, idx) => {
+      const orderWeight = idx < 3 ? 1.55 : idx < 5 ? 1.2 : idx < 7 ? 0.85 : 0.35;
+      return Math.max(0.1, ((p.ratings.bat || 70) / 80) * orderWeight * (0.65 + pseudoRand(seedShift + idx) * 0.9));
+    });
+    const weightSum = weights.reduce((a, b) => a + b, 0) || 1;
+
+    let remRuns = totalRuns;
+    let remBalls = ballsComp;
+
+    const bowlCandidates = bowlXI.filter(p => p.role === 'Pace' || p.role === 'Spin' || p.role === 'All-rounder');
+    const activeBowlers = (bowlCandidates.length >= 5 ? bowlCandidates : bowlXI).slice(0, 5);
+
+    const batters: BatterInningsScorecard[] = batXI.map((p, idx) => {
+      if (idx >= battersWhoBattedCount) {
+        return {
+          playerId: p.id,
+          name: p.name,
+          runs: 0,
+          balls: 0,
+          fours: 0,
+          sixes: 0,
+          dismissal: 'not out',
+          strikeRate: 0,
+          isOnStrike: false
+        };
+      }
+      const isLastBatter = idx === battersWhoBattedCount - 1;
+      const share = weights[idx] / weightSum;
+      const pRuns = isLastBatter ? Math.max(0, remRuns) : Math.min(remRuns, Math.max(0, Math.round(totalRuns * share)));
+      remRuns = Math.max(0, remRuns - pRuns);
+      const pBalls = isLastBatter
+        ? Math.max(1, remBalls)
+        : Math.min(Math.max(1, remBalls - (battersWhoBattedCount - 1 - idx)), Math.max(1, Math.round(ballsComp * share)));
+      remBalls = Math.max(0, remBalls - pBalls);
+
+      const sixes = Math.floor(pRuns / (16 - Math.min(6, Math.floor((p.ratings.pow || 75) / 18))));
+      const fours = Math.max(0, Math.floor((pRuns - sixes * 6) / 7));
+      const isDismissed = idx < wicketsFallen;
+      const bowlerWhoGot = activeBowlers[(idx + seedShift) % Math.max(1, activeBowlers.length)] || bowlXI[0];
+
+      return {
+        playerId: p.id,
+        name: p.name,
+        runs: pRuns,
+        balls: pBalls,
+        fours,
+        sixes,
+        dismissal: isDismissed ? `b ${bowlerWhoGot?.name.split(' ').pop() || 'Bowler'}` : 'not out',
+        strikeRate: pBalls > 0 ? Number(((pRuns / pBalls) * 100).toFixed(1)) : 0,
+        isOnStrike: !isDismissed
+      };
+    });
+
+    const totalOversInt = Math.floor(ballsComp / 6);
+    const remBallsInLastOver = ballsComp % 6;
+    let wktsLeft = wicketsFallen;
+    let runsConcededLeft = totalRuns;
+
+    const bowlers: BowlerInningsScorecard[] = activeBowlers.map((bw, idx) => {
+      const isLast = idx === activeBowlers.length - 1;
+      const baseOv = Math.floor(totalOversInt / activeBowlers.length) + (idx < (totalOversInt % activeBowlers.length) ? 1 : 0);
+      const bBallsExtra = isLast ? remBallsInLastOver : 0;
+      const floatOv = baseOv + bBallsExtra / 6;
+      const wShare = isLast
+        ? wktsLeft
+        : Math.min(wktsLeft, Math.round((wicketsFallen / activeBowlers.length) * (0.7 + pseudoRand(seedShift + 20 + idx) * 0.7)));
+      wktsLeft = Math.max(0, wktsLeft - wShare);
+
+      const rShare = isLast
+        ? Math.max(0, runsConcededLeft)
+        : Math.min(runsConcededLeft, Math.max(8, Math.round((totalRuns / activeBowlers.length) * (0.85 + pseudoRand(seedShift + 30 + idx) * 0.35))));
+      runsConcededLeft = Math.max(0, runsConcededLeft - rShare);
+
+      return {
+        playerId: bw.id,
+        name: bw.name,
+        overs: Number(`${baseOv}.${bBallsExtra}`),
+        ballsInCurrentOver: bBallsExtra,
+        maidens: rShare < baseOv * 4 && baseOv >= 3 ? 1 : 0,
+        runs: rShare,
+        wickets: wShare,
+        economy: floatOv > 0 ? Number((rShare / floatOv).toFixed(1)) : 0,
+        isCurrentBowler: isLast
+      };
+    });
+
+    return {
+      battingTeamId: batTeam.id,
+      bowlingTeamId: bowlTeam.id,
+      runs: totalRuns,
+      wickets: wicketsFallen,
+      overs: Number(`${Math.floor(ballsComp / 6)}.${ballsComp % 6}`),
+      ballsCompleted: ballsComp,
+      maxOvers,
+      batters,
+      bowlers,
+      currentStrikerId: batters[0]?.playerId || '',
+      currentNonStrikerId: batters[1]?.playerId || '',
+      currentBowlerId: bowlers[0]?.playerId || '',
+      ballHistory: [],
+      fallOfWickets: [],
+      overRuns: []
+    };
+  };
+
+  const innings1 = buildInningsData(homeTeamObj, awayTeamObj, homeXI, awayXI, inn1TotalRuns, inn1Wickets, inn1Balls, 10);
+  const innings2 = buildInningsData(awayTeamObj, homeTeamObj, awayXI, homeXI, inn2TotalRuns, inn2Wickets, inn2Balls, 50);
+
+  const winnerId = awayChased ? awayTeamObj.id : homeTeamObj.id;
+  const loserId = awayChased ? homeTeamObj.id : awayTeamObj.id;
+  const winTeam = awayChased ? awayTeamObj : homeTeamObj;
+  const loseTeam = awayChased ? homeTeamObj : awayTeamObj;
+
+  const marginText = awayChased
+    ? `${Math.max(1, 10 - inn2Wickets)} wkts`
+    : `${Math.max(1, inn1TotalRuns - inn2TotalRuns)} runs`;
+
+  const summary = awayChased
+    ? `${winTeam.shortName} ${inn2TotalRuns}/${inn2Wickets} beat ${loseTeam.shortName} ${inn1TotalRuns}/${inn1Wickets} by ${marginText}`
+    : `${winTeam.shortName} ${inn1TotalRuns}/${inn1Wickets} beat ${loseTeam.shortName} ${inn2TotalRuns}/${inn2Wickets} by ${marginText}`;
+
+  const resultText = `${winTeam.name.toUpperCase()} WON BY ${marginText.toUpperCase()}!`;
+  const nrrDelta = Number(Math.max(0.05, Math.min(0.45, Math.abs(inn1TotalRuns - inn2TotalRuns) * 0.012)).toFixed(2));
+
+  const matchState: MatchLiveState = {
+    id: fixtureId,
+    leagueId,
+    format,
+    homeTeam: homeTeamObj,
+    awayTeam: awayTeamObj,
+    venue,
+    pitchType: 'Natural',
+    weather: 'Clear Night',
+    currentInningsIndex: 2,
+    innings1,
+    innings2,
+    targetRuns: inn1TotalRuns + 1,
+    status: 'finished',
+    winnerTeamId: winnerId,
+    resultText,
+    lastBallOutcome: null,
+    isBallInFlight: false,
+    bowlingTactics: {
+      length: 'good',
+      line: 'outside_off',
+      angle: 'over',
+      variation: 'Stock ball',
+      fielders: INITIAL_DEFAULT_FIELD
+    },
+    battingTactics: {
+      approach: 'balanced',
+      targetSide: 'all',
+      runningRisk: 'normal'
+    }
+  };
+
+  return { matchState, summary, winnerId, loserId, nrrDelta };
+}
+
+// ============================================================================
+// STORAGE QUOTA GUARD & COMPACT SERIALIZATION HELPERS
+// ============================================================================
+export function pruneLegacyCacheKeys() {
+  try {
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && (
+        k.includes('_v1') || k.includes('_v2') || k.includes('_v3') || k.includes('_v4') || k.includes('_v5') ||
+        k.startsWith('crick_') || k.startsWith('cb_cache')
+      )) {
+        keysToRemove.push(k);
+      }
+    }
+    keysToRemove.forEach(k => localStorage.removeItem(k));
+  } catch {}
+}
+
+if (typeof window !== 'undefined') {
+  pruneLegacyCacheKeys();
+}
+
+export function safeStorageSet(key: string, value: string): boolean {
+  if (typeof localStorage === 'undefined') {
+    return true;
+  }
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch (err: any) {
+    if (err && (err.name === 'QuotaExceededError' || err.code === 22 || err.code === 1014 || err.number === -2147024882)) {
+      console.warn(`[SafeStorage] QuotaExceededError on key "${key}". Performing storage cleanup...`);
+      try {
+        pruneLegacyCacheKeys();
+        // If still full, prune completed matches cache
+        localStorage.removeItem('ms_completed_matches_v6');
+        localStorage.setItem(key, value);
+        return true;
+      } catch {
+        console.warn(`[SafeStorage] Unable to persist "${key}" due to origin quota. Suppressing QuotaExceededError crash.`);
+        return false;
+      }
+    }
+    return false;
+  }
+}
+
+export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [activeTab, setActiveTab] = useState<MainTab>('landing');
+  const [activeSaveSlot, setActiveSaveSlotState] = useState<1 | 2 | 3>(() => {
+    const saved = localStorage.getItem('ms_active_slot_v6');
+    if (saved === '2') return 2;
+    if (saved === '3') return 3;
+    return 1;
+  });
+
+  const setActiveSaveSlot = useCallback((slot: 1 | 2 | 3) => {
+    setActiveSaveSlotState(slot);
+    safeStorageSet('ms_active_slot_v6', String(slot));
+  }, []);
+
+  const [players, setPlayers] = useState<Player[]>(() => {
+    const saved = localStorage.getItem('ms_players_v6');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length >= 200) {
+          return parsed;
+        }
+      } catch {}
+    }
+    const fresh = createFreshPlayers();
+    safeStorageSet('ms_players_v6', JSON.stringify(fresh));
+    return fresh;
+  });
+
+  const [teams, setTeams] = useState<Team[]>(() => {
+    const freshPlayers = createFreshPlayers();
+    const saved = localStorage.getItem('ms_teams_v6');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length >= 10) {
+          return parsed.map((team: Team) => ({
+            ...team,
+            squad: team.squad && team.squad.length > 5
+              ? team.squad
+              : freshPlayers.filter(p => p.clubId === team.id)
+          }));
+        }
+      } catch {}
+    }
+
+    const updatedTeams = INITIAL_TEAMS.map(team => ({
+      ...team,
+      squad: freshPlayers.filter(p => p.clubId === team.id)
+    }));
+    const compactTeams = updatedTeams.map(t => ({ ...t, squad: [] }));
+    safeStorageSet('ms_teams_v6', JSON.stringify(compactTeams));
+    return updatedTeams;
+  });
+
+  const [leagues, setLeagues] = useState<League[]>(() => {
+    const saved = localStorage.getItem('ms_leagues_v6');
+    const savedProfile = localStorage.getItem('ms_profile_v6');
+    let activeUserTeamId = INITIAL_COACH_PROFILE.clubTeamId;
+    if (savedProfile) {
+      try {
+        activeUserTeamId = JSON.parse(savedProfile).clubTeamId || activeUserTeamId;
+      } catch {}
+    }
+
+    if (saved) {
+      try {
+        const parsed: League[] = JSON.parse(saved);
+        const iplLeagues = Array.isArray(parsed) ? parsed.filter(l => l.id === 'pt20') : [];
+        if (iplLeagues.length > 0 && iplLeagues[0].standings && iplLeagues[0].standings.length > 0) {
+          const result = iplLeagues.map(l => {
+            const hasFullSchedule = l.calendarDates && l.calendarDates.length >= 45;
+            return {
+              ...l,
+              playoffs: l.playoffs || createInitialPlayoffs(l.standings),
+              currentDateIndex: hasFullSchedule ? l.currentDateIndex : 0,
+              calendarDates: hasFullSchedule
+                ? l.calendarDates
+                : buildSeasonCalendarForTeam(activeUserTeamId, INITIAL_TEAMS, false, 2026)
+            };
+          });
+          safeStorageSet('ms_leagues_v6', JSON.stringify(result));
+          return result;
+        }
+      } catch {}
+    }
+    const seededLeagues = INITIAL_LEAGUES.map(l => ({
+      ...l,
+      currentDateIndex: 0,
+      calendarDates: buildSeasonCalendarForTeam(activeUserTeamId, INITIAL_TEAMS, false, 2026)
+    }));
+    safeStorageSet('ms_leagues_v6', JSON.stringify(seededLeagues));
+    return seededLeagues;
+  });
+
+  const [currentLeagueId, setCurrentLeagueId] = useState<string>('pt20');
+
+  const [nations, setNations] = useState<Nation[]>(() => {
+    const saved = localStorage.getItem('ms_nations_v6');
+    return saved ? JSON.parse(saved) : INITIAL_NATIONS;
+  });
+
+  const [coachProfile, setCoachProfile] = useState<CoachProfile>(() => {
+    const saved = localStorage.getItem('ms_profile_v6');
+    if (saved) {
+      try {
+        return { ...INITIAL_COACH_PROFILE, ...JSON.parse(saved), proUnlocked: true };
+      } catch {}
+    }
+    return { ...INITIAL_COACH_PROFILE, proUnlocked: true };
+  });
+
+  const [achievements, setAchievements] = useState<Achievement[]>(() => {
+    const saved = localStorage.getItem('ms_achievements_v6');
+    if (saved) {
+      try {
+        const parsed: Achievement[] = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length === 79) {
+          return parsed;
+        }
+      } catch {}
+    }
+    return INITIAL_ACHIEVEMENTS;
+  });
+
+  const [jobOffers, setJobOffers] = useState<JobOffer[]>(() => {
+    const saved = localStorage.getItem('ms_job_offers_v6');
+    return saved ? JSON.parse(saved) : INITIAL_JOB_OFFERS;
+  });
+
+  const [homePitch, setHomePitchState] = useState<string>(() => {
+    return localStorage.getItem('ms_home_pitch_v6') || 'Natural';
+  });
+
+  const setHomePitch = useCallback((pitch: string) => {
+    setHomePitchState(pitch);
+    localStorage.setItem('ms_home_pitch_v6', pitch);
+  }, []);
+
+  const [simTokens, setSimTokens] = useState<number>(() => {
+    const saved = localStorage.getItem('ms_sim_tokens_v6');
+    return saved !== null ? Math.max(999, Number(saved)) : 999;
+  });
+
+  const [squadStamina, setSquadStamina] = useState<number>(() => {
+    const saved = localStorage.getItem('ms_squad_stamina_v6');
+    return saved !== null ? Math.max(40, Math.min(100, Number(saved))) : 100;
+  });
+
+  const [completedMatchesHistory, setCompletedMatchesHistory] = useState<CompletedMatchRecord[]>(() => {
+    const saved = localStorage.getItem('ms_completed_matches_v6');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      } catch {}
+    }
+    return INITIAL_COMPLETED_MATCHES;
+  });
+
+  const userTeam = useMemo(() => {
+    const found = teams.find(t => t.id === coachProfile.clubTeamId);
+    return found || teams[0];
+  }, [teams, coachProfile.clubTeamId]);
+
+  const [inboxMessages, setInboxMessages] = useState<InboxMessage[]>(() => {
+    const saved = localStorage.getItem('ms_inbox_messages_v6');
+    if (saved) {
+      try {
+        const parsed: InboxMessage[] = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      } catch {}
+    }
+    const initTeam = INITIAL_TEAMS.find(t => t.id === INITIAL_COACH_PROFILE.clubTeamId) || INITIAL_TEAMS[0];
+    return buildInitialInboxMessages(initTeam, INITIAL_PLAYERS);
+  });
+
+  const [nationalSquadIds, setNationalSquadIdsState] = useState<string[]>(() => {
+    const saved = localStorage.getItem('ms_national_squad_ids_v6');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length >= 11) return parsed;
+      } catch {}
+    }
+    return INITIAL_PLAYERS.filter(p => p.country === 'India').slice(0, 15).map(p => p.id);
+  });
+
+  const setNationalSquadIds = useCallback((ids: string[]) => {
+    setNationalSquadIdsState(ids);
+    localStorage.setItem('ms_national_squad_ids_v6', JSON.stringify(ids));
+  }, []);
+
+  const [internationalSeries, setInternationalSeries] = useState<InternationalSeriesState>(() => {
+    const saved = localStorage.getItem('ms_intl_series_v6');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed && parsed.userNationName && Array.isArray(parsed.matches)) return parsed;
+      } catch {}
+    }
+    const initNation = INITIAL_NATIONS.find(n => n.id === INITIAL_COACH_PROFILE.nationalTeamId) || INITIAL_NATIONS[0];
+    return buildInitialSeriesForNation(initNation, INITIAL_NATIONS);
+  });
+
+  const [settings, setSettingsState] = useState<GameSettings>(() => {
+    const saved = localStorage.getItem('ms_settings');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed.coachTips === 'boolean') return parsed;
+      } catch {}
+    }
+    return {
+      coachTips: true,
+      tacticsAuto: 'key_moments',
+      matchAnimations: 'quick'
+    };
+  });
+
+  const updateSettings = useCallback((partial: Partial<GameSettings>) => {
+    setSettingsState(prev => {
+      const next = { ...prev, ...partial };
+      localStorage.setItem('ms_settings', JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  const readSaveSlots = useCallback((): SaveSlotMeta[] => {
+    const slots: SaveSlotMeta[] = [];
+    for (const slotNum of [1, 2, 3] as const) {
+      const raw = localStorage.getItem(`ms_save_slot_v6_${slotNum}`);
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw);
+          slots.push({
+            slotNumber: slotNum,
+            hasSave: true,
+            teamName: parsed.teamName || userTeam.name,
+            teamShortName: parsed.teamShortName || userTeam.shortName,
+            logoEmoji: parsed.logoEmoji || userTeam.logoEmoji || '🏏',
+            seasonName: parsed.seasonName || 'Season 2025/26',
+            savedAt: parsed.savedAt || 'Saved'
+          });
+          continue;
+        } catch {}
+      }
+      slots.push({
+        slotNumber: slotNum,
+        hasSave: false,
+        teamName: 'Empty Slot',
+        teamShortName: '---',
+        logoEmoji: '📂',
+        seasonName: 'No career saved',
+        savedAt: ''
+      });
+    }
+    return slots;
+  }, [userTeam.name, userTeam.shortName, userTeam.logoEmoji]);
+
+  const [saveSlots, setSaveSlots] = useState<SaveSlotMeta[]>(() => readSaveSlots());
+
+  useEffect(() => {
+    setSaveSlots(readSaveSlots());
+  }, [readSaveSlots]);
+
+  const writeSlotSnapshot = useCallback((
+    slotNumber: 1 | 2 | 3,
+    snap: {
+      team: Team;
+      seasonName: string;
+      coach: CoachProfile;
+      teams: Team[];
+      players: Player[];
+      leagues: League[];
+      nations: Nation[];
+      achievements: Achievement[];
+      homePitch: string;
+      simTokens: number;
+      squadStamina: number;
+      completedMatchesHistory: CompletedMatchRecord[];
+      inboxMessages: InboxMessage[];
+      nationalSquadIds: string[];
+      internationalSeries: InternationalSeriesState;
+    }
+  ) => {
+    const nowStr = new Date().toLocaleString([], {
+      day: '2-digit',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+
+    // 1. Strip redundant squad array duplication from teams (reconstructed on load from players, saving ~1.2 MB)
+    const compactTeams = (snap.teams || []).map(t => ({
+      ...t,
+      squad: []
+    }));
+
+    // 2. Strip heavy match simulation telemetry from calendar dates (saving ~1.5 MB)
+    const compactLeagues = (snap.leagues || []).map(l => ({
+      ...l,
+      calendarDates: (l.calendarDates || []).map(cd => ({
+        ...cd,
+        matchFixture: cd.matchFixture ? {
+          ...cd.matchFixture,
+          completedMatchState: undefined
+        } : undefined,
+        otherMatches: (cd.otherMatches || []).map(om => ({
+          ...om,
+          completedMatchState: undefined
+        }))
+      }))
+    }));
+
+    // 3. Keep latest 10 completed matches for historical archive
+    const compactHistory = (snap.completedMatchesHistory || []).slice(0, 10);
+
+    const payload = {
+      slotNumber,
+      teamName: snap.team.name,
+      teamShortName: snap.team.shortName,
+      logoEmoji: snap.team.logoEmoji || '🏏',
+      seasonName: snap.seasonName || 'Season 2025/26',
+      savedAt: nowStr,
+      coachProfile: snap.coach,
+      teams: compactTeams,
+      players: snap.players,
+      leagues: compactLeagues,
+      nations: snap.nations,
+      achievements: snap.achievements,
+      homePitch: snap.homePitch,
+      simTokens: snap.simTokens,
+      squadStamina: snap.squadStamina,
+      completedMatchesHistory: compactHistory,
+      inboxMessages: (snap.inboxMessages || []).slice(0, 8),
+      nationalSquadIds: snap.nationalSquadIds,
+      internationalSeries: snap.internationalSeries
+    };
+
+    const serialized = JSON.stringify(payload);
+    safeStorageSet(`ms_save_slot_v6_${slotNumber}`, serialized);
+
+    setSaveSlots(prev => prev.map(s =>
+      s.slotNumber === slotNumber
+        ? {
+            slotNumber,
+            hasSave: true,
+            teamName: snap.team.name,
+            teamShortName: snap.team.shortName,
+            logoEmoji: snap.team.logoEmoji || '🏏',
+            seasonName: snap.seasonName || 'Season 2025/26',
+            savedAt: nowStr
+          }
+        : s
+    ));
+  }, []);
+
+  const saveToSlot = useCallback((slotNumber: 1 | 2 | 3) => {
+    const activeLeague = leagues.find(l => l.id === currentLeagueId) || leagues[0];
+    setActiveSaveSlot(slotNumber);
+    writeSlotSnapshot(slotNumber, {
+      team: userTeam,
+      seasonName: activeLeague?.seasonName || 'Season 2025/26',
+      coach: coachProfile,
+      teams,
+      players,
+      leagues,
+      nations,
+      achievements,
+      homePitch,
+      simTokens,
+      squadStamina,
+      completedMatchesHistory,
+      inboxMessages,
+      nationalSquadIds,
+      internationalSeries
+    });
+    sound.playTap();
+  }, [
+    leagues, currentLeagueId, userTeam, coachProfile, teams, players,
+    nations, achievements, homePitch, simTokens, squadStamina,
+    completedMatchesHistory, inboxMessages, nationalSquadIds,
+    internationalSeries, setActiveSaveSlot, writeSlotSnapshot
+  ]);
+
+  const loadFromSlot = useCallback((slotNumber: 1 | 2 | 3): boolean => {
+    const raw = localStorage.getItem(`ms_save_slot_v6_${slotNumber}`);
+    if (!raw) return false;
+    try {
+      const parsed = JSON.parse(raw);
+      setActiveSaveSlot(slotNumber);
+      recordedMatchIdsRef.current.clear();
+      setMatchLiveState(null);
+      if (parsed.coachProfile) setCoachProfile(parsed.coachProfile);
+
+      const loadedPlayers: Player[] = Array.isArray(parsed.players) ? parsed.players : players;
+      if (Array.isArray(parsed.players)) setPlayers(loadedPlayers);
+
+      if (Array.isArray(parsed.teams)) {
+        const hydratedTeams = parsed.teams.map((t: Team) => ({
+          ...t,
+          squad: t.squad && t.squad.length > 5
+            ? t.squad
+            : loadedPlayers.filter(p => p.clubId === t.id)
+        }));
+        setTeams(hydratedTeams);
+      }
+      if (Array.isArray(parsed.leagues)) {
+        const filteredLeagues = parsed.leagues.filter(
+          (l: League) => l.id === 'pt20' || l.id === 'league_ipl' || l.name?.toLowerCase().includes('indian premier')
+        );
+        if (filteredLeagues.length > 0) setLeagues(filteredLeagues);
+      }
+      if (Array.isArray(parsed.nations)) setNations(parsed.nations);
+      if (Array.isArray(parsed.achievements)) setAchievements(parsed.achievements);
+      if (parsed.homePitch) setHomePitch(parsed.homePitch);
+      if (typeof parsed.simTokens === 'number') setSimTokens(parsed.simTokens);
+      if (typeof parsed.squadStamina === 'number') setSquadStamina(parsed.squadStamina);
+      if (Array.isArray(parsed.completedMatchesHistory)) setCompletedMatchesHistory(parsed.completedMatchesHistory);
+      if (Array.isArray(parsed.inboxMessages)) setInboxMessages(parsed.inboxMessages);
+      if (Array.isArray(parsed.nationalSquadIds)) setNationalSquadIds(parsed.nationalSquadIds);
+      if (parsed.internationalSeries) setInternationalSeries(parsed.internationalSeries);
+      sound.playCrowdCheer(0.7);
+      return true;
+    } catch {
+      return false;
+    }
+  }, [setHomePitch, setNationalSquadIds, setActiveSaveSlot, players]);
+
+  const deleteSlot = useCallback((slotNumber: 1 | 2 | 3) => {
+    localStorage.removeItem(`ms_save_slot_v6_${slotNumber}`);
+    AsyncStorage.removeItem(`ms_save_slot_v6_${slotNumber}`).catch(() => {});
+    setSaveSlots(prev => prev.map(s => {
+      if (s.slotNumber === slotNumber) {
+        return {
+          slotNumber,
+          hasSave: false,
+          teamName: 'Empty Slot',
+          teamShortName: '---',
+          logoEmoji: '📂',
+          seasonName: 'No career saved',
+          savedAt: ''
+        };
+      }
+      return s;
+    }));
+    sound.playTap();
+  }, []);
+
+  const [matchLiveState, setMatchLiveState] = useState<MatchLiveState | null>(null);
+  const [pendingRetentionModal, setPendingRetentionModal] = useState<boolean>(false);
+  const recordedMatchIdsRef = useRef<Set<string>>(new Set());
+
+  // Auction State
+  const [auctionLot, setAuctionLot] = useState<AuctionLot | null>(null);
+  const [auctionPool, setAuctionPool] = useState<Player[]>([]);
+  const [currentAuctionIndex, setCurrentAuctionIndex] = useState<number>(0);
+  const [isAiBidding, setIsAiBidding] = useState<boolean>(false);
+  const [aiBiddingSpeed, setAiBiddingSpeed] = useState<'instant' | 'fast' | 'normal'>('normal');
+
+  // Save changes to v6 keys safely with compact data and auto-sync to the currently active save slot
+  useEffect(() => {
+    safeStorageSet('ms_players_v6', JSON.stringify(players));
+  }, [players]);
+
+  useEffect(() => {
+    // Strip redundant 250-player squad arrays to prevent duplicate megabytes of data
+    const compactTeams = teams.map(t => ({ ...t, squad: [] }));
+    safeStorageSet('ms_teams_v6', JSON.stringify(compactTeams));
+  }, [teams]);
+
+  useEffect(() => {
+    // Strip heavy match telemetry from calendar fixtures
+    const compactLeagues = leagues.map(l => ({
+      ...l,
+      calendarDates: (l.calendarDates || []).map(cd => ({
+        ...cd,
+        matchFixture: cd.matchFixture ? { ...cd.matchFixture, completedMatchState: undefined } : undefined,
+        otherMatches: (cd.otherMatches || []).map(om => ({ ...om, completedMatchState: undefined }))
+      }))
+    }));
+    safeStorageSet('ms_leagues_v6', JSON.stringify(compactLeagues));
+  }, [leagues]);
+
+  useEffect(() => {
+    safeStorageSet('ms_nations_v6', JSON.stringify(nations));
+  }, [nations]);
+
+  useEffect(() => {
+    safeStorageSet('ms_profile_v6', JSON.stringify(coachProfile));
+  }, [coachProfile]);
+
+  useEffect(() => {
+    safeStorageSet('ms_achievements_v6', JSON.stringify(achievements));
+  }, [achievements]);
+
+  useEffect(() => {
+    safeStorageSet('ms_sim_tokens_v6', String(simTokens));
+  }, [simTokens]);
+
+  useEffect(() => {
+    safeStorageSet('ms_squad_stamina_v6', String(squadStamina));
+  }, [squadStamina]);
+
+  useEffect(() => {
+    safeStorageSet('ms_completed_matches_v6', JSON.stringify((completedMatchesHistory || []).slice(0, 10)));
+  }, [completedMatchesHistory]);
+
+  useEffect(() => {
+    safeStorageSet('ms_inbox_messages_v6', JSON.stringify((inboxMessages || []).slice(0, 8)));
+  }, [inboxMessages]);
+
+  useEffect(() => {
+    safeStorageSet('ms_intl_series_v6', JSON.stringify(internationalSeries));
+  }, [internationalSeries]);
+
+  // Automatically keep the active save slot synced with debouncing to prevent thrashing storage quota
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const activeLeague = leagues.find(l => l.id === currentLeagueId) || leagues[0];
+      writeSlotSnapshot(activeSaveSlot, {
+        team: userTeam,
+        seasonName: activeLeague?.seasonName || 'Season 2025/26',
+        coach: coachProfile,
+        teams,
+        players,
+        leagues,
+        nations,
+        achievements,
+        homePitch,
+        simTokens,
+        squadStamina,
+        completedMatchesHistory,
+        inboxMessages,
+        nationalSquadIds,
+        internationalSeries
+      });
+    }, 1500);
+
+    return () => clearTimeout(timer);
+  }, [
+    activeSaveSlot, userTeam, leagues, currentLeagueId, coachProfile,
+    teams, players, nations, achievements, homePitch, simTokens,
+    squadStamina, completedMatchesHistory, inboxMessages,
+    nationalSquadIds, internationalSeries, writeSlotSnapshot
+  ]);
+
+  const unlockAchievement = useCallback((id: string) => {
+    setAchievements(prev => prev.map(a => {
+      if (a.id === id && !a.unlocked) {
+        sound.playCrowdCheer(0.6);
+        return {
+          ...a,
+          unlocked: true,
+          unlockedDate: 'TODAY'
+        };
+      }
+      return a;
+    }));
+  }, []);
+
+  const updatePlayer = useCallback((updated: Player) => {
+    setPlayers(prev => prev.map(p => p.id === updated.id ? updated : p));
+    setTeams(prev => prev.map(t => ({
+      ...t,
+      squad: t.squad.map(p => p.id === updated.id ? updated : p)
+    })));
+  }, []);
+
+  // Complete career reset starting from 0 for all players, teams, standings, and coach stats
+  const startNewCareer = useCallback((
+    teamId: string,
+    coachOverrides?: Partial<CoachProfile>,
+    targetSlot?: 1 | 2 | 3
+  ) => {
+    const slotToUse = targetSlot || activeSaveSlot;
+    setActiveSaveSlot(slotToUse);
+
+    const freshPlayers = createFreshPlayers();
+    const freshTeams = INITIAL_TEAMS.map(t => ({
+      ...t,
+      isUserTeam: t.id === teamId,
+      squad: freshPlayers.filter(p => p.clubId === t.id)
+    }));
+    const chosenTeam = freshTeams.find(t => t.id === teamId) || freshTeams[0];
+
+    const freshStandings = INITIAL_TEAMS.map(t => ({
+      teamId: t.id,
+      played: 0,
+      won: 0,
+      lost: 0,
+      tied: 0,
+      points: 0,
+      nrr: 0,
+      recentForm: [] as ('W' | 'L' | 'T')[]
+    }));
+
+    const freshLeagues: League[] = INITIAL_LEAGUES.map(l => ({
+      ...l,
+      seasonName: 'Season 2025/26',
+      standings: freshStandings,
+      playoffs: createInitialPlayoffs(freshStandings),
+      currentDateIndex: 0,
+      calendarDates: buildSeasonCalendarForTeam(teamId, freshTeams, false, 2026)
+    }));
+
+    const freshNations = INITIAL_NATIONS.map(n => ({
+      ...n,
+      isUserManaging: false,
+      isCoachedByPlayer: false
+    }));
+
+    const freshCoach: CoachProfile = {
+      ...INITIAL_COACH_PROFILE,
+      name: coachOverrides?.name || coachProfile.name || 'Arjun Rao',
+      age: coachOverrides?.age || coachProfile.age || 44,
+      nationality: coachOverrides?.nationality || coachProfile.nationality || 'India',
+      difficulty: coachOverrides?.difficulty || coachProfile.difficulty || 'Normal',
+      reputation: 'Rookie',
+      proUnlocked: true,
+      clubTeamId: teamId,
+      nationalTeamId: null,
+      domesticTitles: 0,
+      internationalTitles: 0,
+      domesticStats: {
+        seasons: 1,
+        matches: 0,
+        wins: 0,
+        losses: 0,
+        winPct: 0,
+        titles: 0,
+        playoffRuns: 0,
+        bestStreak: 0,
+        currentStreak: 0
+      },
+      nationalStats: {
+        matches: 0,
+        wins: 0,
+        losses: 0,
+        winPct: 0,
+        worldCups: 0,
+        rank: 1
+      },
+      stats: {
+        matchesCoached: 0,
+        matchesWon: 0,
+        matchesLost: 0,
+        matchesTied: 0,
+        winPercentage: 0,
+        bestWinStreak: 0,
+        trophies: []
+      },
+      boardTargets: INITIAL_COACH_PROFILE.boardTargets.map(bt => ({ ...bt, completed: false })),
+      clubStints: [
+        {
+          id: `stint_${teamId}_2026`,
+          teamId,
+          teamName: chosenTeam.city || chosenTeam.name,
+          period: '2026–present',
+          seasons: 1,
+          matches: 0,
+          wins: 0,
+          losses: 0,
+          winPct: 0,
+          titles: 0
+        }
+      ]
+    };
+
+    const freshAchievements = INITIAL_ACHIEVEMENTS.map(a => ({
+      ...a,
+      unlocked: false,
+      unlockedDate: undefined
+    }));
+    const freshInbox = buildInitialInboxMessages(chosenTeam, freshPlayers);
+    const freshIntlSeries = buildInitialSeriesForNation(freshNations[0], freshNations);
+    const freshNatSquadIds = freshPlayers.filter(p => p.country === 'India').slice(0, 15).map(p => p.id);
+
+    recordedMatchIdsRef.current.clear();
+    setMatchLiveState(null);
+    setPlayers(freshPlayers);
+    setTeams(freshTeams);
+    setLeagues(freshLeagues);
+    setNations(freshNations);
+    setCoachProfile(freshCoach);
+    setAchievements(freshAchievements);
+    setCompletedMatchesHistory([]);
+    setInboxMessages(freshInbox);
+    setInternationalSeries(freshIntlSeries);
+    setNationalSquadIds(freshNatSquadIds);
+    setSquadStamina(100);
+    setHomePitch('Natural');
+
+    writeSlotSnapshot(slotToUse, {
+      team: chosenTeam,
+      seasonName: 'Season 2025/26',
+      coach: freshCoach,
+      teams: freshTeams,
+      players: freshPlayers,
+      leagues: freshLeagues,
+      nations: freshNations,
+      achievements: freshAchievements,
+      homePitch: 'Natural',
+      simTokens: 999,
+      squadStamina: 100,
+      completedMatchesHistory: [],
+      inboxMessages: freshInbox,
+      nationalSquadIds: freshNatSquadIds,
+      internationalSeries: freshIntlSeries
+    });
+
+    sound.playTap();
+  }, [activeSaveSlot, coachProfile.name, coachProfile.age, coachProfile.nationality, coachProfile.difficulty, setActiveSaveSlot, setHomePitch, setNationalSquadIds, writeSlotSnapshot]);
+
+  const selectUserTeam = useCallback((teamId: string) => {
+    startNewCareer(teamId);
+  }, [startNewCareer]);
+
+  const replyToInboxMessage = useCallback((
+    messageId: string,
+    replyOption: 'promise_game_time' | 'demand_nets' | 'back_current_xi'
+  ) => {
+    const targetMsg = inboxMessages.find(m => m.id === messageId);
+    if (!targetMsg || targetMsg.resolved) return;
+
+    sound.playTap();
+    let replyLabel = '';
+    let impactSummary = '';
+
+    if (replyOption === 'promise_game_time') {
+      replyLabel = 'Promised upcoming game time';
+      impactSummary = '+10 Morale · +3 Form';
+      const applyBoost = (p: Player): Player => {
+        if (p.id === targetMsg.playerId) {
+          return {
+            ...p,
+            morale: Math.min(100, (p.morale || 80) + 10),
+            form: Math.min(100, (p.form || 75) + 3)
+          };
+        }
+        return p;
+      };
+      setPlayers(prev => prev.map(applyBoost));
+      setTeams(prev => prev.map(t => ({ ...t, squad: t.squad.map(applyBoost) })));
+    } else if (replyOption === 'demand_nets') {
+      replyLabel = 'Demanded harder work in nets';
+      impactSummary = '+8 Form · +1 Temp · -4 Morale';
+      const applyBoost = (p: Player): Player => {
+        if (p.id === targetMsg.playerId) {
+          return {
+            ...p,
+            form: Math.min(100, (p.form || 75) + 8),
+            morale: Math.max(40, (p.morale || 80) - 4),
+            ratings: {
+              ...p.ratings,
+              tmp: Math.min(99, (p.ratings.tmp || 75) + 1)
+            }
+          };
+        }
+        return p;
+      };
+      setPlayers(prev => prev.map(applyBoost));
+      setTeams(prev => prev.map(t => ({ ...t, squad: t.squad.map(applyBoost) })));
+    } else if (replyOption === 'back_current_xi') {
+      replyLabel = 'Backed the current Starting XI';
+      impactSummary = '+6 Captain Morale · +2 XI Morale';
+      const applyBoost = (p: Player): Player => {
+        if (p.clubId !== userTeam.id) return p;
+        if (p.id === userTeam.captainId || p.isCaptain) {
+          return { ...p, morale: Math.min(100, (p.morale || 82) + 6) };
+        }
+        if (userTeam.playingXIIds.includes(p.id)) {
+          return { ...p, morale: Math.min(100, (p.morale || 80) + 2) };
+        }
+        if (p.id === targetMsg.playerId) {
+          return { ...p, morale: Math.max(45, (p.morale || 78) - 2) };
+        }
+        return p;
+      };
+      setPlayers(prev => prev.map(applyBoost));
+      setTeams(prev => prev.map(t => ({ ...t, squad: t.squad.map(applyBoost) })));
+    }
+
+    setInboxMessages(prev => prev.map(m =>
+      m.id === messageId
+        ? { ...m, resolved: true, selectedReply: replyLabel, impactSummary }
+        : m
+    ));
+  }, [inboxMessages, userTeam.id, userTeam.captainId, userTeam.playingXIIds]);
+
+  const updateCoachProfile = useCallback((updater: Partial<CoachProfile>) => {
+    setCoachProfile(prev => ({ ...prev, ...updater }));
+  }, []);
+
+  const updateUserTeamXI = useCallback((newXIIds: string[]) => {
+    setTeams(prev => prev.map(t => {
+      if (t.id === userTeam.id) {
+        return { ...t, playingXIIds: newXIIds };
+      }
+      return t;
+    }));
+    sound.playTap();
+  }, [userTeam.id]);
+
+  const setTeamCaptain = useCallback((playerId: string) => {
+    setTeams(prev => prev.map(t => {
+      if (t.id === userTeam.id) {
+        return {
+          ...t,
+          captainId: playerId,
+          squad: t.squad.map(p => ({ ...p, isCaptain: p.id === playerId }))
+        };
+      }
+      return t;
+    }));
+    setPlayers(prev => prev.map(p => {
+      if (p.clubId === userTeam.id) {
+        return { ...p, isCaptain: p.id === playerId };
+      }
+      return p;
+    }));
+    sound.playCrowdCheer(0.5);
+  }, [userTeam.id]);
+
+  const acceptJobOffer = useCallback((offer: JobOffer) => {
+    if (offer.type === 'club') {
+      const newTeam = teams.find(t => t.name.toLowerCase().includes(offer.name.toLowerCase()));
+      if (newTeam) {
+        setTeams(prev => prev.map(t => ({
+          ...t,
+          isUserTeam: t.id === newTeam.id
+        })));
+        setCoachProfile(prev => {
+          const existingStints = prev.clubStints && prev.clubStints.length > 0
+            ? prev.clubStints.map((s, idx, arr) =>
+                idx === arr.length - 1 && s.period.includes('present')
+                  ? { ...s, period: s.period.replace('–present', '') }
+                  : s
+              )
+            : [];
+          const nextStints = prev.clubTeamId === newTeam.id
+            ? existingStints
+            : [
+                ...existingStints,
+                {
+                  id: `stint_${newTeam.id}_${Date.now()}`,
+                  teamId: newTeam.id,
+                  teamName: newTeam.city || newTeam.name,
+                  period: '2026–present',
+                  seasons: 1,
+                  matches: 0,
+                  wins: 0,
+                  losses: 0,
+                  winPct: 0,
+                  titles: 0
+                }
+              ];
+          return {
+            ...prev,
+            clubTeamId: newTeam.id,
+            clubStints: nextStints
+          };
+        });
+      }
+    } else {
+      const nation = nations.find(n => offer.name.toLowerCase().includes(n.name.toLowerCase()));
+      if (nation) {
+        setCoachProfile(prev => ({
+          ...prev,
+          nationalTeamId: nation.id
+        }));
+        setNations(prev => prev.map(n => ({
+          ...n,
+          isUserManaging: n.id === nation.id
+        })));
+        const natPlayers = players.filter(p => p.country === nation.name).slice(0, 15).map(p => p.id);
+        if (natPlayers.length >= 11) {
+          setNationalSquadIds(natPlayers);
+        } else {
+          const fallbackIds = [...natPlayers, ...players.filter(p => !natPlayers.includes(p.id)).slice(0, 15 - natPlayers.length).map(p => p.id)];
+          setNationalSquadIds(fallbackIds);
+        }
+        setInternationalSeries(buildInitialSeriesForNation(nation, nations));
+        unlockAchievement('ach_55');
+        if ((nation.rankT20 ?? 99) <= 4 || (nation.rankODI ?? 99) <= 4 || (nation.rankTest ?? 99) <= 4) {
+          unlockAchievement('ach_59');
+        }
+      }
+    }
+    sound.playCrowdCheer(0.7);
+    setActiveTab('hub');
+  }, [teams, nations, players, setNationalSquadIds, unlockAchievement]);
+
+  const resignNationalJob = useCallback(() => {
+    setCoachProfile(prev => ({ ...prev, nationalTeamId: null }));
+    setNations(prev => prev.map(n => ({ ...n, isUserManaging: false })));
+    sound.playTap();
+  }, []);
+
+  const buildTempNationalTeam = useCallback((nationName: string, playerPool: Player[]): Team => {
+    const natObj = nations.find(n => n.name.toLowerCase() === nationName.toLowerCase());
+    const countryMatches = playerPool.filter(p => p.country.toLowerCase() === nationName.toLowerCase());
+    const squad = countryMatches.length >= 11
+      ? countryMatches.slice(0, 15)
+      : [...countryMatches, ...playerPool.filter(p => p.country.toLowerCase() !== nationName.toLowerCase()).slice(0, 15 - countryMatches.length)];
+    return {
+      id: natObj?.id || `nat_${nationName.toLowerCase().replace(/\s+/g, '_')}`,
+      name: nationName,
+      shortName: natObj?.code || nationName.slice(0, 3).toUpperCase(),
+      city: nationName,
+      primaryColor: '#0284c7',
+      secondaryColor: '#38bdf8',
+      logoEmoji: natObj?.flag || '🌐',
+      purseCr: 100,
+      rtmCards: 0,
+      captainId: squad[0]?.id || 'p1',
+      playingXIIds: squad.slice(0, 11).map(p => p.id),
+      squad
+    };
+  }, [nations]);
+
+  const simSingleIntlMatch = useCallback((
+    homeNationName: string,
+    awayNationName: string,
+    format: 'T20' | 'ODI' | 'TEST'
+  ): string => {
+    const homeNat = buildTempNationalTeam(homeNationName, players);
+    const awayNat = buildTempNationalTeam(awayNationName, players);
+    const simRes = simulateAiFixtureScorecard(
+      `intl_sim_${Date.now()}`,
+      homeNat,
+      awayNat,
+      `${homeNationName} International Cricket Ground`,
+      format,
+      'intl',
+      players,
+      Date.now() % 1000
+    );
+    const nextPlayers = applyMatchToPlayerList(players, simRes.matchState);
+    setPlayers(nextPlayers);
+    setTeams(prev => prev.map(t => ({
+      ...t,
+      squad: t.squad.map(sp => nextPlayers.find(np => np.id === sp.id) || sp)
+    })));
+    return simRes.summary;
+  }, [players, buildTempNationalTeam]);
+
+  // Calendar advancement — dynamically simulates all AI domestic & international fixtures and updates every player's stats
+  const advanceCalendarDay = useCallback(() => {
+    const activeLeague = leagues.find(l => l.id === currentLeagueId) || leagues[0];
+    const nextIdx = activeLeague
+      ? (activeLeague.currentDateIndex + 1) % Math.max(1, activeLeague.calendarDates.length)
+      : 0;
+    const nextDayType = activeLeague?.calendarDates[nextIdx]?.type || 'training';
+
+    let workingPlayers = [...players];
+    const curDayIdx = activeLeague?.currentDateIndex || 0;
+    const curDayObj = activeLeague?.calendarDates[curDayIdx];
+
+    const simulatedOtherMap = new Map<string, { summary: string; winnerId: string; loserId: string; nrrDelta: number; matchState: MatchLiveState }>();
+    const simulatedIntlMap = new Map<string, { summary: string; matchState: MatchLiveState }>();
+
+    if (curDayObj) {
+      (curDayObj.otherMatches || []).forEach((om, omIdx) => {
+        if (om.completed) return;
+        const homeTeamObj = teams.find(t => t.id === om.homeTeamId) || teams[0];
+        const awayTeamObj = teams.find(t => t.id === om.awayTeamId) || teams[1];
+        const simRes = simulateAiFixtureScorecard(
+          om.id,
+          homeTeamObj,
+          awayTeamObj,
+          om.venue || `${homeTeamObj.city} Stadium`,
+          'T20',
+          currentLeagueId,
+          workingPlayers,
+          curDayIdx * 17 + omIdx * 11 + 3
+        );
+        workingPlayers = applyMatchToPlayerList(workingPlayers, simRes.matchState);
+        simulatedOtherMap.set(om.id, simRes);
+      });
+
+      (curDayObj.internationalMatches || []).forEach((im, imIdx) => {
+        if (im.completed) return;
+        const homeNat = buildTempNationalTeam(im.homeTeamId, workingPlayers);
+        const awayNat = buildTempNationalTeam(im.awayTeamId, workingPlayers);
+        const simRes = simulateAiFixtureScorecard(
+          im.id,
+          homeNat,
+          awayNat,
+          im.venue || `${im.homeTeamId} Stadium`,
+          im.format || 'T20',
+          'intl',
+          workingPlayers,
+          curDayIdx * 23 + imIdx * 13 + 7
+        );
+        workingPlayers = applyMatchToPlayerList(workingPlayers, simRes.matchState);
+        simulatedIntlMap.set(im.id, { summary: simRes.summary, matchState: simRes.matchState });
+      });
+    }
+
+    setLeagues(prev => prev.map(l => {
+      if (l.id === currentLeagueId) {
+        const lDayIdx = l.currentDateIndex;
+        let updatedStandings = [...l.standings];
+
+        const updatedCalendarDates = l.calendarDates.map((d, dIdx) => {
+          if (dIdx !== lDayIdx) return d;
+
+          const nextOtherMatches = (d.otherMatches || []).map(om => {
+            if (om.completed) return om;
+            const simRes = simulatedOtherMap.get(om.id);
+            if (!simRes) return om;
+
+            updatedStandings = updatedStandings.map(st => {
+              if (st.teamId === simRes.winnerId) {
+                return {
+                  ...st,
+                  played: st.played + 1,
+                  won: st.won + 1,
+                  points: st.points + 2,
+                  nrr: Number((st.nrr + simRes.nrrDelta).toFixed(2)),
+                  recentForm: ['W' as const, ...st.recentForm].slice(0, 5)
+                };
+              }
+              if (st.teamId === simRes.loserId) {
+                return {
+                  ...st,
+                  played: st.played + 1,
+                  lost: st.lost + 1,
+                  nrr: Number((st.nrr - simRes.nrrDelta).toFixed(2)),
+                  recentForm: ['L' as const, ...st.recentForm].slice(0, 5)
+                };
+              }
+              return st;
+            });
+
+            return {
+              ...om,
+              completed: true,
+              resultSummary: simRes.summary,
+              completedMatchState: simRes.matchState
+            };
+          });
+
+          const nextIntlMatches = (d.internationalMatches || []).map(im => {
+            if (im.completed) return im;
+            const simRes = simulatedIntlMap.get(im.id);
+            if (!simRes) return im;
+            return {
+              ...im,
+              completed: true,
+              resultSummary: simRes.summary,
+              completedMatchState: simRes.matchState
+            };
+          });
+
+          return {
+            ...d,
+            otherMatches: nextOtherMatches,
+            internationalMatches: nextIntlMatches,
+            matchFixture: d.type === 'international' && d.matchFixture && !d.matchFixture.completed
+              ? {
+                  ...d.matchFixture,
+                  completed: true,
+                  resultSummary: nextIntlMatches[0]?.resultSummary || 'Match completed',
+                  completedMatchState: nextIntlMatches[0]?.completedMatchState
+                }
+              : d.matchFixture
+          };
+        });
+
+        updatedStandings.sort((a, b) => b.points - a.points || b.nrr - a.nrr);
+        const idx = (l.currentDateIndex + 1) % Math.max(1, l.calendarDates.length);
+        return {
+          ...l,
+          standings: updatedStandings,
+          calendarDates: updatedCalendarDates,
+          currentDateIndex: idx
+        };
+      }
+      return l;
+    }));
+
+    // Update squad stamina and replenish sim tokens on rest days
+    if (nextDayType === 'rest') {
+      setSquadStamina(99);
+      setSimTokens(prev => Math.min(7, prev + 1));
+    } else if (nextDayType === 'match') {
+      setSquadStamina(prev => Math.max(78, prev - 2));
+    } else {
+      setSquadStamina(prev => Math.min(96, Math.max(82, prev + 3)));
+    }
+
+    // Natural recovery for tired/injured players + persist AI match stat updates (enhanced by Medical Center facility)
+    const userInfra = (() => {
+      try {
+        const raw = localStorage.getItem(`cc26_infra_${userTeam.id}`);
+        return raw ? JSON.parse(raw) : null;
+      } catch { return null; }
+    })();
+    const medCenterTier = userInfra?.medicalCenterTier || 1;
+    const fitnessRecovery = 2 + Math.floor(medCenterTier * 1.5);
+
+    const finalPlayers = workingPlayers.map(p => ({
+      ...p,
+      fitness: Math.min(100, p.fitness + fitnessRecovery),
+      injuryDays: Math.max(0, p.injuryDays - (medCenterTier >= 3 ? 2 : 1)),
+      isInjured: p.injuryDays - (medCenterTier >= 3 ? 2 : 1) > 0
+    }));
+    setPlayers(finalPlayers);
+    setTeams(prev => prev.map(t => ({
+      ...t,
+      squad: t.squad.map(sp => finalPlayers.find(fp => fp.id === sp.id) || sp)
+    })));
+
+    sound.playTap();
+  }, [currentLeagueId, leagues, players, teams, buildTempNationalTeam, userTeam.id]);
+
+  const setCalendarDateIndex = useCallback((idx: number) => {
+    setLeagues(prev => prev.map(l => {
+      if (l.id === currentLeagueId) {
+        const clamped = Math.max(0, Math.min(l.calendarDates.length - 1, idx));
+        const dayType = l.calendarDates[clamped]?.type;
+        if (dayType === 'rest') {
+          setSquadStamina(99);
+        }
+        return { ...l, currentDateIndex: clamped };
+      }
+      return l;
+    }));
+    sound.playTap();
+  }, [currentLeagueId]);
+
+  // Training drill with intensity & individual player XP progression (enhanced by Training Complex facility)
+  const trainSquad = useCallback((drillType: string, intensity: string = 'STANDARD') => {
+    const focus = drillType.toLowerCase();
+    const normIntensity = intensity.toUpperCase();
+    const proMult = 1.5;
+    const intMult = normIntensity === 'HARD' ? 2 : normIntensity === 'LIGHT' ? 1 : 1.5;
+    const statDelta = Math.max(1, Math.round(intMult));
+
+    const userInfra = (() => {
+      try {
+        const raw = localStorage.getItem(`cc26_infra_${userTeam.id}`);
+        return raw ? JSON.parse(raw) : null;
+      } catch { return null; }
+    })();
+    const trainComplexTier = userInfra?.trainingComplexTier || 1;
+    const infraXpMult = 1 + (trainComplexTier * 0.12);
+
+    // Stamina adjustment based on intensity and focus
+    const staminaDelta = focus === 'fitness'
+      ? (normIntensity === 'LIGHT' ? +6 : +3)
+      : (normIntensity === 'HARD' ? -8 : normIntensity === 'LIGHT' ? -2 : -5);
+    setSquadStamina(prev => Math.max(50, Math.min(100, prev + staminaDelta)));
+
+    let attributeUpdated = 'Squad Attributes';
+    const xpGains: TrainingTraineeGain[] = [];
+
+    const applyTrainingToPlayer = (p: Player): Player => {
+      if (p.clubId !== userTeam.id) return p;
+
+      const updated: Player = { ...p, ratings: { ...p.ratings } };
+      let baseXp = 2;
+      let statBoosted = 'BAT';
+
+      if (focus === 'batting') {
+        const isBatter = p.role === 'Top-order' || p.role === 'Middle-order' || p.role === 'Wk-bat' || p.role === 'All-rounder';
+        baseXp = isBatter ? (p.age <= 25 ? 5 : 4) : 1;
+        const xp = Math.max(1, Math.round(baseXp * intMult * (proMult > 1 ? 1.2 : 1) * infraXpMult));
+        updated.ratings.bat = Math.min(99, updated.ratings.bat + (isBatter ? statDelta : 1));
+        updated.ratings.pow = Math.min(99, updated.ratings.pow + (normIntensity === 'HARD' && isBatter ? 2 : 1));
+        updated.ratings.tec = Math.min(99, (updated.ratings.tec || updated.ratings.bat) + 1);
+        updated.form = Math.min(100, updated.form + (normIntensity === 'HARD' ? 3 : 2));
+        statBoosted = 'BAT / POW';
+        attributeUpdated = 'Batting technique & Power';
+        xpGains.push({ playerId: p.id, name: p.name, role: p.role, xp, statBoosted });
+      } else if (focus === 'bowling') {
+        const isBowler = p.role === 'Pace' || p.role === 'Spin' || p.role === 'All-rounder';
+        baseXp = isBowler ? (p.age <= 26 ? 5 : 4) : 1;
+        const xp = Math.max(1, Math.round(baseXp * intMult * (proMult > 1 ? 1.2 : 1)));
+        updated.ratings.bowl = Math.min(99, updated.ratings.bowl + (isBowler ? statDelta : 1));
+        updated.ratings.ctrl = Math.min(99, updated.ratings.ctrl + (normIntensity === 'HARD' && isBowler ? 2 : 1));
+        updated.ratings.dth = Math.min(99, updated.ratings.dth + 1);
+        updated.form = Math.min(100, updated.form + (normIntensity === 'HARD' ? 3 : 2));
+        statBoosted = 'BOWL / CTRL';
+        attributeUpdated = 'Bowling accuracy & Potency';
+        xpGains.push({ playerId: p.id, name: p.name, role: p.role, xp, statBoosted });
+      } else if (focus === 'fielding') {
+        baseXp = p.role === 'Wk-bat' || p.age <= 26 ? 4 : 3;
+        const xp = Math.max(1, Math.round(baseXp * intMult));
+        updated.ratings.cat = Math.min(99, (updated.ratings.cat ?? 70) + statDelta);
+        updated.ratings.fld = Math.min(99, (updated.ratings.fld || updated.ratings.cat) + statDelta);
+        updated.morale = Math.min(100, updated.morale + 3);
+        statBoosted = 'CAT / FLD';
+        attributeUpdated = 'Catching & Fielding Reflexes';
+        xpGains.push({ playerId: p.id, name: p.name, role: p.role, xp, statBoosted });
+      } else if (focus === 'fitness') {
+        baseXp = p.fitness < 90 ? 5 : 3;
+        const xp = Math.max(1, Math.round(baseXp * intMult));
+        updated.fitness = Math.min(100, updated.fitness + 8 * statDelta);
+        updated.ratings.fit = Math.min(99, (updated.ratings.fit || updated.fitness) + statDelta);
+        updated.morale = Math.min(100, updated.morale + 2);
+        statBoosted = 'FIT / STA';
+        attributeUpdated = 'Stamina & Athletic Conditioning';
+        xpGains.push({ playerId: p.id, name: p.name, role: p.role, xp, statBoosted });
+      } else {
+        // Mental focus
+        baseXp = p.isCaptain || p.age <= 24 ? 5 : 3;
+        const xp = Math.max(1, Math.round(baseXp * intMult));
+        updated.ratings.tmp = Math.min(99, updated.ratings.tmp + statDelta);
+        updated.ratings.comp = Math.min(99, (updated.ratings.comp || updated.ratings.tmp) + statDelta);
+        updated.morale = Math.min(100, updated.morale + 4);
+        updated.form = Math.min(100, updated.form + 2);
+        statBoosted = 'TMP / MORALE';
+        attributeUpdated = 'Temperament, Composure & Morale';
+        xpGains.push({ playerId: p.id, name: p.name, role: p.role, xp, statBoosted });
+      }
+      return updated;
+    };
+
+    const nextPlayers = players.map(applyTrainingToPlayer);
+    setPlayers(nextPlayers);
+    setTeams(prev => prev.map(t => (
+      t.id === userTeam.id
+        ? { ...t, squad: t.squad.map(sp => nextPlayers.find(np => np.id === sp.id) || sp) }
+        : t
+    )));
+
+    xpGains.sort((a, b) => b.xp - a.xp);
+
+    sound.playTap();
+    return {
+      success: true,
+      message: `Completed ${normIntensity} ${drillType.toUpperCase()} session! Boosted ${attributeUpdated}.`,
+      xpGains
+    };
+  }, [coachProfile.proUnlocked, players, userTeam.id]);
+
+  // Double XP boost for top 3 trainees on HubScreen
+  const claimDoubleTrainingXp = useCallback((drillType: string, topPlayerIds: string[]) => {
+    const focus = drillType.toLowerCase();
+    const idSet = new Set(topPlayerIds);
+
+    const applyBonus = (p: Player): Player => {
+      if (!idSet.has(p.id)) return p;
+      const updated: Player = { ...p, ratings: { ...p.ratings } };
+      if (focus === 'batting') {
+        updated.ratings.bat = Math.min(99, updated.ratings.bat + 1);
+        updated.ratings.pow = Math.min(99, updated.ratings.pow + 1);
+      } else if (focus === 'bowling') {
+        updated.ratings.bowl = Math.min(99, updated.ratings.bowl + 1);
+        updated.ratings.ctrl = Math.min(99, updated.ratings.ctrl + 1);
+      } else if (focus === 'fielding') {
+        updated.ratings.cat = Math.min(99, (updated.ratings.cat ?? 70) + 1);
+        updated.ratings.fld = Math.min(99, (updated.ratings.fld || updated.ratings.cat) + 1);
+      } else if (focus === 'fitness') {
+        updated.fitness = Math.min(100, updated.fitness + 5);
+        updated.ratings.fit = Math.min(99, (updated.ratings.fit || updated.fitness) + 1);
+      } else {
+        updated.ratings.tmp = Math.min(99, updated.ratings.tmp + 1);
+        updated.morale = Math.min(100, updated.morale + 3);
+      }
+      updated.form = Math.min(100, updated.form + 2);
+      return updated;
+    };
+
+    setPlayers(prev => prev.map(applyBonus));
+    setTeams(prev => prev.map(t => (
+      t.id === userTeam.id
+        ? { ...t, squad: t.squad.map(applyBonus) }
+        : t
+    )));
+  }, [userTeam.id]);
+
+  // Boost squad morale & form from Hub Team Talk or Pre-Match Pep Talk
+  const boostTeamMorale = useCallback((teamId: string, delta: number = 5) => {
+    const applyMorale = (p: Player): Player => {
+      if (p.clubId !== teamId) return p;
+      return {
+        ...p,
+        morale: Math.max(0, Math.min(100, (p.morale || 80) + delta)),
+        form: Math.max(0, Math.min(100, (p.form || 75) + Math.max(1, Math.round(delta / 2))))
+      };
+    };
+    setPlayers(prev => prev.map(applyMorale));
+    setTeams(prev => prev.map(t => (
+      t.id === teamId
+        ? { ...t, squad: t.squad.map(applyMorale) }
+        : t
+    )));
+    sound.playCrowdCheer(0.6);
+  }, []);
+
+  // Release players into the auction pool and update team purse
+  const releasePlayersForAuction = useCallback((teamId: string, releasedPlayerIds: string[], updatedPurseCr: number) => {
+    const releaseSet = new Set(releasedPlayerIds);
+    setPlayers(prev => prev.map(p => (
+      releaseSet.has(p.id)
+        ? { ...p, clubId: '', isCaptain: false }
+        : p
+    )));
+    setTeams(prev => prev.map(t => {
+      if (t.id !== teamId) return t;
+      const remainingSquad = t.squad.filter(p => !releaseSet.has(p.id));
+      const keptXI = t.playingXIIds.filter(id => !releaseSet.has(id));
+      const fillIds = remainingSquad.map(p => p.id).filter(id => !keptXI.includes(id));
+      const nextXI = [...keptXI, ...fillIds].slice(0, 11);
+      return {
+        ...t,
+        purseCr: Number(updatedPurseCr.toFixed(2)),
+        squad: remainingSquad,
+        playingXIIds: nextXI
+      };
+    }));
+  }, []);
+
+  // Transition to a new season: apply aging/progression, reset standings & calendar, and update club/national contracts
+  const startNewSeason = useCallback((selectedClubId?: string, selectedNationId?: string | null, nextYear: number = 2027) => {
+    const targetClubId = selectedClubId || userTeam.id;
+    const targetClubObj = teams.find(t => t.id === targetClubId) || userTeam;
+
+    // 1. Age and progress all players while preserving dynamic career stats
+    const progressedPlayers = players.map(p => {
+      const nextAge = p.age + 1;
+      const isYoung = p.age <= 24;
+      const isVeteran = p.age >= 34;
+      const batDelta = isYoung ? 2 : isVeteran ? -1 : 1;
+      const bowlDelta = isYoung ? 2 : isVeteran ? -1 : 1;
+      const fitDelta = isVeteran ? -2 : 1;
+      return {
+        ...p,
+        age: nextAge,
+        fitness: 98,
+        isInjured: false,
+        injuryDays: 0,
+        ratings: {
+          ...p.ratings,
+          bat: Math.max(40, Math.min(99, p.ratings.bat + batDelta)),
+          pow: Math.max(40, Math.min(99, p.ratings.pow + batDelta)),
+          bowl: Math.max(40, Math.min(99, p.ratings.bowl + bowlDelta)),
+          ctrl: Math.max(40, Math.min(99, p.ratings.ctrl + (isVeteran ? 1 : bowlDelta))),
+          tmp: Math.max(45, Math.min(99, p.ratings.tmp + 1)),
+          fit: Math.max(65, Math.min(99, (p.ratings.fit || 85) + fitDelta))
+        }
+      };
+    });
+
+    setPlayers(progressedPlayers);
+
+    // 2. Sync teams with progressed players and active user team selection
+    const updatedTeams = teams.map(t => ({
+      ...t,
+      isUserTeam: t.id === targetClubId,
+      squad: t.squad.map(sp => progressedPlayers.find(pp => pp.id === sp.id) || sp)
+    }));
+    setTeams(updatedTeams);
+
+    // 3. Update CoachProfile (club, optional national team, seasons count, and separate clubStints)
+    setCoachProfile(prev => {
+      const prevStints = prev.clubStints && prev.clubStints.length > 0
+        ? prev.clubStints
+        : [
+            {
+              id: `stint_${prev.clubTeamId}_${nextYear - 1}`,
+              teamId: prev.clubTeamId,
+              teamName: userTeam.city || userTeam.name,
+              period: `${nextYear - 1}–present`,
+              seasons: prev.domesticStats?.seasons || 1,
+              matches: prev.domesticStats?.matches || 0,
+              wins: prev.domesticStats?.wins || 0,
+              losses: prev.domesticStats?.losses || 0,
+              winPct: prev.domesticStats?.winPct || 0,
+              titles: prev.domesticStats?.titles || 0
+            }
+          ];
+
+      let updatedStints = [...prevStints];
+      if (targetClubId === prev.clubTeamId) {
+        updatedStints = updatedStints.map((s, idx) =>
+          idx === updatedStints.length - 1
+            ? { ...s, seasons: s.seasons + 1 }
+            : s
+        );
+      } else {
+        updatedStints = [
+          ...updatedStints.map((s, idx) =>
+            idx === updatedStints.length - 1
+              ? { ...s, period: s.period.replace('–present', `–${nextYear - 1}`) }
+              : s
+          ),
+          {
+            id: `stint_${targetClubId}_${nextYear}`,
+            teamId: targetClubId,
+            teamName: targetClubObj.city || targetClubObj.name,
+            period: `${nextYear}–present`,
+            seasons: 1,
+            matches: 0,
+            wins: 0,
+            losses: 0,
+            winPct: 0,
+            titles: 0
+          }
+        ];
+      }
+
+      return {
+        ...prev,
+        clubTeamId: targetClubId,
+        nationalTeamId: selectedNationId !== undefined ? selectedNationId : prev.nationalTeamId,
+        domesticStats: {
+          ...prev.domesticStats,
+          seasons: (prev.domesticStats?.seasons || 1) + 1
+        },
+        clubStints: updatedStints
+      };
+    });
+
+    if (selectedNationId !== undefined) {
+      setNations(prev => prev.map(n => ({
+        ...n,
+        isUserManaging: selectedNationId !== null && n.id === selectedNationId
+      })));
+    }
+
+    // 4. Reset IPL standings, playoffs, and rebuild calendar for the new season starting at Day 0
+    setLeagues(prev => prev.map(l => {
+      if (l.id === 'pt20') {
+        const freshStandings = l.standings.map(st => ({
+          ...st,
+          played: 0,
+          won: 0,
+          lost: 0,
+          tied: 0,
+          points: 0,
+          nrr: 0,
+          recentForm: []
+        }));
+        return {
+          ...l,
+          seasonName: `Season ${nextYear}`,
+          standings: freshStandings,
+          playoffs: createInitialPlayoffs(freshStandings),
+          currentDateIndex: 0,
+          calendarDates: buildSeasonCalendarForTeam(targetClubId, updatedTeams, false, nextYear)
+        };
+      }
+      return l;
+    }));
+
+    setSquadStamina(99);
+    sound.playCrowdCheer(0.9);
+  }, [players, teams, userTeam]);
+
+  // START MATCH
+  const startMatch = useCallback((opponentTeamId?: string, format: 'T20' | 'ODI' | 'TEST' | '100BALL' = 'T20', isAwayMatch: boolean = false) => {
+    const opp = (opponentTeamId ? teams.find(t => t.id === opponentTeamId && t.id !== userTeam.id) : null)
+      || teams.find(t => t.id !== userTeam.id)
+      || teams[1];
+
+    // Build user XI and opp XI preserving batting lineup order
+    const userXIPlayers = userTeam.playingXIIds
+      .map(id => players.find(p => p.id === id))
+      .filter((p): p is Player => Boolean(p));
+    const oppXIPlayers = opp.playingXIIds
+      .map(id => players.find(p => p.id === id))
+      .filter((p): p is Player => Boolean(p));
+
+    // Fallbacks if list incomplete
+    const finalUserXI = userXIPlayers.length >= 2 ? userXIPlayers : players.filter(p => p.clubId === userTeam.id).slice(0, 11);
+    const finalOppXI = oppXIPlayers.length >= 2 ? oppXIPlayers : players.filter(p => p.clubId === opp.id).slice(0, 11);
+
+    // Innings 1: User team batting, Opponent bowling
+    const initBatters: BatterInningsScorecard[] = finalUserXI.map((p, idx) => ({
+      playerId: p.id,
+      name: p.name,
+      runs: 0,
+      balls: 0,
+      fours: 0,
+      sixes: 0,
+      dismissal: 'not out',
+      strikeRate: 0,
+      isOnStrike: idx === 0
+    }));
+
+    const oppBowlersList = finalOppXI.filter(p => p.role === 'Pace' || p.role === 'Spin' || p.role === 'All-rounder');
+    const finalBowlerPool = oppBowlersList.length > 0 ? oppBowlersList : finalOppXI;
+
+    const initBowlers: BowlerInningsScorecard[] = finalBowlerPool.map((p, idx) => ({
+      playerId: p.id,
+      name: p.name,
+      overs: 0,
+      ballsInCurrentOver: 0,
+      maidens: 0,
+      runs: 0,
+      wickets: 0,
+      economy: 0,
+      isCurrentBowler: idx === 0
+    }));
+
+    const maxOversForFormat = format === 'TEST' ? 90 : format === 'ODI' ? 50 : format === '100BALL' ? 16.4 : 20;
+
+    const innings1: InningsData = {
+      battingTeamId: userTeam.id,
+      bowlingTeamId: opp.id,
+      runs: 0,
+      wickets: 0,
+      overs: 0,
+      ballsCompleted: 0,
+      maxOvers: maxOversForFormat,
+      batters: initBatters,
+      bowlers: initBowlers,
+      currentStrikerId: finalUserXI[0]?.id || players[0]?.id,
+      currentNonStrikerId: finalUserXI[1]?.id || players[1]?.id,
+      currentBowlerId: initBowlers[0]?.playerId || finalBowlerPool[0]?.id || finalOppXI[0]?.id,
+      ballHistory: [],
+      fallOfWickets: [],
+      overRuns: []
+    };
+
+    const hostTeam = isAwayMatch ? opp : userTeam;
+    const venue = hostTeam.id === 'team_kol'
+      ? 'Eden Gardens, Kolkata'
+      : hostTeam.id === 'team_che'
+      ? 'M.A. Chidambaram Stadium, Chennai'
+      : hostTeam.id === 'team_mum'
+      ? 'Wankhede Stadium, Mumbai'
+      : hostTeam.id === 'team_blr'
+      ? 'M. Chinnaswamy Stadium, Bengaluru'
+      : `${hostTeam.city} Cricket Stadium`;
+
+    const mapPitch = (p: string): MatchLiveState['pitchType'] => {
+      if (p === 'Dry Turner' || p === 'Dry & Turning') return 'Dry & Turning';
+      if (p === 'Flat Track' || p === 'Flat Belter') return 'Flat Belter';
+      if (p === 'Green Seamer') return 'Green Seamer';
+      if (p === 'Sluggish Gripper') return 'Sluggish Gripper';
+      return 'Natural';
+    };
+
+    const resolvedPitchType: MatchLiveState['pitchType'] = !isAwayMatch
+      ? mapPitch(homePitch)
+      : (opp.id === 'team_che' || opp.id === 'team_lko'
+          ? 'Dry & Turning'
+          : opp.id === 'team_blr' || opp.id === 'team_mum' || opp.id === 'team_hyd'
+          ? 'Flat Belter'
+          : opp.id === 'team_pun'
+          ? 'Green Seamer'
+          : 'Natural');
+
+    const newMatch: MatchLiveState = {
+      id: `match_${Date.now()}`,
+      leagueId: currentLeagueId || 'pt20',
+      format,
+      homeTeam: isAwayMatch ? opp : userTeam,
+      awayTeam: isAwayMatch ? userTeam : opp,
+      venue,
+      pitchType: resolvedPitchType,
+      weather: 'Clear Night',
+      currentInningsIndex: 1,
+      innings1,
+      innings2: null,
+      targetRuns: null,
+      status: 'in_progress',
+      lastBallOutcome: null,
+      isBallInFlight: false,
+      reviewsRemaining: { home: 2, away: 2 },
+      activeDrsReview: null,
+      dlsState: null,
+      hasDew: false,
+      tacticalTrapAlert: null,
+      ballsRemainingInInnings: format === '100BALL' ? 100 : undefined,
+      powerSurgeTaken: false,
+      powerSurgeOversLeft: 0,
+      bowlingTactics: {
+        length: 'good',
+        line: 'outside_off',
+        angle: 'over',
+        variation: 'Stock ball',
+        fielders: INITIAL_DEFAULT_FIELD
+      },
+      battingTactics: {
+        approach: 'balanced',
+        targetSide: 'all',
+        runningRisk: 'normal'
+      }
+    };
+
+    setMatchLiveState(newMatch);
+    setActiveTab('live_match');
+  }, [teams, userTeam, players, currentLeagueId, homePitch]);
+
+  // FIX-05 & PHASE 12: START INTERNATIONAL MATCH USING SELECTED NATIONAL SQUAD
+  const startInternationalMatch = useCallback((
+    homeCountry: string = 'South Africa',
+    awayCountry: string = 'India',
+    venue: string = 'SuperSport Park, Centurion',
+    format: 'T20' | 'ODI' | 'TEST' | '100BALL' = 'T20'
+  ) => {
+    const coachedNation = coachProfile.nationalTeamId
+      ? nations.find(n => n.id === coachProfile.nationalTeamId)
+      : null;
+
+    if (!coachedNation) {
+      console.warn("Unplayable international fixture: Coach has no international contract.");
+      return;
+    }
+
+    const isHomeCoached = Boolean(homeCountry.toLowerCase() === coachedNation.name.toLowerCase());
+    const isAwayCoached = Boolean(awayCountry.toLowerCase() === coachedNation.name.toLowerCase());
+
+    if (!isHomeCoached && !isAwayCoached) {
+      console.warn(`Unplayable fixture: User represents ${coachedNation.name} and can only play matches for ${coachedNation.name}.`);
+      return;
+    }
+
+    const getNationalXI = (country: string, useSelectedSquad: boolean): Player[] => {
+      if (useSelectedSquad && nationalSquadIds.length >= 11) {
+        const selected = nationalSquadIds
+          .map(id => players.find(p => p.id === id))
+          .filter((p): p is Player => Boolean(p))
+          .slice(0, 11);
+        if (selected.length >= 11) return selected;
+      }
+      const countryRoster = players.filter(p => p.country === country);
+      if (countryRoster.length >= 11) return countryRoster.slice(0, 11);
+      const supplement = players
+        .filter(p => p.country !== country && (country === 'India' ? !p.isOverseas : p.isOverseas))
+        .slice(0, 11 - countryRoster.length);
+      return [...countryRoster, ...supplement].slice(0, 11);
+    };
+
+    const finalHomeXI = getNationalXI(homeCountry, isHomeCoached);
+    const finalAwayXI = getNationalXI(awayCountry, isAwayCoached);
+
+    const homeNatObj = nations.find(n => n.name.toLowerCase() === homeCountry.toLowerCase());
+    const awayNatObj = nations.find(n => n.name.toLowerCase() === awayCountry.toLowerCase());
+
+    const nationalHomeTeam: Team = {
+      id: `nat_${homeCountry.toLowerCase().replace(/\s+/g, '_')}`,
+      name: homeCountry,
+      shortName: homeNatObj?.code || (homeCountry === 'South Africa' ? 'SA' : homeCountry === 'Australia' ? 'AUS' : homeCountry.slice(0, 3).toUpperCase()),
+      logoEmoji: homeNatObj?.flag || (homeCountry === 'South Africa' ? '🇿🇦' : homeCountry === 'Australia' ? '🇦🇺' : homeCountry === 'England' ? '🏴󠁧󠁢󠁥󠁮󠁧󠁿' : '🏏'),
+      primaryColor: '#007749',
+      secondaryColor: '#FFB81C',
+      leagueId: 'intl',
+      city: homeCountry === 'South Africa' ? 'Centurion' : 'Sydney',
+      purseCr: 100,
+      rtmCards: 0,
+      captainId: finalHomeXI[0]?.id || '',
+      playingXIIds: finalHomeXI.map(p => p.id),
+      squad: finalHomeXI,
+      isUserTeam: isHomeCoached
+    };
+
+    const nationalAwayTeam: Team = {
+      id: `nat_${awayCountry.toLowerCase().replace(/\s+/g, '_')}`,
+      name: awayCountry,
+      shortName: awayNatObj?.code || (awayCountry === 'India' ? 'IND' : awayCountry.slice(0, 3).toUpperCase()),
+      logoEmoji: awayNatObj?.flag || (awayCountry === 'India' ? '🇮🇳' : '🏏'),
+      primaryColor: '#0080FF',
+      secondaryColor: '#FF9933',
+      leagueId: 'intl',
+      city: 'Mumbai',
+      purseCr: 100,
+      rtmCards: 0,
+      captainId: finalAwayXI[0]?.id || '',
+      playingXIIds: finalAwayXI.map(p => p.id),
+      squad: finalAwayXI,
+      isUserTeam: isAwayCoached
+    };
+
+    const firstBatXI = isAwayCoached ? finalAwayXI : finalHomeXI;
+    const firstBowlXI = isAwayCoached ? finalHomeXI : finalAwayXI;
+    const firstBatTeam = isAwayCoached ? nationalAwayTeam : nationalHomeTeam;
+    const firstBowlTeam = isAwayCoached ? nationalHomeTeam : nationalAwayTeam;
+
+    const initBatters: BatterInningsScorecard[] = firstBatXI.map((p, idx) => ({
+      playerId: p.id,
+      name: p.name,
+      runs: 0,
+      balls: 0,
+      fours: 0,
+      sixes: 0,
+      dismissal: 'not out',
+      strikeRate: 0,
+      isOnStrike: idx === 0
+    }));
+
+    const oppBowlersList = firstBowlXI.filter(p => p.role === 'Pace' || p.role === 'Spin' || p.role === 'All-rounder');
+    const finalBowlerPool = oppBowlersList.length > 0 ? oppBowlersList : firstBowlXI;
+
+    const initBowlers: BowlerInningsScorecard[] = finalBowlerPool.map((p, idx) => ({
+      playerId: p.id,
+      name: p.name,
+      overs: 0,
+      ballsInCurrentOver: 0,
+      maidens: 0,
+      runs: 0,
+      wickets: 0,
+      economy: 0,
+      isCurrentBowler: idx === 0
+    }));
+
+    const maxOversForFormat = format === 'TEST' ? 90 : format === 'ODI' ? 50 : format === '100BALL' ? 16.4 : 20;
+
+    const innings1: InningsData = {
+      battingTeamId: firstBatTeam.id,
+      bowlingTeamId: firstBowlTeam.id,
+      runs: 0,
+      wickets: 0,
+      overs: 0,
+      ballsCompleted: 0,
+      maxOvers: maxOversForFormat,
+      batters: initBatters,
+      bowlers: initBowlers,
+      currentStrikerId: firstBatXI[0]?.id || '',
+      currentNonStrikerId: firstBatXI[1]?.id || '',
+      currentBowlerId: finalBowlerPool[0]?.id || '',
+      ballHistory: [],
+      fallOfWickets: [],
+      overRuns: []
+    };
+
+    const newMatch: MatchLiveState = {
+      id: `intl_match_${Date.now()}`,
+      leagueId: format === 'TEST' ? 'wtc_test' : 't20i_bilateral',
+      format,
+      homeTeam: nationalHomeTeam,
+      awayTeam: nationalAwayTeam,
+      venue,
+      pitchType: 'Green Seamer',
+      weather: format === 'TEST' ? 'Sunny & Hot' : 'Clear Night',
+      currentInningsIndex: 1,
+      innings1,
+      innings2: null,
+      targetRuns: null,
+      status: 'in_progress',
+      lastBallOutcome: null,
+      isBallInFlight: false,
+      reviewsRemaining: { home: 2, away: 2 },
+      activeDrsReview: null,
+      dlsState: null,
+      hasDew: false,
+      tacticalTrapAlert: null,
+      ballsRemainingInInnings: format === '100BALL' ? 100 : undefined,
+      powerSurgeTaken: false,
+      powerSurgeOversLeft: 0,
+      bowlingTactics: {
+        length: 'good',
+        line: 'outside_off',
+        angle: 'over',
+        variation: 'Stock ball',
+        fielders: INITIAL_DEFAULT_FIELD
+      },
+      battingTactics: {
+        approach: 'balanced',
+        targetSide: 'all',
+        runningRisk: 'normal'
+      }
+    };
+
+    setMatchLiveState(newMatch);
+    setActiveTab('live_match');
+  }, [players, nations, coachProfile.nationalTeamId, nationalSquadIds]);
+
+  // TACTICAL UPDATERS
+  const updateBowlingTactics = useCallback((tactics: Partial<MatchLiveState['bowlingTactics']>) => {
+    setMatchLiveState(prev => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        bowlingTactics: { ...prev.bowlingTactics, ...tactics }
+      };
+    });
+    sound.playTap();
+  }, []);
+
+  const updateBattingTactics = useCallback((tactics: Partial<MatchLiveState['battingTactics']>) => {
+    setMatchLiveState(prev => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        battingTactics: { ...prev.battingTactics, ...tactics }
+      };
+    });
+    sound.playTap();
+  }, []);
+
+  const updateFielders = useCallback((fielders: FielderPosition[]) => {
+    setMatchLiveState(prev => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        bowlingTactics: { ...prev.bowlingTactics, fielders }
+      };
+    });
+    sound.playTap();
+  }, []);
+
+  const activateImpactPlayer = useCallback((benchPlayerId: string, outPlayerId: string) => {
+    const benchPlayer = players.find(p => p.id === benchPlayerId);
+    if (!benchPlayer) return;
+
+    setMatchLiveState(prev => {
+      if (!prev) return null;
+      const isFirst = prev.currentInningsIndex === 1;
+      const curInnings = isFirst ? prev.innings1 : prev.innings2;
+      if (!curInnings) return prev;
+
+      const updatedBatters = curInnings.batters.map(b => {
+        if (b.playerId === outPlayerId && b.dismissal === 'not out') {
+          return { ...b, dismissal: 'substituted (Impact Sub)', isOnStrike: false };
+        }
+        return b;
+      });
+
+      if (!updatedBatters.some(b => b.playerId === benchPlayer.id)) {
+        updatedBatters.push({
+          playerId: benchPlayer.id,
+          name: benchPlayer.name,
+          runs: 0,
+          balls: 0,
+          fours: 0,
+          sixes: 0,
+          dismissal: 'not out',
+          strikeRate: 0,
+          isOnStrike: curInnings.currentStrikerId === outPlayerId
+        });
+      }
+
+      const updatedBowlers = [...curInnings.bowlers];
+      if (!updatedBowlers.some(b => b.playerId === benchPlayer.id)) {
+        updatedBowlers.push({
+          playerId: benchPlayer.id,
+          name: benchPlayer.name,
+          overs: 0,
+          ballsInCurrentOver: 0,
+          maidens: 0,
+          runs: 0,
+          wickets: 0,
+          economy: 0,
+          isCurrentBowler: curInnings.currentBowlerId === outPlayerId
+        });
+      }
+
+      const nextStrikerId = curInnings.currentStrikerId === outPlayerId ? benchPlayer.id : curInnings.currentStrikerId;
+      const nextNonStrikerId = curInnings.currentNonStrikerId === outPlayerId ? benchPlayer.id : curInnings.currentNonStrikerId;
+      const nextBowlerId = curInnings.currentBowlerId === outPlayerId ? benchPlayer.id : curInnings.currentBowlerId;
+
+      const updatedInnings: InningsData = {
+        ...curInnings,
+        batters: updatedBatters.map(b => ({ ...b, isOnStrike: b.playerId === nextStrikerId })),
+        bowlers: updatedBowlers,
+        currentStrikerId: nextStrikerId,
+        currentNonStrikerId: nextNonStrikerId,
+        currentBowlerId: nextBowlerId
+      };
+
+      const isHomeUser = prev.homeTeam.id === userTeam.id || prev.homeTeam.isUserTeam;
+
+      return {
+        ...prev,
+        impactPlayerUsed: true,
+        homeTeam: isHomeUser
+          ? {
+              ...prev.homeTeam,
+              playingXIIds: prev.homeTeam.playingXIIds.map(id => id === outPlayerId ? benchPlayerId : id)
+            }
+          : prev.homeTeam,
+        awayTeam: !isHomeUser
+          ? {
+              ...prev.awayTeam,
+              playingXIIds: prev.awayTeam.playingXIIds.map(id => id === outPlayerId ? benchPlayerId : id)
+            }
+          : prev.awayTeam,
+        innings1: isFirst ? updatedInnings : prev.innings1,
+        innings2: isFirst ? prev.innings2 : updatedInnings
+      };
+    });
+    sound.playCrowdCheer(0.5);
+  }, [players, userTeam.id]);
+
+  // PURE STATE TRANSITION HELPER FOR SINGLE DELIVERY
+  const simulateSingleDeliveryState = useCallback((
+    state: MatchLiveState,
+    autoRotateBowler: boolean = false
+  ): {
+    nextState: MatchLiveState;
+    matchJustFinished: boolean;
+    userWon: boolean;
+    inningsJustBroke: boolean;
+    lastOutcome: BallOutcome | null;
+  } => {
+    if (!state || state.status === 'finished') {
+      return { nextState: state, matchJustFinished: false, userWon: false, inningsJustBroke: false, lastOutcome: null };
+    }
+
+    const isFirstInnings = state.currentInningsIndex === 1;
+    const currentInnings = isFirstInnings ? state.innings1 : state.innings2;
+    if (!currentInnings) {
+      return { nextState: state, matchJustFinished: false, userWon: false, inningsJustBroke: false, lastOutcome: null };
+    }
+
+    const defaultOvers = state.format === 'TEST' ? 90 : state.format === 'ODI' ? 50 : state.format === '100BALL' ? 16.4 : 20;
+    const maxBalls = state.format === '100BALL'
+      ? 100
+      : Math.round((currentInnings.maxOvers || defaultOvers) * 6);
+    const maxOversPerBowler = state.format === 'TEST' ? 99 : state.format === 'ODI' ? 10 : 4;
+
+    const finalizeInningsOrMatch = (
+      currState: MatchLiveState,
+      currInn: InningsData,
+      lastBall: BallOutcome | null
+    ): {
+      nextState: MatchLiveState;
+      matchJustFinished: boolean;
+      userWon: boolean;
+      inningsJustBroke: boolean;
+      lastOutcome: BallOutcome | null;
+    } => {
+      if (isFirstInnings) {
+        const secondInningsBattingTeam = currInn.battingTeamId === currState.homeTeam.id ? currState.awayTeam : currState.homeTeam;
+        const secondInningsBowlingTeam = currInn.battingTeamId === currState.homeTeam.id ? currState.homeTeam : currState.awayTeam;
+
+        const battingXIPlayers = secondInningsBattingTeam.playingXIIds
+          .map(id => players.find(p => p.id === id))
+          .filter((p): p is Player => Boolean(p));
+        const bowlingXIPlayers = secondInningsBowlingTeam.playingXIIds
+          .map(id => players.find(p => p.id === id))
+          .filter((p): p is Player => Boolean(p));
+        const finalBatters = battingXIPlayers.length >= 2 ? battingXIPlayers : players.filter(p => p.clubId === secondInningsBattingTeam.id).slice(0, 11);
+        const finalBowlers = bowlingXIPlayers.length >= 2 ? bowlingXIPlayers : players.filter(p => p.clubId === secondInningsBowlingTeam.id).slice(0, 11);
+        const bowlerPool = finalBowlers.filter(p => p.role === 'Pace' || p.role === 'Spin' || p.role === 'All-rounder');
+        const activeBowlerPool = bowlerPool.length > 0 ? bowlerPool : finalBowlers;
+
+        const initBatters: BatterInningsScorecard[] = finalBatters.map((p, idx) => ({
+          playerId: p.id,
+          name: p.name,
+          runs: 0,
+          balls: 0,
+          fours: 0,
+          sixes: 0,
+          dismissal: 'not out',
+          strikeRate: 0,
+          isOnStrike: idx === 0
+        }));
+
+        const initBowlers: BowlerInningsScorecard[] = activeBowlerPool.map((p, idx) => ({
+          playerId: p.id,
+          name: p.name,
+          overs: 0,
+          ballsInCurrentOver: 0,
+          maidens: 0,
+          runs: 0,
+          wickets: 0,
+          economy: 0,
+          isCurrentBowler: idx === 0
+        }));
+
+        const inn2MaxOvers = currState.dlsState?.revisedMaxOvers || currState.innings1.maxOvers || defaultOvers;
+        const computedTarget = currState.dlsState?.isInterrupted
+          ? calculateDLSTarget(currInn.runs, currState.dlsState.originalMaxOvers, currState.dlsState.revisedMaxOvers, 0).dlsTargetRuns
+          : currInn.runs + 1;
+
+        const innings2: InningsData = {
+          battingTeamId: secondInningsBattingTeam.id,
+          bowlingTeamId: secondInningsBowlingTeam.id,
+          runs: 0,
+          wickets: 0,
+          overs: 0,
+          ballsCompleted: 0,
+          maxOvers: inn2MaxOvers,
+          currentOverRuns: 0,
+          batters: initBatters,
+          bowlers: initBowlers,
+          currentStrikerId: finalBatters[0]?.id || 'p1',
+          currentNonStrikerId: finalBatters[1]?.id || 'p2',
+          currentBowlerId: initBowlers[0]?.playerId || activeBowlerPool[0]?.id || 'p3',
+          ballHistory: [],
+          fallOfWickets: [],
+          overRuns: []
+        };
+
+        return {
+          nextState: {
+            ...currState,
+            status: 'innings_break',
+            targetRuns: computedTarget,
+            innings1: currInn,
+            innings2
+          },
+          matchJustFinished: false,
+          userWon: false,
+          inningsJustBroke: true,
+          lastOutcome: lastBall
+        };
+      } else {
+        const target = currState.targetRuns || (currState.innings1.runs + 1);
+        const winnerId = currInn.runs >= target
+          ? currInn.battingTeamId
+          : currState.innings1.battingTeamId;
+
+        const winnerTeam = (winnerId === currState.homeTeam.id ? currState.homeTeam : currState.awayTeam)
+          || teams.find(t => t.id === winnerId)
+          || userTeam;
+        const isUserWinner = winnerId === userTeam.id || (winnerTeam.isUserTeam === true);
+
+        let resultText = '';
+        if (winnerId === currInn.battingTeamId) {
+          const wktsRemaining = Math.max(1, 10 - currInn.wickets);
+          resultText = `${winnerTeam.name.toUpperCase()} WON BY ${wktsRemaining} WICKET${wktsRemaining > 1 ? 'S' : ''}${currState.dlsState?.isInterrupted ? ' (DLS)' : ''}!`;
+        } else {
+          const runsDiff = Math.max(1, target - currInn.runs - 1);
+          resultText = `${winnerTeam.name.toUpperCase()} WON BY ${runsDiff} RUN${runsDiff > 1 ? 'S' : ''}${currState.dlsState?.isInterrupted ? ' (DLS)' : ''}!`;
+        }
+
+        return {
+          nextState: {
+            ...currState,
+            status: 'finished',
+            winnerTeamId: winnerId,
+            resultText,
+            innings2: currInn
+          },
+          matchJustFinished: true,
+          userWon: isUserWinner,
+          inningsJustBroke: false,
+          lastOutcome: lastBall
+        };
+      }
+    };
+
+    // Pre-check if innings already ended (e.g. after rain reduction)
+    if (
+      currentInnings.ballsCompleted >= maxBalls ||
+      currentInnings.wickets >= 10 ||
+      (!isFirstInnings && state.targetRuns && currentInnings.runs >= state.targetRuns)
+    ) {
+      return finalizeInningsOrMatch(state, currentInnings, state.lastBallOutcome);
+    }
+
+    // Determine current striker, nonStriker, and bowler
+    const striker = players.find(p => p.id === currentInnings.currentStrikerId) || players[0];
+    const nonStriker = players.find(p => p.id === currentInnings.currentNonStrikerId) || players[1];
+    const bowler = players.find(p => p.id === currentInnings.currentBowlerId) || players[2];
+
+    const overNum = Math.floor(currentInnings.ballsCompleted / 6);
+    const ballInOver = (currentInnings.ballsCompleted % 6) + 1;
+
+    // Feature 6.4: Compute live Opposition Tactical AI & Match-Up Trap alert
+    let liveTrapAlert: string | null = null;
+    if (bowler.bowlingArm === 'LAF' && striker.battingHand === 'RHB') {
+      liveTrapAlert = `MATCH-UP TRAP: ${bowler.name} (Left-Arm Pace) targeting ${striker.name}'s incoming off-stump pad!`;
+    } else if ((bowler.bowlingArm === 'LS' || bowler.role === 'Spin') && (striker.ratings.vs || 78) < 77) {
+      liveTrapAlert = `SPIN WEAKNESS TRAP: ${bowler.name} brought on against ${striker.name} (vs Spin ${striker.ratings.vs || 74})!`;
+    } else if ((state.bowlingTactics.length === 'bouncer' || state.bowlingTactics.length === 'short') && (striker.ratings.vp || 78) < 76) {
+      liveTrapAlert = `BOUNCER BARRAGE: Short-pitched trap set for ${striker.name}!`;
+    }
+
+    // Check who is batting/bowling
+    const isUserBatting = currentInnings.battingTeamId === userTeam.id;
+    const isUserBowling = currentInnings.bowlingTeamId === userTeam.id;
+
+    // Use user's batting tactics ONLY when user team is batting; otherwise compute AI batting tactics
+    let effectiveBattingTactics = state.battingTactics;
+    if (!isUserBatting) {
+      const rrr = (!isFirstInnings && state.targetRuns)
+        ? (state.targetRuns - currentInnings.runs) / Math.max(0.1, (maxBalls - currentInnings.ballsCompleted) / 6)
+        : null;
+      let aiApproach: 'defensive' | 'balanced' | 'aggressive' | 'smash' = 'balanced';
+      if (overNum >= Math.floor(maxBalls / 6) - 4 || (rrr && rrr > 12)) {
+        aiApproach = 'smash';
+      } else if (overNum < 6 || (rrr && rrr > 9)) {
+        aiApproach = 'aggressive';
+      } else if (currentInnings.wickets >= 4 && overNum < 10) {
+        aiApproach = 'defensive';
+      }
+      effectiveBattingTactics = {
+        approach: aiApproach,
+        targetSide: 'all',
+        runningRisk: 'normal',
+        pairRunning: 'standard'
+      };
+    }
+
+    // Use user's bowling tactics ONLY when user team is bowling; otherwise compute AI bowling tactics
+    let effectiveBowlingTactics = state.bowlingTactics;
+    if (!isUserBowling) {
+      effectiveBowlingTactics = {
+        length: overNum >= Math.floor(maxBalls / 6) - 4 ? 'yorker' : 'good',
+        line: 'off_stump',
+        angle: 'over',
+        variation: 'Stock ball',
+        intent: overNum >= Math.floor(maxBalls / 6) - 4 ? 'contain' : overNum < 6 ? 'attack' : 'standard',
+        effort: 'standard',
+        keeperPos: bowler.role === 'Spin' ? 'stumps' : 'normal',
+        speed: 'standard',
+        fielders: state.bowlingTactics.fielders
+      };
+    }
+
+    const ballOutcome = simulateBall({
+      bowler,
+      striker,
+      nonStriker,
+      over: overNum,
+      ballInOver,
+      pitchType: state.pitchType,
+      hasDew: state.hasDew,
+      powerSurgeActive: (state.powerSurgeOversLeft || 0) > 0,
+      format: state.format,
+      pairRunning: effectiveBattingTactics.pairRunning || 'standard',
+      intent: effectiveBowlingTactics.intent || 'standard',
+      effort: effectiveBowlingTactics.effort || 'standard',
+      keeperPos: effectiveBowlingTactics.keeperPos || 'normal',
+      speed: effectiveBowlingTactics.speed || 'standard',
+      bowlingTactics: effectiveBowlingTactics,
+      battingTactics: effectiveBattingTactics
+    });
+
+    const isWicket = ballOutcome.isWicket;
+    const runsThisBall = ballOutcome.runs;
+    const isLegalDelivery = !ballOutcome.isExtra;
+
+    const nextBallsCompleted = isLegalDelivery ? currentInnings.ballsCompleted + 1 : currentInnings.ballsCompleted;
+    const nextOvers = Number(`${Math.floor(nextBallsCompleted / 6)}.${nextBallsCompleted % 6}`);
+    const nextRuns = currentInnings.runs + runsThisBall;
+    const nextWickets = isWicket ? currentInnings.wickets + 1 : currentInnings.wickets;
+
+    // If wicket, bring next batsman
+    let nextStrikerId = currentInnings.currentStrikerId;
+    let nextNonStrikerId = currentInnings.currentNonStrikerId;
+
+    if (isWicket) {
+      const nextUnusedBatter = currentInnings.batters.find(
+        b => b.dismissal === 'not out' && b.playerId !== striker.id && b.playerId !== nonStriker.id
+      );
+      ballOutcome.dismissedPlayerId = striker.id;
+      ballOutcome.dismissedPlayerName = striker.name;
+      ballOutcome.incomingBatterId = nextUnusedBatter?.playerId;
+      if (nextUnusedBatter) {
+        nextStrikerId = nextUnusedBatter.playerId;
+      }
+    } else if (runsThisBall % 2 === 1) {
+      nextStrikerId = nonStriker.id;
+      nextNonStrikerId = striker.id;
+    }
+
+    const isOverComplete = isLegalDelivery && nextBallsCompleted % 6 === 0;
+    if (isOverComplete) {
+      const temp = nextStrikerId;
+      nextStrikerId = nextNonStrikerId;
+      nextNonStrikerId = temp;
+    }
+
+    // Update batters and keep isOnStrike accurate
+    const updatedBatters = currentInnings.batters.map(b => {
+      if (b.playerId === striker.id) {
+        const newRuns = b.runs + (ballOutcome.isExtra ? 0 : runsThisBall);
+        const newBalls = isLegalDelivery ? b.balls + 1 : b.balls;
+        return {
+          ...b,
+          runs: newRuns,
+          balls: newBalls,
+          fours: b.fours + (ballOutcome.isFour ? 1 : 0),
+          sixes: b.sixes + (ballOutcome.isSix ? 1 : 0),
+          dismissal: isWicket ? (ballOutcome.dismissalText || ballOutcome.wicketType || 'out') : b.dismissal,
+          strikeRate: newBalls > 0 ? Number(((newRuns / newBalls) * 100).toFixed(1)) : 0,
+          isOnStrike: b.playerId === nextStrikerId && !isWicket
+        };
+      }
+      return {
+        ...b,
+        isOnStrike: b.playerId === nextStrikerId
+      };
+    });
+
+    // Fall of wickets tracker
+    const updatedFallOfWickets = isWicket
+      ? [...currentInnings.fallOfWickets, { runs: nextRuns, wicketNum: nextWickets, over: nextOvers, batterName: striker.name }]
+      : currentInnings.fallOfWickets;
+
+    // Over runs & maiden tracker
+    const updatedOverRuns = [...currentInnings.overRuns];
+    if (updatedOverRuns[overNum] === undefined) {
+      updatedOverRuns[overNum] = runsThisBall;
+    } else {
+      updatedOverRuns[overNum] += runsThisBall;
+    }
+    const runsInThisOverAfterBall = (currentInnings.currentOverRuns || 0) + runsThisBall;
+    const isMaidenOver = isOverComplete && runsInThisOverAfterBall === 0;
+
+    // Update bowler figures
+    let bowlerFound = false;
+    let updatedBowlers = currentInnings.bowlers.map(b => {
+      if (b.playerId === bowler.id) {
+        bowlerFound = true;
+        const addBall = isLegalDelivery ? 1 : 0;
+        const totalBalls = Math.round(Math.floor(b.overs) * 6) + (b.ballsInCurrentOver || 0) + addBall;
+        const newOvers = Math.floor(totalBalls / 6);
+        const newBallsInOver = totalBalls % 6;
+        const newRuns = b.runs + runsThisBall;
+        const newWickets = b.wickets + (isWicket && ballOutcome.wicketType !== 'run out' ? 1 : 0);
+        const newMaidens = (b.maidens || 0) + (isMaidenOver ? 1 : 0);
+        const floatOvers = newOvers + (newBallsInOver / 6);
+        const newEconomy = floatOvers > 0 ? Number((newRuns / floatOvers).toFixed(1)) : 0;
+
+        return {
+          ...b,
+          overs: Number(`${newOvers}.${newBallsInOver}`),
+          ballsInCurrentOver: newBallsInOver,
+          maidens: newMaidens,
+          runs: newRuns,
+          wickets: newWickets,
+          economy: newEconomy,
+          isCurrentBowler: true
+        };
+      }
+      return { ...b, isCurrentBowler: false };
+    });
+
+    if (!bowlerFound && bowler) {
+      const addBall = isLegalDelivery ? 1 : 0;
+      updatedBowlers.push({
+        playerId: bowler.id,
+        name: bowler.name,
+        overs: Number(`0.${addBall}`),
+        ballsInCurrentOver: addBall,
+        maidens: 0,
+        runs: runsThisBall,
+        wickets: isWicket && ballOutcome.wicketType !== 'run out' ? 1 : 0,
+        economy: Number((runsThisBall / (addBall / 6 || 1)).toFixed(1)),
+        isCurrentBowler: true
+      });
+    }
+
+    // Automatically rotate AI bowler (or during auto-sim) at the end of an over respecting bowler quota
+    let nextBowlerId = currentInnings.currentBowlerId;
+    const isUserBowlingTeam =
+      currentInnings.bowlingTeamId === userTeam.id ||
+      (Boolean(state.homeTeam.isUserTeam) && currentInnings.bowlingTeamId === state.homeTeam.id) ||
+      (Boolean(state.awayTeam.isUserTeam) && currentInnings.bowlingTeamId === state.awayTeam.id);
+    const isAiBowling = !isUserBowlingTeam;
+    if (isOverComplete && (isAiBowling || autoRotateBowler)) {
+      const eligibleBowlers = updatedBowlers.filter(
+        b => b.playerId !== bowler.id && Math.floor(b.overs) < maxOversPerBowler
+      );
+      const nextBowlerObj = eligibleBowlers[0] || updatedBowlers.find(b => b.playerId !== bowler.id) || updatedBowlers[0];
+      if (nextBowlerObj) {
+        nextBowlerId = nextBowlerObj.playerId;
+        updatedBowlers = updatedBowlers.map(b => ({
+          ...b,
+          isCurrentBowler: b.playerId === nextBowlerId
+        }));
+      }
+    }
+
+    // Swap individual striker/nonStriker batting approaches when strike rotates
+    const strikeRotated = nextStrikerId !== currentInnings.currentStrikerId && !isWicket;
+    const updatedBattingTactics = strikeRotated && state.battingTactics.nonStrikerApproach
+      ? {
+          ...state.battingTactics,
+          approach: state.battingTactics.nonStrikerApproach,
+          nonStrikerApproach: state.battingTactics.approach
+        }
+      : state.battingTactics;
+
+    const updatedInnings: InningsData = {
+      ...currentInnings,
+      runs: nextRuns,
+      wickets: nextWickets,
+      overs: nextOvers,
+      ballsCompleted: nextBallsCompleted,
+      currentOverRuns: isOverComplete ? 0 : runsInThisOverAfterBall,
+      batters: updatedBatters,
+      bowlers: updatedBowlers,
+      currentStrikerId: nextStrikerId,
+      currentNonStrikerId: nextNonStrikerId,
+      currentBowlerId: nextBowlerId,
+      ballHistory: [ballOutcome, ...currentInnings.ballHistory],
+      fallOfWickets: updatedFallOfWickets,
+      overRuns: updatedOverRuns
+    };
+
+    const nextSurgeOvers = isOverComplete && (state.powerSurgeOversLeft || 0) > 0
+      ? Math.max(0, (state.powerSurgeOversLeft || 0) - 1)
+      : state.powerSurgeOversLeft;
+    const nextHundredBalls = state.format === '100BALL'
+      ? Math.max(0, 100 - nextBallsCompleted)
+      : state.ballsRemainingInInnings;
+
+    const nextIntermediateState: MatchLiveState = {
+      ...state,
+      lastBallOutcome: ballOutcome,
+      isBallInFlight: true,
+      tacticalTrapAlert: liveTrapAlert,
+      powerSurgeOversLeft: nextSurgeOvers,
+      ballsRemainingInInnings: nextHundredBalls,
+      battingTactics: updatedBattingTactics,
+      innings1: isFirstInnings ? updatedInnings : state.innings1,
+      innings2: isFirstInnings ? state.innings2 : updatedInnings
+    };
+
+    // Check if this ball completed the innings or won the match
+    if (
+      nextBallsCompleted >= maxBalls ||
+      nextWickets >= 10 ||
+      (!isFirstInnings && state.targetRuns && nextRuns >= state.targetRuns)
+    ) {
+      return finalizeInningsOrMatch(nextIntermediateState, updatedInnings, ballOutcome);
+    }
+
+    return {
+      nextState: nextIntermediateState,
+      matchJustFinished: false,
+      userWon: false,
+      inningsJustBroke: false,
+      lastOutcome: ballOutcome
+    };
+  }, [players, teams, userTeam]);
+
+  // RUN A SINGLE BALL SIMULATION
+  const runBallSimulation = useCallback(() => {
+    let outcomeToPlay: BallOutcome | null = null;
+    let didFinish = false;
+    let didUserWin = false;
+    let didBreak = false;
+    let finalRuns = 0;
+
+    setMatchLiveState(prev => {
+      if (!prev || prev.status === 'finished') return prev;
+      const res = simulateSingleDeliveryState(prev, false);
+      outcomeToPlay = res.lastOutcome;
+      didFinish = res.matchJustFinished;
+      didUserWin = res.userWon;
+      didBreak = res.inningsJustBroke;
+      const curInn = res.nextState.currentInningsIndex === 1 ? res.nextState.innings1 : res.nextState.innings2;
+      finalRuns = curInn?.runs || 0;
+      return res.nextState;
+    });
+
+    if (outcomeToPlay) {
+      const lbo = outcomeToPlay as BallOutcome;
+      if (lbo.isWicket) {
+        sound.playWicketCrash();
+      } else if (lbo.isSix) {
+        sound.playBatHit(true, true);
+      } else if (lbo.isFour) {
+        sound.playBatHit(true, false);
+      } else {
+        sound.playBatHit(false, false);
+      }
+    }
+
+    if (didBreak) {
+      sound.playCrowdCheer(0.6);
+    } else if (didFinish && didUserWin) {
+      sound.playCrowdCheer(1.5);
+      confetti({ particleCount: 70, spread: 70, origin: { y: 0.6 } });
+      unlockAchievement('ach_first_blood');
+      if (finalRuns >= 200) unlockAchievement('ach_two_hundred_up');
+    }
+
+    setTimeout(() => {
+      setMatchLiveState(prev => prev ? { ...prev, isBallInFlight: false } : null);
+    }, 400);
+  }, [simulateSingleDeliveryState, unlockAchievement]);
+
+  // SIM OVER (Simulate remaining balls in current over, or multiple overs with automatic bowler rotation)
+  const simCurrentOver = useCallback((oversCount: number = 1) => {
+    let didFinish = false;
+    let didUserWin = false;
+    const totalOversToSim = Math.max(1, oversCount);
+
+    setMatchLiveState(prev => {
+      if (!prev || prev.status === 'finished') return prev;
+      let curr = prev;
+      const defaultMaxOvers = curr.format === 'TEST' ? 90 : curr.format === 'ODI' ? 50 : 4;
+
+      for (let ovIdx = 0; ovIdx < totalOversToSim; ovIdx++) {
+        if (curr.status !== 'in_progress') break;
+
+        // If we are at the start of a new over (ballsCompleted > 0 && % 6 === 0) and the current bowler
+        // just bowled the previous ball, rotate to an eligible bowler before bowling this over
+        const startInn = curr.currentInningsIndex === 1 ? curr.innings1 : curr.innings2;
+        if (startInn && startInn.ballsCompleted > 0 && startInn.ballsCompleted % 6 === 0) {
+          const prevBallBowlerId = startInn.ballHistory[0]?.bowlerId;
+          if (prevBallBowlerId && startInn.currentBowlerId === prevBallBowlerId) {
+            const eligible = startInn.bowlers.filter(
+              b => b.playerId !== prevBallBowlerId && Math.floor(b.overs) < defaultMaxOvers
+            );
+            const nextBowler = eligible[0] || startInn.bowlers.find(b => b.playerId !== prevBallBowlerId) || startInn.bowlers[0];
+            if (nextBowler) {
+              const rotatedInn: InningsData = {
+                ...startInn,
+                currentBowlerId: nextBowler.playerId,
+                bowlers: startInn.bowlers.map(b => ({
+                  ...b,
+                  isCurrentBowler: b.playerId === nextBowler.playerId
+                }))
+              };
+              curr = {
+                ...curr,
+                innings1: curr.currentInningsIndex === 1 ? rotatedInn : curr.innings1,
+                innings2: curr.currentInningsIndex === 1 ? curr.innings2 : rotatedInn
+              };
+            }
+          }
+        }
+
+        let legalBallsSimulated = 0;
+        // Auto-rotate bowler at the end of intermediate overs when simulating multiple overs
+        const shouldAutoRotateAtOverEnd = totalOversToSim > 1 && ovIdx < totalOversToSim - 1;
+
+        while (legalBallsSimulated < 6 && curr.status === 'in_progress') {
+          const res = simulateSingleDeliveryState(curr, shouldAutoRotateAtOverEnd);
+          curr = res.nextState;
+          if (res.matchJustFinished) {
+            didFinish = true;
+            didUserWin = res.userWon;
+            break;
+          }
+          if (res.inningsJustBroke) {
+            break;
+          }
+          if (res.lastOutcome && !res.lastOutcome.isExtra) {
+            legalBallsSimulated++;
+          }
+          const activeInn = curr.currentInningsIndex === 1 ? curr.innings1 : curr.innings2;
+          if (activeInn && activeInn.ballsCompleted > 0 && activeInn.ballsCompleted % 6 === 0 && !res.lastOutcome?.isExtra) {
+            break;
+          }
+        }
+      }
+      return { ...curr, isBallInFlight: false };
+    });
+
+    sound.playTap();
+    if (didFinish && didUserWin) {
+      sound.playCrowdCheer(1.5);
+      confetti({ particleCount: 70, spread: 70, origin: { y: 0.6 } });
+      unlockAchievement('ach_first_blood');
+    }
+  }, [simulateSingleDeliveryState, unlockAchievement]);
+
+  // SIM ENTIRE MATCH (Pure functional loop across both innings)
+  const simEntireMatch = useCallback(() => {
+    let didFinish = false;
+    let didUserWin = false;
+    let finalRuns = 0;
+
+    setMatchLiveState(prev => {
+      if (!prev || prev.status === 'finished') return prev;
+      let curr: MatchLiveState = { ...prev, status: 'in_progress' };
+      let safetyCounter = 0;
+
+      while (curr.status !== 'finished' && safetyCounter < 1500) {
+        safetyCounter++;
+        if (curr.status === 'innings_break') {
+          curr = {
+            ...curr,
+            currentInningsIndex: 2,
+            hasDew: curr.weather === 'Clear Night' || curr.weather === 'Overcast & Humid',
+            status: 'in_progress'
+          };
+        }
+        const res = simulateSingleDeliveryState(curr, true);
+        curr = res.nextState;
+        if (res.matchJustFinished) {
+          didFinish = true;
+          didUserWin = res.userWon;
+          finalRuns = Math.max(curr.innings1.runs, curr.innings2?.runs || 0);
+          break;
+        }
+      }
+
+      return { ...curr, isBallInFlight: false };
+    });
+
+    sound.playCrowdCheer(1.0);
+    if (didFinish && didUserWin) {
+      confetti({ particleCount: 70, spread: 70, origin: { y: 0.6 } });
+      unlockAchievement('ach_first_blood');
+      if (finalRuns >= 200) unlockAchievement('ach_two_hundred_up');
+    }
+  }, [simulateSingleDeliveryState, unlockAchievement]);
+
+  // RECORD COMPLETED MATCH OUTCOMES (Player Stats, Standings, NRR, Playoffs & Coach KPIs)
+  const recordCompletedMatch = useCallback((finishedMatch: MatchLiveState) => {
+    if (!finishedMatch || finishedMatch.status !== 'finished') return;
+    if (recordedMatchIdsRef.current.has(finishedMatch.id)) return;
+    recordedMatchIdsRef.current.add(finishedMatch.id);
+
+    const inn1 = finishedMatch.innings1;
+    const inn2 = finishedMatch.innings2;
+
+    const batterMap = new Map<string, BatterInningsScorecard>();
+    inn1.batters.forEach(b => batterMap.set(b.playerId, b));
+    inn2?.batters.forEach(b => batterMap.set(b.playerId, b));
+
+    const bowlerMap = new Map<string, BowlerInningsScorecard>();
+    inn1.bowlers.forEach(bw => bowlerMap.set(bw.playerId, bw));
+    inn2?.bowlers.forEach(bw => bowlerMap.set(bw.playerId, bw));
+
+    // Check match feat achievements
+    batterMap.forEach(b => {
+      if (b.runs >= 100) {
+        unlockAchievement('ach_4');
+      }
+    });
+    bowlerMap.forEach(bw => {
+      if (bw.wickets >= 5) {
+        unlockAchievement('ach_5');
+      }
+      if (bw.overs >= 4 && bw.economy < 4) {
+        unlockAchievement('ach_16');
+      }
+    });
+
+    const winnerId = finishedMatch.winnerTeamId || finishedMatch.homeTeam.id;
+    const loserId = winnerId === finishedMatch.homeTeam.id ? finishedMatch.awayTeam.id : finishedMatch.homeTeam.id;
+    const didUserWin = winnerId === userTeam.id ||
+      (winnerId === finishedMatch.homeTeam.id && finishedMatch.homeTeam.isUserTeam) ||
+      (winnerId === finishedMatch.awayTeam.id && finishedMatch.awayTeam.isUserTeam);
+
+    if (didUserWin) {
+      unlockAchievement('ach_1');
+      if (finishedMatch.impactPlayerUsed) {
+        unlockAchievement('ach_18');
+      }
+      if (finishedMatch.dlsState?.isInterrupted) {
+        unlockAchievement('ach_74');
+      }
+      const oppInnings = inn1.battingTeamId === userTeam.id ? inn2 : inn1;
+      const userInnings = inn1.battingTeamId === userTeam.id ? inn1 : inn2;
+      if (oppInnings && oppInnings.wickets >= 10 && oppInnings.runs < 100) {
+        unlockAchievement('ach_6');
+      }
+      if (userInnings && inn1.battingTeamId === userTeam.id && userInnings.runs <= 140) {
+        unlockAchievement('ach_7');
+      }
+      if (userInnings && userInnings.runs >= 200) {
+        unlockAchievement('ach_8');
+      }
+      if (inn2 && inn2.battingTeamId === userTeam.id && inn2.wickets === 0) {
+        unlockAchievement('ach_9');
+      }
+      if (userInnings && userInnings.batters.reduce((s, b) => s + b.sixes, 0) >= 12) {
+        unlockAchievement('ach_12');
+      }
+      if (inn2 && inn2.battingTeamId === userTeam.id && (finishedMatch.targetRuns || 0) >= 180) {
+        unlockAchievement('ach_15');
+      }
+    }
+
+    // 1. Update participating players' season & career stats
+    const applyStatsToPlayer = (p: Player): Player => {
+      const bCard = batterMap.get(p.id);
+      const bwCard = bowlerMap.get(p.id);
+      if (!bCard && !bwCard) return p;
+
+      const prevStats = p.stats || {
+        matches: 0, runs: 0, balls: 0, fours: 0, sixes: 0,
+        fifties: 0, hundreds: 0, highestScore: 0, wickets: 0,
+        oversBowled: 0, runsConceded: 0, maidens: 0, bestBowling: '0/0'
+      };
+
+      const newMatches = (prevStats.matches || 0) + 1;
+      const addRuns = bCard ? bCard.runs : 0;
+      const addBalls = bCard ? bCard.balls : 0;
+      const addFours = bCard ? bCard.fours : 0;
+      const addSixes = bCard ? bCard.sixes : 0;
+      const addFifty = bCard && bCard.runs >= 50 && bCard.runs < 100 ? 1 : 0;
+      const addHundred = bCard && bCard.runs >= 100 ? 1 : 0;
+
+      const newRuns = (prevStats.runs || 0) + addRuns;
+      const newBalls = (prevStats.balls || 0) + addBalls;
+      const newFours = (prevStats.fours || 0) + addFours;
+      const newSixes = (prevStats.sixes || 0) + addSixes;
+      const newFifties = (prevStats.fifties || 0) + addFifty;
+      const newHundreds = (prevStats.hundreds || 0) + addHundred;
+      const newHighest = Math.max(prevStats.highestScore || 0, addRuns);
+
+      const addWkts = bwCard ? bwCard.wickets : 0;
+      const addOvers = bwCard ? (Math.floor(bwCard.overs) + (bwCard.ballsInCurrentOver || 0) / 6) : 0;
+      const addConceded = bwCard ? bwCard.runs : 0;
+      const addMaidens = bwCard ? (bwCard.maidens || 0) : 0;
+
+      const newWickets = (prevStats.wickets || 0) + addWkts;
+      const newOversBowled = Number(((prevStats.oversBowled || 0) + addOvers).toFixed(1));
+      const newRunsConceded = (prevStats.runsConceded || 0) + addConceded;
+      const newMaidens = (prevStats.maidens || 0) + addMaidens;
+
+      // Compare best bowling W/R
+      let bestBowling = prevStats.bestBowling || '0/0';
+      if (bwCard && (bwCard.overs > 0 || bwCard.ballsInCurrentOver > 0)) {
+        const [prevBestW, prevBestR] = bestBowling.split('/').map(Number);
+        if (
+          bwCard.wickets > (prevBestW || 0) ||
+          (bwCard.wickets === (prevBestW || 0) && bwCard.runs < (prevBestR || 999) && bwCard.wickets > 0)
+        ) {
+          bestBowling = `${bwCard.wickets}/${bwCard.runs}`;
+        }
+      }
+
+      const estDismissals = Math.max(1, Math.round(newMatches * 0.82));
+      const average = Number((newRuns / estDismissals).toFixed(1));
+      const strikeRate = newBalls > 0 ? Number(((newRuns / newBalls) * 100).toFixed(1)) : 130.0;
+      const economy = newOversBowled > 0 ? Number((newRunsConceded / newOversBowled).toFixed(1)) : 7.8;
+
+      return {
+        ...p,
+        form: Math.max(40, Math.min(100, p.form + (addRuns >= 35 || addWkts >= 2 ? 4 : -1))),
+        stats: {
+          matches: newMatches,
+          runs: newRuns,
+          balls: newBalls,
+          fours: newFours,
+          sixes: newSixes,
+          fifties: newFifties,
+          hundreds: newHundreds,
+          highestScore: newHighest,
+          wickets: newWickets,
+          oversBowled: newOversBowled,
+          runsConceded: newRunsConceded,
+          maidens: newMaidens,
+          bestBowling,
+          average,
+          strikeRate,
+          economy
+        }
+      };
+    };
+
+    setPlayers(prev => prev.map(applyStatsToPlayer));
+    setTeams(prev => prev.map(t => ({
+      ...t,
+      squad: t.squad.map(applyStatsToPlayer)
+    })));
+
+    // 2. Update League Standings, NRR, Background AI Fixture & Playoff Bracket
+    const isInternational = finishedMatch.leagueId === 'wtc_test' || finishedMatch.leagueId === 't20i_bilateral' || finishedMatch.leagueId === 'intl';
+    let userUpdatedStandingRank = 1;
+    let userUpdatedNrr = 0.5;
+
+    if (isInternational) {
+      // Phase 12: Update ICC World Rankings & Bilateral Series Progress
+      const winnerTeamName = (winnerId === finishedMatch.homeTeam.id ? finishedMatch.homeTeam.name : finishedMatch.awayTeam.name).toLowerCase();
+      const loserTeamName = (loserId === finishedMatch.homeTeam.id ? finishedMatch.homeTeam.name : finishedMatch.awayTeam.name).toLowerCase();
+
+      setNations(prevNations => {
+        const updated = prevNations.map(n => {
+          const isWin = n.name.toLowerCase() === winnerTeamName;
+          const isLoss = n.name.toLowerCase() === loserTeamName;
+          if (!isWin && !isLoss) return n;
+          const delta = isWin ? 3 : -2;
+          return {
+            ...n,
+            ratingT20: finishedMatch.format === 'T20' || finishedMatch.format === '100BALL' ? Math.max(150, n.ratingT20 + delta) : n.ratingT20,
+            ratingODI: finishedMatch.format === 'ODI' ? Math.max(50, n.ratingODI + delta) : n.ratingODI,
+            ratingTest: finishedMatch.format === 'TEST' ? Math.max(40, n.ratingTest + delta) : n.ratingTest
+          };
+        });
+
+        const byT20 = [...updated].sort((a, b) => b.ratingT20 - a.ratingT20);
+        const byODI = [...updated].sort((a, b) => b.ratingODI - a.ratingODI);
+        const byTest = [...updated].sort((a, b) => b.ratingTest - a.ratingTest);
+
+        return updated.map(n => {
+          const rT20 = byT20.findIndex(x => x.id === n.id) + 1;
+          const rODI = byODI.findIndex(x => x.id === n.id) + 1;
+          const rTest = byTest.findIndex(x => x.id === n.id) + 1;
+          return {
+            ...n,
+            rankT20: rT20,
+            t20Rank: rT20,
+            rankODI: rODI,
+            odiRank: rODI,
+            rankTest: rTest,
+            testRank: rTest
+          };
+        });
+      });
+
+      const homeShort = finishedMatch.homeTeam.shortName;
+      const awayShort = finishedMatch.awayTeam.shortName;
+      const homeScore = inn1.battingTeamId === finishedMatch.homeTeam.id ? `${inn1.runs}/${inn1.wickets}` : `${inn2?.runs || 0}/${inn2?.wickets || 0}`;
+      const awayScore = inn1.battingTeamId === finishedMatch.awayTeam.id ? `${inn1.runs}/${inn1.wickets}` : `${inn2?.runs || 0}/${inn2?.wickets || 0}`;
+      const intlShortSummary = `${awayShort} ${awayScore} vs ${homeShort} ${homeScore} · ${finishedMatch.resultText || ''}`;
+
+      setInternationalSeries(prevSeries => {
+        if (finishedMatch.leagueId === 'wtc_test' || finishedMatch.format === 'TEST') {
+          return {
+            ...prevSeries,
+            wtcTestCompleted: true,
+            wtcTestSummary: intlShortSummary
+          };
+        }
+        const nextIdx = prevSeries.matches.findIndex(m => !m.completed);
+        if (nextIdx === -1) return prevSeries;
+        const updatedMatches = prevSeries.matches.map((m, idx) =>
+          idx === nextIdx ? { ...m, completed: true, summary: intlShortSummary } : m
+        );
+        return {
+          ...prevSeries,
+          seriesWins: prevSeries.seriesWins + (didUserWin ? 1 : 0),
+          seriesLosses: prevSeries.seriesLosses + (didUserWin ? 0 : 1),
+          matches: updatedMatches
+        };
+      });
+
+      // Also mark matching Cricbuzz 2026 international tour fixture on the calendar as completed
+      setLeagues(prevLeagues => prevLeagues.map(league => ({
+        ...league,
+        calendarDates: league.calendarDates.map(cd => {
+          const matchesTeams = (homeId: string, awayId: string) =>
+            (homeId.toLowerCase() === finishedMatch.homeTeam.name.toLowerCase() &&
+              awayId.toLowerCase() === finishedMatch.awayTeam.name.toLowerCase()) ||
+            (homeId.toLowerCase() === finishedMatch.awayTeam.name.toLowerCase() &&
+              awayId.toLowerCase() === finishedMatch.homeTeam.name.toLowerCase());
+
+          const updatedMatchFixture =
+            cd.matchFixture &&
+            cd.matchFixture.isInternational &&
+            !cd.matchFixture.completed &&
+            matchesTeams(cd.matchFixture.homeTeamId, cd.matchFixture.awayTeamId)
+              ? { ...cd.matchFixture, completed: true, resultSummary: intlShortSummary }
+              : cd.matchFixture;
+
+          const updatedIntlMatches = cd.internationalMatches?.map(im =>
+            !im.completed && matchesTeams(im.homeTeamId, im.awayTeamId)
+              ? { ...im, completed: true, resultSummary: intlShortSummary }
+              : im
+          );
+
+          return {
+            ...cd,
+            matchFixture: updatedMatchFixture,
+            internationalMatches: updatedIntlMatches
+          };
+        })
+      })));
+    } else {
+      setLeagues(prevLeagues => prevLeagues.map(league => {
+        if (league.id !== finishedMatch.leagueId) return league;
+
+        const shortScoreSummary = `${finishedMatch.homeTeam.shortName} ${inn1.battingTeamId === finishedMatch.homeTeam.id ? `${inn1.runs}/${inn1.wickets}` : `${inn2?.runs || 0}/${inn2?.wickets || 0}`} vs ${finishedMatch.awayTeam.shortName} ${inn1.battingTeamId === finishedMatch.awayTeam.id ? `${inn1.runs}/${inn1.wickets}` : `${inn2?.runs || 0}/${inn2?.wickets || 0}`} · ${finishedMatch.resultText || ''}`;
+
+        // Playoff Bracket Stage Update
+        if (finishedMatch.playoffStage) {
+          const currentPlayoffs = league.playoffs || createInitialPlayoffs(league.standings);
+          const stage = finishedMatch.playoffStage;
+          const updatedPlayoffs = { ...currentPlayoffs };
+
+          if (stage === 'q1') {
+            updatedPlayoffs.q1 = {
+              ...updatedPlayoffs.q1,
+              homeTeamId: finishedMatch.homeTeam.id,
+              awayTeamId: finishedMatch.awayTeam.id,
+              winnerTeamId: winnerId,
+              loserTeamId: loserId,
+              completed: true,
+              resultSummary: shortScoreSummary
+            };
+            updatedPlayoffs.q2 = {
+              ...updatedPlayoffs.q2,
+              homeTeamId: loserId
+            };
+            updatedPlayoffs.final = {
+              ...updatedPlayoffs.final,
+              homeTeamId: winnerId
+            };
+          } else if (stage === 'eliminator') {
+            updatedPlayoffs.eliminator = {
+              ...updatedPlayoffs.eliminator,
+              homeTeamId: finishedMatch.homeTeam.id,
+              awayTeamId: finishedMatch.awayTeam.id,
+              winnerTeamId: winnerId,
+              loserTeamId: loserId,
+              completed: true,
+              resultSummary: shortScoreSummary
+            };
+            updatedPlayoffs.q2 = {
+              ...updatedPlayoffs.q2,
+              awayTeamId: winnerId
+            };
+          } else if (stage === 'q2') {
+            updatedPlayoffs.q2 = {
+              ...updatedPlayoffs.q2,
+              homeTeamId: finishedMatch.homeTeam.id,
+              awayTeamId: finishedMatch.awayTeam.id,
+              winnerTeamId: winnerId,
+              loserTeamId: loserId,
+              completed: true,
+              resultSummary: shortScoreSummary
+            };
+            updatedPlayoffs.final = {
+              ...updatedPlayoffs.final,
+              awayTeamId: winnerId
+            };
+          } else if (stage === 'final') {
+            updatedPlayoffs.final = {
+              ...updatedPlayoffs.final,
+              homeTeamId: finishedMatch.homeTeam.id,
+              awayTeamId: finishedMatch.awayTeam.id,
+              winnerTeamId: winnerId,
+              loserTeamId: loserId,
+              completed: true,
+              resultSummary: shortScoreSummary
+            };
+            updatedPlayoffs.championTeamId = winnerId;
+          }
+
+          return {
+            ...league,
+            playoffs: updatedPlayoffs
+          };
+        }
+
+        // Regular League Stage Match: Compute NRR Adjustment
+        const maxOv = inn1.maxOvers || 20;
+        const overs1 = inn1.wickets >= 10 ? maxOv : Math.max(1, inn1.ballsCompleted / 6);
+        const overs2 = (inn2?.wickets || 0) >= 10 ? (inn2?.maxOvers || maxOv) : Math.max(1, (inn2?.ballsCompleted || 60) / 6);
+        const rr1 = inn1.runs / overs1;
+        const rr2 = (inn2?.runs || 0) / overs2;
+        const rrDiffInnings1Team = (rr1 - rr2) * 0.15;
+
+        const updatedStandings = league.standings.map(row => {
+          if (row.teamId === winnerId) {
+            const delta = Math.abs(rrDiffInnings1Team);
+            return {
+              ...row,
+              played: row.played + 1,
+              won: row.won + 1,
+              points: row.points + 2,
+              nrr: Number((row.nrr + delta).toFixed(2)),
+              recentForm: [...row.recentForm, 'W' as const].slice(-5)
+            };
+          }
+          if (row.teamId === loserId) {
+            const delta = Math.abs(rrDiffInnings1Team);
+            return {
+              ...row,
+              played: row.played + 1,
+              lost: row.lost + 1,
+              nrr: Number((row.nrr - delta).toFixed(2)),
+              recentForm: [...row.recentForm, 'L' as const].slice(-5)
+            };
+          }
+          return row;
+        });
+
+        updatedStandings.sort((a, b) => {
+          if (b.points !== a.points) return b.points - a.points;
+          return b.nrr - a.nrr;
+        });
+
+        const userIdx = updatedStandings.findIndex(r => r.teamId === userTeam.id);
+        if (userIdx !== -1) {
+          userUpdatedStandingRank = userIdx + 1;
+          userUpdatedNrr = updatedStandings[userIdx].nrr;
+        }
+
+        // Keep top-4 playoff seeds synced if playoffs haven't started yet
+        const existingPlayoffs = league.playoffs || createInitialPlayoffs(updatedStandings);
+        const syncedPlayoffs = (!existingPlayoffs.q1.completed && !existingPlayoffs.eliminator.completed)
+          ? createInitialPlayoffs(updatedStandings)
+          : existingPlayoffs;
+
+        // Mark current calendar fixture completed if applicable and persist full completedMatchState
+        const updatedCalendar = league.calendarDates.map((cd, idx) => {
+          if (
+            idx === league.currentDateIndex ||
+            (cd.matchFixture &&
+              !cd.matchFixture.completed &&
+              ((cd.matchFixture.homeTeamId === finishedMatch.homeTeam.id && cd.matchFixture.awayTeamId === finishedMatch.awayTeam.id) ||
+               (cd.matchFixture.homeTeamId === finishedMatch.awayTeam.id && cd.matchFixture.awayTeamId === finishedMatch.homeTeam.id)))
+          ) {
+            return {
+              ...cd,
+              matchFixture: cd.matchFixture
+                ? {
+                    ...cd.matchFixture,
+                    completed: true,
+                    resultSummary: shortScoreSummary,
+                    completedMatchState: finishedMatch
+                  }
+                : undefined
+            };
+          }
+          return cd;
+        });
+
+        return {
+          ...league,
+          standings: updatedStandings,
+          playoffs: syncedPlayoffs,
+          calendarDates: updatedCalendar
+        };
+      }));
+    }
+
+    // 2B. Append full match scorecard to completedMatchesHistory for Inbox News & Schedule Modals
+    const inn1TeamObj = inn1.battingTeamId === finishedMatch.homeTeam.id ? finishedMatch.homeTeam : finishedMatch.awayTeam;
+    const inn2TeamObj = inn2?.battingTeamId === finishedMatch.homeTeam.id ? finishedMatch.homeTeam : finishedMatch.awayTeam;
+    const formatOvers = (ballsComp: number) => `${Math.floor(ballsComp / 6)}.${ballsComp % 6}`;
+
+    // Pick Player of the Match by highest impact points (runs + wickets * 25)
+    let bestPotmName = finishedMatch.homeTeam.shortName + ' Star';
+    let bestPotmScore = -1;
+    batterMap.forEach((b, pid) => {
+      const bw = bowlerMap.get(pid);
+      const score = b.runs + (bw ? bw.wickets * 25 : 0);
+      if (score > bestPotmScore) {
+        bestPotmScore = score;
+        bestPotmName = b.name;
+      }
+    });
+    bowlerMap.forEach((bw, pid) => {
+      const b = batterMap.get(pid);
+      const score = (b ? b.runs : 0) + bw.wickets * 25;
+      if (score > bestPotmScore) {
+        bestPotmScore = score;
+        bestPotmName = bw.name;
+      }
+    });
+
+    const summaryStr = finishedMatch.resultText
+      ? `${inn1TeamObj.shortName} ${inn1.runs}/${inn1.wickets} vs ${inn2TeamObj.shortName} ${inn2?.runs || 0}/${inn2?.wickets || 0} · ${finishedMatch.resultText}`
+      : `${finishedMatch.homeTeam.shortName} vs ${finishedMatch.awayTeam.shortName}`;
+
+    const newCompletedRecord: CompletedMatchRecord = {
+      id: finishedMatch.id,
+      dateStr: 'TODAY',
+      homeTeam: finishedMatch.homeTeam.shortName,
+      awayTeam: finishedMatch.awayTeam.shortName,
+      summary: summaryStr,
+      playerOfMatch: bestPotmName,
+      innings1: {
+        team: inn1TeamObj.name.toUpperCase(),
+        runs: inn1.runs,
+        wickets: inn1.wickets,
+        overs: formatOvers(inn1.ballsCompleted),
+        batters: inn1.batters
+          .filter(b => b.balls > 0 || b.dismissal !== 'not out' || b.isOnStrike)
+          .map(b => ({
+            name: b.dismissal === 'not out' ? `${b.name} *` : b.name,
+            runs: b.runs,
+            balls: b.balls,
+            fours: b.fours,
+            sixes: b.sixes,
+            sr: b.balls > 0 ? Number(((b.runs / b.balls) * 100).toFixed(1)) : 0,
+            isOut: b.dismissal !== 'not out',
+            outDesc: b.dismissal !== 'not out' ? b.dismissal : undefined
+          })),
+        bowlers: inn1.bowlers
+          .filter(bw => bw.overs > 0 || bw.ballsInCurrentOver > 0)
+          .map(bw => ({
+            name: bw.name,
+            overs: Number(`${bw.overs}.${bw.ballsInCurrentOver || 0}`),
+            maidens: bw.maidens || 0,
+            runs: bw.runs,
+            wickets: bw.wickets,
+            econ: bw.economy || 0
+          }))
+      },
+      innings2: {
+        team: inn2TeamObj.name.toUpperCase(),
+        runs: inn2?.runs || 0,
+        wickets: inn2?.wickets || 0,
+        overs: formatOvers(inn2?.ballsCompleted || 0),
+        batters: (inn2?.batters || [])
+          .filter(b => b.balls > 0 || b.dismissal !== 'not out' || b.isOnStrike)
+          .map(b => ({
+            name: b.dismissal === 'not out' ? `${b.name} *` : b.name,
+            runs: b.runs,
+            balls: b.balls,
+            fours: b.fours,
+            sixes: b.sixes,
+            sr: b.balls > 0 ? Number(((b.runs / b.balls) * 100).toFixed(1)) : 0,
+            isOut: b.dismissal !== 'not out',
+            outDesc: b.dismissal !== 'not out' ? b.dismissal : undefined
+          })),
+        bowlers: (inn2?.bowlers || [])
+          .filter(bw => bw.overs > 0 || bw.ballsInCurrentOver > 0)
+          .map(bw => ({
+            name: bw.name,
+            overs: Number(`${bw.overs}.${bw.ballsInCurrentOver || 0}`),
+            maidens: bw.maidens || 0,
+            runs: bw.runs,
+            wickets: bw.wickets,
+            econ: bw.economy || 0
+          }))
+      }
+    };
+
+    setCompletedMatchesHistory(prev => [newCompletedRecord, ...prev.filter(m => m.id !== newCompletedRecord.id)].slice(0, 25));
+
+    // 3. Update Coach Career KPIs & Board Targets (only if user's team or coached nation played in this match)
+    const isUserInMatch =
+      finishedMatch.homeTeam.id === userTeam.id ||
+      finishedMatch.awayTeam.id === userTeam.id ||
+      Boolean(finishedMatch.homeTeam.isUserTeam || finishedMatch.awayTeam.isUserTeam) ||
+      (isInternational && Boolean(coachProfile.nationalTeamId && (finishedMatch.homeTeam.id === coachProfile.nationalTeamId || finishedMatch.awayTeam.id === coachProfile.nationalTeamId)));
+
+    const wonGrandFinal = isUserInMatch && finishedMatch.playoffStage === 'final' && didUserWin;
+    if (isUserInMatch && finishedMatch.playoffStage === 'final') {
+      unlockAchievement('ach_27');
+    }
+    if (wonGrandFinal) {
+      sound.playCrowdCheer(1.8);
+      confetti({ particleCount: 120, spread: 90, origin: { y: 0.5 } });
+      unlockAchievement('ach_22');
+      setPendingRetentionModal(true);
+    }
+
+    if (!isUserInMatch) return;
+
+    // Stadium & Hospitality Facility Gate Revenue Payout for Home Matches
+    if (!isInternational && finishedMatch.homeTeam.id === userTeam.id) {
+      try {
+        const rawInfra = localStorage.getItem(`cc26_infra_${userTeam.id}`);
+        const infra = rawInfra ? JSON.parse(rawInfra) : null;
+        const stadiumTier = infra?.stadiumTier || 1;
+        const gateRevenueCr = Number((0.25 + (stadiumTier - 1) * 0.45).toFixed(2));
+        setTeams(prev => prev.map(t =>
+          t.id === userTeam.id
+            ? { ...t, purseCr: Number((t.purseCr + gateRevenueCr).toFixed(2)) }
+            : t
+        ));
+      } catch {
+        // ignore
+      }
+    }
+
+    setCoachProfile(prev => {
+      if (isInternational) {
+        const nextMatches = (prev.nationalStats?.matches || 0) + 1;
+        const nextWins = (prev.nationalStats?.wins || 0) + (didUserWin ? 1 : 0);
+        const nextLosses = (prev.nationalStats?.losses || 0) + (didUserWin ? 0 : 1);
+        const nextWinPct = Number(((nextWins / nextMatches) * 100).toFixed(1));
+        return {
+          ...prev,
+          nationalStats: {
+            ...prev.nationalStats,
+            matches: nextMatches,
+            wins: nextWins,
+            losses: nextLosses,
+            winPct: nextWinPct
+          }
+        };
+      }
+
+      const dom = prev.domesticStats || {
+        seasons: 1, matches: 0, wins: 0, losses: 0, winPct: 0,
+        titles: 0, playoffRuns: 0, bestStreak: 0, currentStreak: 0
+      };
+      const nextMatches = dom.matches + 1;
+      const nextWins = dom.wins + (didUserWin ? 1 : 0);
+      const nextLosses = dom.losses + (didUserWin ? 0 : 1);
+      const nextWinPct = Number(((nextWins / nextMatches) * 100).toFixed(1));
+      const nextStreak = didUserWin ? dom.currentStreak + 1 : 0;
+      const nextBestStreak = Math.max(dom.bestStreak, nextStreak);
+      const nextTitles = dom.titles + (wonGrandFinal ? 1 : 0);
+
+      const totalCoached = (prev.stats?.matchesCoached ?? 0) + 1;
+      const totalWon = (prev.stats?.matchesWon ?? 0) + (didUserWin ? 1 : 0);
+      const totalLost = (prev.stats?.matchesLost ?? 0) + (didUserWin ? 0 : 1);
+
+      const updatedTargets = (prev.boardTargets || []).map(bt => {
+        if (bt.id === 'bt_1') {
+          return { ...bt, completed: userUpdatedStandingRank <= 4 };
+        }
+        if (bt.id === 'bt_2') {
+          return { ...bt, completed: userUpdatedNrr > 0.40 };
+        }
+        if (bt.id === 'bt_3') {
+          const hasYoungster5Matches = players.some(p => p.clubId === userTeam.id && p.age <= 23 && (p.stats?.matches || 0) >= 5);
+          return { ...bt, completed: bt.completed || hasYoungster5Matches };
+        }
+        return bt;
+      });
+
+      const currentStints = prev.clubStints && prev.clubStints.length > 0
+        ? prev.clubStints
+        : [
+            {
+              id: `stint_${userTeam.id}_2026`,
+              teamId: userTeam.id,
+              teamName: userTeam.city || userTeam.name,
+              period: '2026–present',
+              seasons: 1,
+              matches: 0,
+              wins: 0,
+              losses: 0,
+              winPct: 0,
+              titles: 0
+            }
+          ];
+
+      const updatedStints = currentStints.map((stint, idx) => {
+        if (idx === currentStints.length - 1 || stint.teamId === userTeam.id) {
+          const sMatches = stint.matches + 1;
+          const sWins = stint.wins + (didUserWin ? 1 : 0);
+          const sLosses = stint.losses + (didUserWin ? 0 : 1);
+          return {
+            ...stint,
+            matches: sMatches,
+            wins: sWins,
+            losses: sLosses,
+            winPct: Number(((sWins / sMatches) * 100).toFixed(1)),
+            titles: stint.titles + (wonGrandFinal ? 1 : 0)
+          };
+        }
+        return stint;
+      });
+
+      return {
+        ...prev,
+        domesticTitles: (prev.domesticTitles ?? 0) + (wonGrandFinal ? 1 : 0),
+        domesticStats: {
+          ...dom,
+          matches: nextMatches,
+          wins: nextWins,
+          losses: nextLosses,
+          winPct: nextWinPct,
+          currentStreak: nextStreak,
+          bestStreak: nextBestStreak,
+          titles: nextTitles
+        },
+        stats: prev.stats ? {
+          ...prev.stats,
+          matchesCoached: totalCoached,
+          matchesWon: totalWon,
+          matchesLost: totalLost,
+          winPercentage: Number(((totalWon / totalCoached) * 100).toFixed(1)),
+          bestWinStreak: Math.max(prev.stats.bestWinStreak ?? 0, nextBestStreak)
+        } : prev.stats,
+        boardTargets: updatedTargets,
+        clubStints: updatedStints
+      };
+    });
+  }, [players, userTeam, unlockAchievement]);
+
+  // Automatically record match outcome when matchLiveState transitions to finished
+  useEffect(() => {
+    if (matchLiveState && matchLiveState.status === 'finished') {
+      recordCompletedMatch(matchLiveState);
+    }
+  }, [matchLiveState, recordCompletedMatch]);
+
+  // Helper to construct a MatchLiveState between any two franchise teams (including Playoff fixtures)
+  const createFranchiseMatchState = useCallback((
+    homeTeamObj: Team,
+    awayTeamObj: Team,
+    leagueId: string,
+    format: 'T20' | 'ODI' | 'TEST' | '100BALL',
+    playoffStage?: 'q1' | 'eliminator' | 'q2' | 'final'
+  ): MatchLiveState => {
+    const homeXIPlayers = homeTeamObj.playingXIIds
+      .map(id => players.find(p => p.id === id))
+      .filter((p): p is Player => Boolean(p));
+    const awayXIPlayers = awayTeamObj.playingXIIds
+      .map(id => players.find(p => p.id === id))
+      .filter((p): p is Player => Boolean(p));
+
+    const finalHomeXI = homeXIPlayers.length >= 2
+      ? homeXIPlayers
+      : (homeTeamObj.squad && homeTeamObj.squad.length >= 2 ? homeTeamObj.squad.slice(0, 11) : players.slice(0, 11));
+    const finalAwayXI = awayXIPlayers.length >= 2
+      ? awayXIPlayers
+      : (awayTeamObj.squad && awayTeamObj.squad.length >= 2 ? awayTeamObj.squad.slice(0, 11) : players.slice(11, 22));
+
+    const initBatters: BatterInningsScorecard[] = finalHomeXI.map((p, idx) => ({
+      playerId: p.id,
+      name: p.name,
+      runs: 0,
+      balls: 0,
+      fours: 0,
+      sixes: 0,
+      dismissal: 'not out',
+      strikeRate: 0,
+      isOnStrike: idx === 0
+    }));
+
+    const awayBowlersList = finalAwayXI.filter(p => p.role === 'Pace' || p.role === 'Spin' || p.role === 'All-rounder');
+    const finalBowlerPool = awayBowlersList.length > 0 ? awayBowlersList : finalAwayXI;
+
+    const initBowlers: BowlerInningsScorecard[] = finalBowlerPool.map((p, idx) => ({
+      playerId: p.id,
+      name: p.name,
+      overs: 0,
+      ballsInCurrentOver: 0,
+      maidens: 0,
+      runs: 0,
+      wickets: 0,
+      economy: 0,
+      isCurrentBowler: idx === 0
+    }));
+
+    const maxOversForFormat = format === 'TEST' ? 90 : format === 'ODI' ? 50 : format === '100BALL' ? 16.4 : 20;
+
+    const innings1: InningsData = {
+      battingTeamId: homeTeamObj.id,
+      bowlingTeamId: awayTeamObj.id,
+      runs: 0,
+      wickets: 0,
+      overs: 0,
+      ballsCompleted: 0,
+      maxOvers: maxOversForFormat,
+      currentOverRuns: 0,
+      batters: initBatters,
+      bowlers: initBowlers,
+      currentStrikerId: finalHomeXI[0]?.id || players[0]?.id,
+      currentNonStrikerId: finalHomeXI[1]?.id || players[1]?.id,
+      currentBowlerId: initBowlers[0]?.playerId || finalBowlerPool[0]?.id || finalAwayXI[0]?.id,
+      ballHistory: [],
+      fallOfWickets: [],
+      overRuns: []
+    };
+
+    return {
+      id: `match_${leagueId}_${playoffStage || 'reg'}_${Date.now()}`,
+      leagueId,
+      format,
+      playoffStage,
+      homeTeam: homeTeamObj,
+      awayTeam: awayTeamObj,
+      venue: playoffStage === 'final' ? 'Wankhede Stadium · Championship Final' : `${homeTeamObj.city} Cricket Stadium`,
+      pitchType: 'Flat Belter',
+      weather: 'Clear Night',
+      currentInningsIndex: 1,
+      innings1,
+      innings2: null,
+      targetRuns: null,
+      status: 'in_progress',
+      lastBallOutcome: null,
+      isBallInFlight: false,
+      reviewsRemaining: { home: 2, away: 2 },
+      activeDrsReview: null,
+      dlsState: null,
+      hasDew: false,
+      tacticalTrapAlert: null,
+      ballsRemainingInInnings: format === '100BALL' ? 100 : undefined,
+      powerSurgeTaken: false,
+      powerSurgeOversLeft: 0,
+      bowlingTactics: {
+        length: 'good',
+        line: 'outside_off',
+        angle: 'over',
+        variation: 'Stock ball',
+        fielders: INITIAL_DEFAULT_FIELD
+      },
+      battingTactics: {
+        approach: 'balanced',
+        targetSide: 'all',
+        runningRisk: 'normal'
+      }
+    };
+  }, [players]);
+
+  const resolvePlayoffStageTeams = useCallback((leagueId: string, stage: 'q1' | 'eliminator' | 'q2' | 'final') => {
+    const league = leagues.find(l => l.id === leagueId) || leagues[0];
+    const allTeamsPool = [...teams, ...(league.teams || [])];
+    const playoffs = league.playoffs || createInitialPlayoffs(league.standings);
+
+    let homeId = playoffs[stage].homeTeamId;
+    let awayId = playoffs[stage].awayTeamId;
+
+    if (stage === 'q1') {
+      homeId = homeId || league.standings[0]?.teamId || null;
+      awayId = awayId || league.standings[1]?.teamId || null;
+    } else if (stage === 'eliminator') {
+      homeId = homeId || league.standings[2]?.teamId || null;
+      awayId = awayId || league.standings[3]?.teamId || null;
+    } else if (stage === 'q2') {
+      homeId = homeId || playoffs.q1.loserTeamId || null;
+      awayId = awayId || playoffs.eliminator.winnerTeamId || null;
+    } else if (stage === 'final') {
+      homeId = homeId || playoffs.q1.winnerTeamId || null;
+      awayId = awayId || playoffs.q2.winnerTeamId || null;
+    }
+
+    const homeTeamObj = allTeamsPool.find(t => t.id === homeId) || teams[0];
+    const awayTeamObj = allTeamsPool.find(t => t.id === awayId) || teams[1];
+    const format: 'T20' | '100BALL' = league.rules.overs === 100 ? '100BALL' : 'T20';
+
+    return { homeTeamObj, awayTeamObj, format };
+  }, [leagues, teams]);
+
+  const playPlayoffMatch = useCallback((leagueId: string, stage: 'q1' | 'eliminator' | 'q2' | 'final') => {
+    const { homeTeamObj, awayTeamObj, format } = resolvePlayoffStageTeams(leagueId, stage);
+    const newMatch = createFranchiseMatchState(homeTeamObj, awayTeamObj, leagueId, format, stage);
+    setMatchLiveState(newMatch);
+    setActiveTab('live_match');
+    sound.playCrowdCheer(0.8);
+  }, [resolvePlayoffStageTeams, createFranchiseMatchState]);
+
+  const simPlayoffMatch = useCallback((leagueId: string, stage: 'q1' | 'eliminator' | 'q2' | 'final') => {
+    const { homeTeamObj, awayTeamObj, format } = resolvePlayoffStageTeams(leagueId, stage);
+    let curr = createFranchiseMatchState(homeTeamObj, awayTeamObj, leagueId, format, stage);
+    let safetyCounter = 0;
+
+    while (curr.status !== 'finished' && safetyCounter < 1500) {
+      safetyCounter++;
+      if (curr.status === 'innings_break') {
+        curr = {
+          ...curr,
+          currentInningsIndex: 2,
+          hasDew: true,
+          status: 'in_progress'
+        };
+      }
+      const res = simulateSingleDeliveryState(curr, true);
+      curr = res.nextState;
+      if (res.matchJustFinished) break;
+    }
+
+    recordCompletedMatch(curr);
+    sound.playCrowdCheer(1.0);
+  }, [resolvePlayoffStageTeams, createFranchiseMatchState, simulateSingleDeliveryState, recordCompletedMatch]);
+
+  const resetPlayoffBracket = useCallback((leagueId: string) => {
+    setLeagues(prev => prev.map(l => {
+      if (l.id !== leagueId) return l;
+      return {
+        ...l,
+        playoffs: createInitialPlayoffs(l.standings)
+      };
+    }));
+    sound.playTap();
+  }, []);
+
+  const finishMatch = useCallback(() => {
+    if (matchLiveState && matchLiveState.status === 'finished') {
+      recordCompletedMatch(matchLiveState);
+    }
+    setMatchLiveState(null);
+    setActiveTab('hub');
+  }, [matchLiveState, recordCompletedMatch]);
+
+  const startSecondInnings = useCallback(() => {
+    setMatchLiveState(prev => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        currentInningsIndex: 2,
+        hasDew: prev.weather === 'Clear Night' || prev.weather === 'Overcast & Humid',
+        status: 'in_progress'
+      };
+    });
+    sound.playTap();
+  }, []);
+
+  // FEATURE 6.1: DRS & BALL-TRACKING REVIEW
+  const triggerDrsReview = useCallback(() => {
+    setMatchLiveState(prev => {
+      if (!prev || !prev.lastBallOutcome) return prev;
+      const lbo = prev.lastBallOutcome;
+      if (lbo.drsReviewed) return prev;
+
+      const isFirst = prev.currentInningsIndex === 1;
+      const curInnings = isFirst ? prev.innings1 : prev.innings2;
+      if (!curInnings) return prev;
+
+      const isUserHome = prev.homeTeam.id === userTeam.id || Boolean(prev.homeTeam.isUserTeam);
+      const userSideKey: 'home' | 'away' = isUserHome ? 'home' : 'away';
+      const reviewsLeft = prev.reviewsRemaining?.[userSideKey] ?? 2;
+      if (reviewsLeft <= 0) return prev;
+
+      const reviewedBatterId = lbo.dismissedPlayerId || lbo.strikerId || curInnings.currentStrikerId;
+      const reviewedBatterObj = players.find(p => p.id === reviewedBatterId) || players[0];
+      const reviewedBowlerId = lbo.bowlerId || curInnings.currentBowlerId;
+      const reviewedBowlerObj = players.find(p => p.id === reviewedBowlerId) || players[2];
+
+      const originalDecision: 'OUT' | 'NOT OUT' = lbo.isWicket ? 'OUT' : 'NOT OUT';
+
+      // Strict DRS restriction: Batting review permitted ONLY on LBWs and edges to keeper/slip
+      if (lbo.isWicket) {
+        const wt = lbo.wicketType;
+        const f = (lbo.fielderName || '').toLowerCase();
+        const d = (lbo.dismissalText || '').toLowerCase();
+        const isLbwWicket = wt === 'lbw' || d.startsWith('lbw') || d.includes('lbw');
+        const isEdgeToKeeperOrSlip = wt === 'caught' && (
+          f.includes('keeper') || f.includes('wicketkeeper') || f.includes('slip') ||
+          d.includes('c keeper') || d.includes('c †') || d.includes('c slip') || d.includes('c wicketkeeper')
+        );
+        if (!isLbwWicket && !isEdgeToKeeperOrSlip) {
+          console.warn("DRS rejected: Outfield catches, bowled, and run outs cannot be reviewed.", { wt, f, d });
+          return prev;
+        }
+      }
+      const line = prev.bowlingTactics.line;
+      const length = prev.bowlingTactics.length;
+
+      // Determine whether review is LBW or Caught Behind / UltraEdge
+      const isLbw: boolean = lbo.isWicket
+        ? lbo.wicketType === 'lbw'
+        : (line === 'stumps' || line === 'off_stump' || line === 'leg_side') &&
+          (length === 'full' || length === 'good' || length === 'yorker');
+
+      const roll = Math.random();
+      let isOverturned = false;
+      let isUmpiresCall = false;
+
+      if (originalDecision === 'OUT') {
+        // Batting review challenging an OUT decision
+        // ~45% overturn to NOT OUT, ~25% Umpire's Call (OUT stands, review retained), ~30% clear OUT
+        isOverturned = roll <= 0.45;
+        isUmpiresCall = !isOverturned && roll <= 0.70 && isLbw;
+      } else {
+        // Bowling review appealing a NOT OUT decision
+        if (lbo.isFour || lbo.isSix || lbo.isExtra || lbo.runs >= 2) {
+          // Cannot overturn a clean boundary or 2-run shot
+          isOverturned = false;
+          isUmpiresCall = false;
+        } else {
+          // Close appeal on dot ball or leg-bye single: tactical line/length boosts overturn chance!
+          const tacticalAccuracyBoost = (line === 'stumps' || line === 'off_stump') && (length === 'good' || length === 'full') ? 0.12 : 0;
+          const overturnThreshold = 0.42 + tacticalAccuracyBoost;
+          isOverturned = roll <= overturnThreshold;
+          isUmpiresCall = !isOverturned && roll <= overturnThreshold + 0.25 && isLbw;
+        }
+      }
+
+      const finalDecision: 'OUT' | 'NOT OUT' = isOverturned
+        ? (originalDecision === 'OUT' ? 'NOT OUT' : 'OUT')
+        : originalDecision;
+
+      // Coherent UltraEdge & Hawk-Eye telemetry matching the verdict
+      let snickoSpike = false;
+      let pitching: 'In-line' | 'Outside Off' | 'Outside Leg' = 'In-line';
+      let impact: 'In-line' | "Umpire's Call" | 'Outside Off' = 'In-line';
+      let wickets: 'Hitting Stumps' | 'Missing Stumps' | "Umpire's Call" = 'Hitting Stumps';
+
+      if (isLbw) {
+        if (finalDecision === 'OUT') {
+          snickoSpike = false; // No inside edge
+          pitching = 'In-line';
+          impact = isUmpiresCall ? "Umpire's Call" : 'In-line';
+          wickets = isUmpiresCall ? "Umpire's Call" : 'Hitting Stumps';
+        } else {
+          // Final decision is NOT OUT on LBW
+          if (isUmpiresCall) {
+            snickoSpike = false;
+            pitching = 'In-line';
+            impact = "Umpire's Call";
+            wickets = "Umpire's Call";
+          } else if (originalDecision === 'OUT' && Math.random() < 0.45) {
+            // Saved by an inside-edge spike on UltraEdge!
+            snickoSpike = true;
+            pitching = 'In-line';
+            impact = 'In-line';
+            wickets = 'Hitting Stumps';
+          } else {
+            snickoSpike = false;
+            pitching = line === 'leg_side' ? 'Outside Leg' : 'In-line';
+            impact = line === 'outside_off' || line === 'wide_outside_off' ? 'Outside Off' : 'In-line';
+            wickets = 'Missing Stumps';
+          }
+        }
+      } else {
+        // Caught behind / UltraEdge review
+        snickoSpike = finalDecision === 'OUT';
+        pitching = 'In-line';
+        impact = finalDecision === 'OUT' ? 'In-line' : 'Outside Off';
+        wickets = 'Missing Stumps';
+      }
+
+      return {
+        ...prev,
+        activeDrsReview: {
+          isActive: true,
+          reviewingTeamId: userTeam.id,
+          batterId: reviewedBatterId,
+          batterName: lbo.dismissedPlayerName || lbo.strikerName || reviewedBatterObj.name,
+          bowlerId: reviewedBowlerId,
+          bowlerName: lbo.bowlerName || reviewedBowlerObj.name,
+          replacedBatterId: lbo.incomingBatterId,
+          type: isLbw ? 'lbw' : 'caught',
+          snickoSpike,
+          hawkeye: {
+            pitching,
+            impact,
+            wickets
+          },
+          originalDecision,
+          finalDecision,
+          isOverturned,
+          reviewRetained: isOverturned || isUmpiresCall
+        }
+      };
+    });
+  }, [players, userTeam.id]);
+
+  const resolveDrsReview = useCallback((finalVerdict: 'OUT' | 'NOT OUT', reviewRetained: boolean) => {
+    setMatchLiveState(prev => {
+      if (!prev || !prev.activeDrsReview) return prev;
+      const isFirst = prev.currentInningsIndex === 1;
+      const curInnings = isFirst ? prev.innings1 : prev.innings2;
+      if (!curInnings) return prev;
+
+      const rev = prev.activeDrsReview;
+      const isUserHome = prev.homeTeam.id === userTeam.id || Boolean(prev.homeTeam.isUserTeam);
+      const currentHomeRevs = prev.reviewsRemaining?.home ?? 2;
+      const currentAwayRevs = prev.reviewsRemaining?.away ?? 2;
+      const nextHomeRevs = isUserHome
+        ? (reviewRetained ? currentHomeRevs : Math.max(0, currentHomeRevs - 1))
+        : currentHomeRevs;
+      const nextAwayRevs = !isUserHome
+        ? (reviewRetained ? currentAwayRevs : Math.max(0, currentAwayRevs - 1))
+        : currentAwayRevs;
+
+      let updatedInnings: InningsData = {
+        ...curInnings,
+        batters: [...curInnings.batters],
+        bowlers: [...curInnings.bowlers],
+        fallOfWickets: [...curInnings.fallOfWickets],
+        ballHistory: [...curInnings.ballHistory],
+        overRuns: [...curInnings.overRuns]
+      };
+      let updatedLastBall: BallOutcome | null = prev.lastBallOutcome ? { ...prev.lastBallOutcome, drsReviewed: true } : null;
+      let nextStatus: MatchLiveState['status'] = prev.status;
+      let nextWinnerTeamId = prev.winnerTeamId;
+      let nextResultText = prev.resultText;
+      let nextTargetRuns = prev.targetRuns;
+      let nextInnings2 = prev.innings2;
+
+      const wasOverEnd = updatedInnings.ballsCompleted > 0 && updatedInnings.ballsCompleted % 6 === 0 && !prev.lastBallOutcome?.isExtra;
+      const survivingPartnerId = prev.lastBallOutcome?.nonStrikerId || updatedInnings.currentNonStrikerId;
+
+      // CASE 1: OUT OVERTURNED TO NOT OUT (Batter survives and returns to the crease!)
+      if (rev.originalDecision === 'OUT' && finalVerdict === 'NOT OUT') {
+        const restoredBatterId = rev.batterId || prev.lastBallOutcome?.dismissedPlayerId || prev.lastBallOutcome?.strikerId || updatedInnings.currentStrikerId;
+        updatedInnings.wickets = Math.max(0, updatedInnings.wickets - 1);
+
+        // Put restored batter back in the crease in place of the temporary incoming batter
+        if (wasOverEnd) {
+          updatedInnings.currentStrikerId = survivingPartnerId;
+          updatedInnings.currentNonStrikerId = restoredBatterId;
+        } else {
+          updatedInnings.currentStrikerId = restoredBatterId;
+          updatedInnings.currentNonStrikerId = survivingPartnerId;
+        }
+
+        updatedInnings.batters = updatedInnings.batters.map(b => {
+          if (b.playerId === restoredBatterId || b.name === rev.batterName) {
+            return {
+              ...b,
+              dismissal: 'not out',
+              isOnStrike: b.playerId === updatedInnings.currentStrikerId
+            };
+          }
+          return {
+            ...b,
+            isOnStrike: b.playerId === updatedInnings.currentStrikerId
+          };
+        });
+
+        // Remove the overturned wicket from fallOfWickets
+        if (updatedInnings.fallOfWickets.length > 0) {
+          updatedInnings.fallOfWickets = updatedInnings.fallOfWickets.slice(0, -1);
+        }
+
+        // Remove wicket from bowler figures
+        updatedInnings.bowlers = updatedInnings.bowlers.map(bw => {
+          if (bw.playerId === rev.bowlerId || bw.name === rev.bowlerName) {
+            return { ...bw, wickets: Math.max(0, bw.wickets - 1) };
+          }
+          return bw;
+        });
+
+        if (updatedLastBall) {
+          updatedLastBall = {
+            ...updatedLastBall,
+            isWicket: false,
+            wicketType: undefined,
+            dismissedPlayerId: undefined,
+            dismissedPlayerName: undefined,
+            dismissalText: undefined,
+            incomingBatterId: undefined,
+            drsReviewed: true,
+            commentary: `DRS OVERTURNED — NOT OUT! ${rev.batterName} survives on review and stays at the crease!`,
+            tacticalNote: rev.snickoSpike && rev.type === 'lbw'
+              ? 'UltraEdge detected an inside edge onto the pad! Decision overturned.'
+              : 'Third Umpire technology overturned the on-field OUT decision.'
+          };
+          if (updatedInnings.ballHistory.length > 0) {
+            updatedInnings.ballHistory[0] = updatedLastBall;
+          }
+        }
+
+        // If 10th wicket had ended the innings/match, resume play
+        if (nextStatus !== 'in_progress') {
+          nextStatus = 'in_progress';
+          nextWinnerTeamId = undefined;
+          nextResultText = undefined;
+        }
+      }
+      // CASE 2: NOT OUT OVERTURNED TO OUT (Bowling review succeeds! Batter dismissed & next batter comes in!)
+      else if (rev.originalDecision === 'NOT OUT' && finalVerdict === 'OUT') {
+        const outBatterId = rev.batterId || prev.lastBallOutcome?.strikerId || updatedInnings.currentStrikerId;
+        const runsToRevert = prev.lastBallOutcome?.runs || 0;
+
+        // Revert any runs scored on the reviewed delivery
+        if (runsToRevert > 0) {
+          updatedInnings.runs = Math.max(0, updatedInnings.runs - runsToRevert);
+          updatedInnings.currentOverRuns = Math.max(0, (updatedInnings.currentOverRuns || 0) - runsToRevert);
+          const overIdx = prev.lastBallOutcome?.over ?? Math.floor(Math.max(0, updatedInnings.ballsCompleted - 1) / 6);
+          if (updatedInnings.overRuns[overIdx] !== undefined) {
+            updatedInnings.overRuns[overIdx] = Math.max(0, updatedInnings.overRuns[overIdx] - runsToRevert);
+          }
+        }
+
+        updatedInnings.wickets = Math.min(10, updatedInnings.wickets + 1);
+        const bowlerLast = (rev.bowlerName || 'Bowler').split(' ').pop() || 'Bowler';
+        const dismissalStr = rev.type === 'lbw' ? `lbw b ${bowlerLast}` : `c Keeper b ${bowlerLast}`;
+
+        // Find next unused batter in lineup
+        const nextUnusedBatter = updatedInnings.batters.find(
+          b => b.dismissal === 'not out' && b.playerId !== outBatterId && b.playerId !== survivingPartnerId
+        );
+        const replacementId = nextUnusedBatter ? nextUnusedBatter.playerId : outBatterId;
+
+        if (wasOverEnd) {
+          updatedInnings.currentStrikerId = survivingPartnerId;
+          updatedInnings.currentNonStrikerId = replacementId;
+        } else {
+          updatedInnings.currentStrikerId = replacementId;
+          updatedInnings.currentNonStrikerId = survivingPartnerId;
+        }
+
+        updatedInnings.batters = updatedInnings.batters.map(b => {
+          if (b.playerId === outBatterId || b.name === rev.batterName) {
+            const adjRuns = Math.max(0, b.runs - (prev.lastBallOutcome?.isExtra ? 0 : runsToRevert));
+            return {
+              ...b,
+              runs: adjRuns,
+              fours: Math.max(0, b.fours - (prev.lastBallOutcome?.isFour ? 1 : 0)),
+              sixes: Math.max(0, b.sixes - (prev.lastBallOutcome?.isSix ? 1 : 0)),
+              dismissal: dismissalStr,
+              strikeRate: b.balls > 0 ? Number(((adjRuns / b.balls) * 100).toFixed(1)) : 0,
+              isOnStrike: false
+            };
+          }
+          return {
+            ...b,
+            isOnStrike: b.playerId === updatedInnings.currentStrikerId
+          };
+        });
+
+        // Credit bowler with the wicket and revert runs on that ball
+        updatedInnings.bowlers = updatedInnings.bowlers.map(bw => {
+          if (bw.playerId === rev.bowlerId || bw.name === rev.bowlerName) {
+            const adjRuns = Math.max(0, bw.runs - runsToRevert);
+            const floatOvers = Math.floor(bw.overs) + (bw.ballsInCurrentOver || 0) / 6;
+            return {
+              ...bw,
+              runs: adjRuns,
+              wickets: bw.wickets + 1,
+              economy: floatOvers > 0 ? Number((adjRuns / floatOvers).toFixed(1)) : 0
+            };
+          }
+          return bw;
+        });
+
+        updatedInnings.fallOfWickets = [
+          ...updatedInnings.fallOfWickets,
+          {
+            runs: updatedInnings.runs,
+            wicketNum: updatedInnings.wickets,
+            over: updatedInnings.overs,
+            batterName: rev.batterName
+          }
+        ];
+
+        if (updatedLastBall) {
+          updatedLastBall = {
+            ...updatedLastBall,
+            runs: 0,
+            isFour: false,
+            isSix: false,
+            isWicket: true,
+            wicketType: rev.type,
+            dismissedPlayerId: outBatterId,
+            dismissedPlayerName: rev.batterName,
+            dismissalText: dismissalStr,
+            incomingBatterId: nextUnusedBatter?.playerId,
+            drsReviewed: true,
+            commentary: `DRS OVERTURNED — OUT! Third Umpire rules ${rev.batterName} OUT (${dismissalStr})! Brilliant review!`,
+            tacticalNote: rev.type === 'lbw'
+              ? 'Hawk-Eye showed THREE REDS (Pitching In-line, Impact In-line, Hitting Stumps)!'
+              : 'UltraEdge detected a sharp spike as the ball passed the bat edge!'
+          };
+          if (updatedInnings.ballHistory.length > 0) {
+            updatedInnings.ballHistory[0] = updatedLastBall;
+          }
+        }
+
+        // Check if this 10th wicket ended the innings or won the match!
+        if (updatedInnings.wickets >= 10) {
+          if (isFirst) {
+            const secondBattingTeam = updatedInnings.battingTeamId === prev.homeTeam.id ? prev.awayTeam : prev.homeTeam;
+            const secondBowlingTeam = updatedInnings.battingTeamId === prev.homeTeam.id ? prev.homeTeam : prev.awayTeam;
+            const batXI = secondBattingTeam.playingXIIds
+              .map(id => players.find(p => p.id === id))
+              .filter((p): p is Player => Boolean(p));
+            const bowlXI = secondBowlingTeam.playingXIIds
+              .map(id => players.find(p => p.id === id))
+              .filter((p): p is Player => Boolean(p));
+            const finalBats = batXI.length >= 2 ? batXI : players.filter(p => p.clubId === secondBattingTeam.id).slice(0, 11);
+            const finalBowls = bowlXI.length >= 2 ? bowlXI : players.filter(p => p.clubId === secondBowlingTeam.id).slice(0, 11);
+            const bPool = finalBowls.filter(p => p.role === 'Pace' || p.role === 'Spin' || p.role === 'All-rounder');
+            const activeBPool = bPool.length > 0 ? bPool : finalBowls;
+
+            nextTargetRuns = updatedInnings.runs + 1;
+            nextStatus = 'innings_break';
+            nextInnings2 = {
+              battingTeamId: secondBattingTeam.id,
+              bowlingTeamId: secondBowlingTeam.id,
+              runs: 0,
+              wickets: 0,
+              overs: 0,
+              ballsCompleted: 0,
+              maxOvers: updatedInnings.maxOvers,
+              currentOverRuns: 0,
+              batters: finalBats.map((p, idx) => ({
+                playerId: p.id,
+                name: p.name,
+                runs: 0,
+                balls: 0,
+                fours: 0,
+                sixes: 0,
+                dismissal: 'not out',
+                strikeRate: 0,
+                isOnStrike: idx === 0
+              })),
+              bowlers: activeBPool.map((p, idx) => ({
+                playerId: p.id,
+                name: p.name,
+                overs: 0,
+                ballsInCurrentOver: 0,
+                maidens: 0,
+                runs: 0,
+                wickets: 0,
+                economy: 0,
+                isCurrentBowler: idx === 0
+              })),
+              currentStrikerId: finalBats[0]?.id || 'p1',
+              currentNonStrikerId: finalBats[1]?.id || 'p2',
+              currentBowlerId: activeBPool[0]?.id || 'p3',
+              ballHistory: [],
+              fallOfWickets: [],
+              overRuns: []
+            };
+          } else {
+            const target = prev.targetRuns || (prev.innings1.runs + 1);
+            const winnerId = updatedInnings.runs >= target ? updatedInnings.battingTeamId : prev.innings1.battingTeamId;
+            const winnerTeam = winnerId === prev.homeTeam.id ? prev.homeTeam : prev.awayTeam;
+            const runsDiff = Math.max(1, target - updatedInnings.runs - 1);
+            nextStatus = 'finished';
+            nextWinnerTeamId = winnerId;
+            nextResultText = `${winnerTeam.name.toUpperCase()} WON BY ${runsDiff} RUN${runsDiff > 1 ? 'S' : ''}!`;
+          }
+        }
+      } else {
+        // Decision Upheld
+        if (updatedLastBall) {
+          updatedLastBall = {
+            ...updatedLastBall,
+            drsReviewed: true,
+            commentary: `DRS REVIEW UPHELD (${finalVerdict}): ${updatedLastBall.commentary}`
+          };
+          if (updatedInnings.ballHistory.length > 0) {
+            updatedInnings.ballHistory[0] = updatedLastBall;
+          }
+        }
+      }
+
+      if (rev.isOverturned) {
+        unlockAchievement('ach_73');
+      }
+
+      return {
+        ...prev,
+        status: nextStatus,
+        winnerTeamId: nextWinnerTeamId,
+        resultText: nextResultText,
+        targetRuns: nextTargetRuns,
+        lastBallOutcome: updatedLastBall,
+        activeDrsReview: null,
+        reviewsRemaining: {
+          home: nextHomeRevs,
+          away: nextAwayRevs
+        },
+        innings1: isFirst ? updatedInnings : prev.innings1,
+        innings2: isFirst ? nextInnings2 : updatedInnings
+      };
+    });
+  }, [players, userTeam.id, unlockAchievement]);
+
+  // FEATURE 6.2: DLS (DUCKWORTH-LEWIS-STERN) RAIN INTERRUPTION
+  const triggerRainDLSInterruption = useCallback(() => {
+    sound.playTap();
+    setMatchLiveState(prev => {
+      if (!prev) return null;
+      const isFirst = prev.currentInningsIndex === 1;
+      const curInnings = isFirst ? prev.innings1 : prev.innings2;
+      if (!curInnings) return prev;
+
+      const oversLost = 5;
+      const originalMaxOvers = prev.dlsState?.originalMaxOvers || curInnings.maxOvers || 20;
+      const currentOversBowled = Math.ceil(curInnings.ballsCompleted / 6);
+      const revisedMaxOvers = Math.max(Math.max(5, currentOversBowled + 1), Math.floor(originalMaxOvers - oversLost));
+      const baseScore = prev.innings1.runs || 165;
+      const computedDls = calculateDLSTarget(baseScore, originalMaxOvers, revisedMaxOvers, curInnings.wickets);
+      const dlsTargetRuns = Math.max(curInnings.runs + 6, computedDls.dlsTargetRuns);
+
+      const updatedInnings: InningsData = {
+        ...curInnings,
+        maxOvers: revisedMaxOvers
+      };
+
+      return {
+        ...prev,
+        weather: 'Overcast & Humid',
+        targetRuns: isFirst ? prev.targetRuns : dlsTargetRuns,
+        dlsState: {
+          ...computedDls,
+          dlsTargetRuns
+        },
+        innings1: isFirst ? updatedInnings : prev.innings1,
+        innings2: isFirst ? prev.innings2 : updatedInnings
+      };
+    });
+  }, []);
+
+  // FEATURE 6.6: BBL POWER SURGE (2 OVERS) & TEST DECLARATION
+  const activatePowerSurge = useCallback(() => {
+    sound.playCrowdCheer(0.7);
+    setMatchLiveState(prev => {
+      if (!prev || prev.powerSurgeTaken) return prev;
+      return {
+        ...prev,
+        powerSurgeTaken: true,
+        powerSurgeOversLeft: 2
+      };
+    });
+  }, []);
+
+  const declareInnings = useCallback(() => {
+    sound.playCrowdCheer(0.8);
+    setMatchLiveState(prev => {
+      if (!prev) return null;
+      if (prev.currentInningsIndex === 1) {
+        const secondBattingTeam = prev.innings1.battingTeamId === prev.homeTeam.id ? prev.awayTeam : prev.homeTeam;
+        const secondBowlingTeam = prev.innings1.battingTeamId === prev.homeTeam.id ? prev.homeTeam : prev.awayTeam;
+        const batXI = secondBattingTeam.playingXIIds
+          .map(id => players.find(p => p.id === id))
+          .filter((p): p is Player => Boolean(p));
+        const bowlXI = secondBowlingTeam.playingXIIds
+          .map(id => players.find(p => p.id === id))
+          .filter((p): p is Player => Boolean(p));
+        const finalBats = batXI.length >= 2 ? batXI : players.filter(p => p.clubId === secondBattingTeam.id).slice(0, 11);
+        const finalBowls = bowlXI.length >= 2 ? bowlXI : players.filter(p => p.clubId === secondBowlingTeam.id).slice(0, 11);
+        const bPool = finalBowls.filter(p => p.role === 'Pace' || p.role === 'Spin' || p.role === 'All-rounder');
+        const activeBPool = bPool.length > 0 ? bPool : finalBowls;
+
+        const innings2: InningsData = prev.innings2 || {
+          battingTeamId: secondBattingTeam.id,
+          bowlingTeamId: secondBowlingTeam.id,
+          runs: 0,
+          wickets: 0,
+          overs: 0,
+          ballsCompleted: 0,
+          maxOvers: prev.innings1.maxOvers || 90,
+          currentOverRuns: 0,
+          batters: finalBats.map((p, idx) => ({
+            playerId: p.id,
+            name: p.name,
+            runs: 0,
+            balls: 0,
+            fours: 0,
+            sixes: 0,
+            dismissal: 'not out',
+            strikeRate: 0,
+            isOnStrike: idx === 0
+          })),
+          bowlers: activeBPool.map((p, idx) => ({
+            playerId: p.id,
+            name: p.name,
+            overs: 0,
+            ballsInCurrentOver: 0,
+            maidens: 0,
+            runs: 0,
+            wickets: 0,
+            economy: 0,
+            isCurrentBowler: idx === 0
+          })),
+          currentStrikerId: finalBats[0]?.id || 'p1',
+          currentNonStrikerId: finalBats[1]?.id || 'p2',
+          currentBowlerId: activeBPool[0]?.id || 'p3',
+          ballHistory: [],
+          fallOfWickets: [],
+          overRuns: []
+        };
+
+        return {
+          ...prev,
+          status: 'innings_break',
+          targetRuns: prev.innings1.runs + 1,
+          innings2
+        };
+      }
+      return {
+        ...prev,
+        status: 'finished',
+        resultText: `${prev.homeTeam.shortName} declared! Match drawn / concluded.`
+      };
+    });
+  }, [players]);
+
+  const selectNewBowler = useCallback((bowlerId: string) => {
+    setMatchLiveState(prev => {
+      if (!prev) return null;
+      const isFirst = prev.currentInningsIndex === 1;
+      const curInnings = isFirst ? prev.innings1 : prev.innings2;
+      if (!curInnings) return prev;
+
+      const bowlerPlayer = players.find(p => p.id === bowlerId);
+      const updatedBowlers = [...curInnings.bowlers];
+      let bScore = updatedBowlers.find(b => b.playerId === bowlerId);
+      if (!bScore && bowlerPlayer) {
+        bScore = {
+          playerId: bowlerPlayer.id,
+          name: bowlerPlayer.name,
+          overs: 0,
+          ballsInCurrentOver: 0,
+          maidens: 0,
+          runs: 0,
+          wickets: 0,
+          economy: 0,
+          isCurrentBowler: true
+        };
+        updatedBowlers.push(bScore);
+      }
+
+      const newBowlers = updatedBowlers.map(b => ({
+        ...b,
+        isCurrentBowler: b.playerId === bowlerId
+      }));
+
+      const newInnings: InningsData = {
+        ...curInnings,
+        currentBowlerId: bowlerId,
+        bowlers: newBowlers
+      };
+
+      return {
+        ...prev,
+        innings1: isFirst ? newInnings : prev.innings1,
+        innings2: isFirst ? prev.innings2 : newInnings
+      };
+    });
+    sound.playTap();
+  }, [players]);
+
+  const selectNextBatter = useCallback((batterId: string) => {
+    setMatchLiveState(prev => {
+      if (!prev) return null;
+      const isFirst = prev.currentInningsIndex === 1;
+      const curInnings = isFirst ? prev.innings1 : prev.innings2;
+      if (!curInnings) return prev;
+
+      const survivingPartnerId = prev.lastBallOutcome?.nonStrikerId || curInnings.currentNonStrikerId;
+      const wasOverEnd = curInnings.ballsCompleted > 0 && curInnings.ballsCompleted % 6 === 0 && !prev.lastBallOutcome?.isExtra;
+
+      // If the wicket fell on the last ball of the over, the surviving partner is now on strike for the next over
+      // and the new incoming batter takes the non-striker's end!
+      const nextStrikerId = wasOverEnd ? survivingPartnerId : batterId;
+      const nextNonStrikerId = wasOverEnd ? batterId : survivingPartnerId;
+
+      let updatedBatters = curInnings.batters.map(b => ({
+        ...b,
+        isOnStrike: b.playerId === nextStrikerId
+      }));
+
+      if (!updatedBatters.some(b => b.playerId === batterId)) {
+        const pObj = players.find(p => p.id === batterId);
+        if (pObj) {
+          updatedBatters.push({
+            playerId: pObj.id,
+            name: pObj.name,
+            runs: 0,
+            balls: 0,
+            fours: 0,
+            sixes: 0,
+            dismissal: 'not out',
+            strikeRate: 0,
+            isOnStrike: pObj.id === nextStrikerId
+          });
+        }
+      }
+
+      const newInnings: InningsData = {
+        ...curInnings,
+        currentStrikerId: nextStrikerId,
+        currentNonStrikerId: nextNonStrikerId,
+        batters: updatedBatters
+      };
+
+      const updatedLastBall = prev.lastBallOutcome
+        ? { ...prev.lastBallOutcome, incomingBatterId: batterId }
+        : null;
+
+      return {
+        ...prev,
+        lastBallOutcome: updatedLastBall,
+        innings1: isFirst ? newInnings : prev.innings1,
+        innings2: isFirst ? prev.innings2 : newInnings
+      };
+    });
+    sound.playTap();
+  }, [players]);
+
+  const selectOpeners = useCallback((strikerId: string, nonStrikerId: string) => {
+    setMatchLiveState(prev => {
+      if (!prev) return null;
+      const isFirst = prev.currentInningsIndex === 1;
+      const curInnings = isFirst ? prev.innings1 : prev.innings2;
+      if (!curInnings) return prev;
+
+      const strikerObj = players.find(p => p.id === strikerId);
+      const nonStrikerObj = players.find(p => p.id === nonStrikerId);
+
+      const ensureBatterEntry = (pid: string, nameFallback: string, onStrike: boolean): BatterInningsScorecard => {
+        const existing = curInnings.batters.find(b => b.playerId === pid);
+        if (existing) {
+          return { ...existing, isOnStrike: onStrike };
+        }
+        return {
+          playerId: pid,
+          name: nameFallback,
+          runs: 0,
+          balls: 0,
+          fours: 0,
+          sixes: 0,
+          dismissal: 'not out',
+          strikeRate: 0,
+          isOnStrike: onStrike
+        };
+      };
+
+      const strikerEntry = ensureBatterEntry(strikerId, strikerObj?.name || 'Striker', true);
+      const nonStrikerEntry = ensureBatterEntry(nonStrikerId, nonStrikerObj?.name || 'Non-Striker', false);
+      const remainingEntries = curInnings.batters
+        .filter(b => b.playerId !== strikerId && b.playerId !== nonStrikerId)
+        .map(b => ({ ...b, isOnStrike: false }));
+
+      const newInnings: InningsData = {
+        ...curInnings,
+        currentStrikerId: strikerId,
+        currentNonStrikerId: nonStrikerId,
+        batters: [strikerEntry, nonStrikerEntry, ...remainingEntries]
+      };
+
+      return {
+        ...prev,
+        innings1: isFirst ? newInnings : prev.innings1,
+        innings2: isFirst ? prev.innings2 : newInnings
+      };
+    });
+    sound.playTap();
+  }, [players]);
+
+  const setTossDecision = useCallback((decision: 'bat' | 'bowl') => {
+    setMatchLiveState(prev => {
+      if (!prev) return null;
+      const userSide = prev.homeTeam.id === userTeam.id || prev.homeTeam.isUserTeam
+        ? prev.homeTeam
+        : prev.awayTeam.id === userTeam.id || prev.awayTeam.isUserTeam
+        ? prev.awayTeam
+        : prev.homeTeam;
+      const opp = userSide.id === prev.homeTeam.id ? prev.awayTeam : prev.homeTeam;
+      const isBat = decision === 'bat';
+      const battingTeam = isBat ? userSide : opp;
+      const bowlingTeam = isBat ? opp : userSide;
+
+      const battingXIPlayers = battingTeam.playingXIIds
+        .map(id => players.find(p => p.id === id))
+        .filter((p): p is Player => Boolean(p));
+      const bowlingXIPlayers = bowlingTeam.playingXIIds
+        .map(id => players.find(p => p.id === id))
+        .filter((p): p is Player => Boolean(p));
+
+      const finalBatters = battingXIPlayers.length >= 2 ? battingXIPlayers : players.filter(p => p.clubId === battingTeam.id).slice(0, 11);
+      const finalBowlers = bowlingXIPlayers.length >= 2 ? bowlingXIPlayers : players.filter(p => p.clubId === bowlingTeam.id).slice(0, 11);
+
+      const initBatters: BatterInningsScorecard[] = finalBatters.map((p, idx) => ({
+        playerId: p.id,
+        name: p.name,
+        runs: 0,
+        balls: 0,
+        fours: 0,
+        sixes: 0,
+        dismissal: 'not out',
+        strikeRate: 0,
+        isOnStrike: idx === 0
+      }));
+
+      const bowlerPool = finalBowlers.filter(p => p.role === 'Pace' || p.role === 'Spin' || p.role === 'All-rounder');
+      const finalBowlerPool = bowlerPool.length > 0 ? bowlerPool : finalBowlers;
+
+      const initBowlers: BowlerInningsScorecard[] = finalBowlerPool.map((p, idx) => ({
+        playerId: p.id,
+        name: p.name,
+        overs: 0,
+        ballsInCurrentOver: 0,
+        maidens: 0,
+        runs: 0,
+        wickets: 0,
+        economy: 0,
+        isCurrentBowler: idx === 0
+      }));
+
+      const innings1: InningsData = {
+        battingTeamId: battingTeam.id,
+        bowlingTeamId: bowlingTeam.id,
+        runs: 0,
+        wickets: 0,
+        overs: 0,
+        ballsCompleted: 0,
+        maxOvers: prev.innings1.maxOvers || (prev.format === 'TEST' ? 90 : prev.format === 'ODI' ? 50 : prev.format === '100BALL' ? 16.4 : 20),
+        currentOverRuns: 0,
+        batters: initBatters,
+        bowlers: initBowlers,
+        currentStrikerId: finalBatters[0]?.id || 'p1',
+        currentNonStrikerId: finalBatters[1]?.id || 'p2',
+        currentBowlerId: initBowlers[0]?.playerId || finalBowlers[0]?.id,
+        ballHistory: [],
+        fallOfWickets: [],
+        overRuns: []
+      };
+
+      return {
+        ...prev,
+        innings1,
+        status: 'in_progress'
+      };
+    });
+    sound.playTap();
+  }, [userTeam, players]);
+
+  // AUCTION LOGIC
+  const startAuctionSession = useCallback(() => {
+    const pool = players.filter(p => !p.clubId || p.tier === 'Platinum' || p.tier === 'Gold');
+    setAuctionPool(pool);
+    setCurrentAuctionIndex(0);
+
+    const firstPlayer = pool[0] || players[0];
+    const initialLot: AuctionLot = {
+      lotIndex: 1,
+      totalLots: pool.length,
+      player: firstPlayer,
+      currentBidCr: firstPlayer.basePriceCr,
+      currentBidderTeamId: null,
+      bidsHistory: [],
+      status: 'active',
+      soldToTeamId: null
+    };
+
+    setAuctionLot(initialLot);
+    setActiveTab('auction');
+  }, [players]);
+
+  const placeUserBid = useCallback(() => {
+    if (!auctionLot || auctionLot.status !== 'active') return;
+
+    const nextAmount = Number((auctionLot.currentBidCr + 0.2).toFixed(2));
+    if (userTeam.purseCr < nextAmount) {
+      return; // Not enough purse
+    }
+
+    sound.playGavel();
+    const newBid = {
+      teamId: userTeam.id,
+      teamShortName: userTeam.shortName,
+      amountCr: nextAmount,
+      timeStr: 'Just now'
+    };
+
+    setAuctionLot(prev => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        currentBidCr: nextAmount,
+        currentBidderTeamId: userTeam.id,
+        bidsHistory: [newBid, ...prev.bidsHistory]
+      };
+    });
+
+    // AI Counter-bid trigger
+    setIsAiBidding(true);
+    const delayMs = aiBiddingSpeed === 'instant' ? 120 : aiBiddingSpeed === 'fast' ? 450 : 1000;
+    setTimeout(() => {
+      const shouldAiBid = Math.random() < 0.65;
+      if (shouldAiBid) {
+        const otherTeams = teams.filter(t => t.id !== userTeam.id && t.purseCr > nextAmount + 0.2);
+        const aiTeam = otherTeams[Math.floor(Math.random() * otherTeams.length)];
+        if (aiTeam) {
+          const aiAmount = Number((nextAmount + 0.2).toFixed(2));
+          sound.playGavel();
+          setAuctionLot(lot => {
+            if (!lot) return null;
+            return {
+              ...lot,
+              currentBidCr: aiAmount,
+              currentBidderTeamId: aiTeam.id,
+              bidsHistory: [{
+                teamId: aiTeam.id,
+                teamShortName: aiTeam.shortName,
+                amountCr: aiAmount,
+                timeStr: 'Just now'
+              }, ...lot.bidsHistory]
+            };
+          });
+        }
+      }
+      setIsAiBidding(false);
+    }, delayMs);
+  }, [auctionLot, userTeam, teams, aiBiddingSpeed]);
+
+  const skipAuctionLot = useCallback(() => {
+    if (!auctionLot) return;
+
+    // Finalize sale to current bidder or unsold
+    sound.playGavel();
+    if (auctionLot.currentBidderTeamId) {
+      const winnerId = auctionLot.currentBidderTeamId;
+      const winningPrice = auctionLot.currentBidCr;
+
+      // Deduct purse and assign player
+      setTeams(prev => prev.map(t => {
+        if (t.id === winnerId) {
+          return {
+            ...t,
+            purseCr: Number((t.purseCr - winningPrice).toFixed(2)),
+            squad: [...t.squad, auctionLot.player]
+          };
+        }
+        return t;
+      }));
+
+      setAuctionLot(prev => prev ? {
+        ...prev,
+        status: 'sold',
+        soldToTeamId: winnerId,
+        soldPriceCr: winningPrice
+      } : null);
+
+      if (winnerId === userTeam.id) {
+        sound.playCrowdCheer(0.8);
+        confetti({ particleCount: 50, spread: 60, origin: { y: 0.6 } });
+        unlockAchievement('ach_3');
+        if (winningPrice >= 20) {
+          unlockAchievement('ach_32');
+        }
+        if (Math.max(auctionLot.player.ratings.bat, auctionLot.player.ratings.bowl) >= 88 && winningPrice < 5) {
+          unlockAchievement('ach_33');
+        }
+      }
+    } else {
+      setAuctionLot(prev => prev ? { ...prev, status: 'unsold' } : null);
+    }
+  }, [auctionLot, userTeam.id, unlockAchievement]);
+
+  const useRtmCard = useCallback(() => {
+    if (!auctionLot || userTeam.rtmCards <= 0) return;
+
+    sound.playGavel();
+    sound.playCrowdCheer(1.0);
+    confetti({ particleCount: 60, spread: 70, origin: { y: 0.5 } });
+
+    const winningPrice = auctionLot.currentBidCr;
+    unlockAchievement('ach_3');
+    if (winningPrice >= 20) {
+      unlockAchievement('ach_32');
+    }
+    if (Math.max(auctionLot.player.ratings.bat, auctionLot.player.ratings.bowl) >= 88 && winningPrice < 5) {
+      unlockAchievement('ach_33');
+    }
+
+    // Deduct RTM card and purse
+    setTeams(prev => prev.map(t => {
+      if (t.id === userTeam.id) {
+        return {
+          ...t,
+          rtmCards: t.rtmCards - 1,
+          purseCr: Number((t.purseCr - auctionLot.currentBidCr).toFixed(2)),
+          squad: [...t.squad, auctionLot.player]
+        };
+      }
+      return t;
+    }));
+
+    setAuctionLot(prev => prev ? {
+      ...prev,
+      status: 'sold',
+      soldToTeamId: userTeam.id,
+      soldPriceCr: prev.currentBidCr
+    } : null);
+  }, [auctionLot, userTeam, unlockAchievement]);
+
+  const nextAuctionLot = useCallback(() => {
+    const nextIdx = currentAuctionIndex + 1;
+    if (nextIdx < auctionPool.length) {
+      setCurrentAuctionIndex(nextIdx);
+      const nextPlayer = auctionPool[nextIdx];
+      setAuctionLot({
+        lotIndex: nextIdx + 1,
+        totalLots: auctionPool.length,
+        player: nextPlayer,
+        currentBidCr: nextPlayer.basePriceCr,
+        currentBidderTeamId: null,
+        bidsHistory: [],
+        status: 'active',
+        soldToTeamId: null
+      });
+      sound.playTap();
+    } else {
+      setActiveTab('hub');
+    }
+  }, [currentAuctionIndex, auctionPool]);
+
+  return (
+    <GameContext.Provider
+      value={{
+        activeTab,
+        setActiveTab,
+        players,
+        setPlayers,
+        updatePlayer,
+        teams,
+        setTeams,
+        userTeam,
+        selectUserTeam,
+        startNewCareer,
+        activeSaveSlot,
+        setActiveSaveSlot,
+        updateUserTeamXI,
+        setTeamCaptain,
+        leagues,
+        currentLeagueId,
+        setCurrentLeagueId,
+        nations,
+        nationalSquadIds,
+        setNationalSquadIds,
+        internationalSeries,
+        coachProfile,
+        updateCoachProfile,
+        achievements,
+        unlockAchievement,
+        jobOffers,
+        acceptJobOffer,
+        resignNationalJob,
+        advanceCalendarDay,
+        setCalendarDateIndex,
+        settings,
+        updateSettings,
+        saveSlots,
+        saveToSlot,
+        loadFromSlot,
+        deleteSlot,
+        simSingleIntlMatch,
+        homePitch,
+        setHomePitch,
+        simTokens,
+        setSimTokens,
+        squadStamina,
+        setSquadStamina,
+        completedMatchesHistory,
+        inboxMessages,
+        replyToInboxMessage,
+        matchLiveState,
+        startMatch,
+        createFranchiseMatchState,
+        startInternationalMatch,
+        playPlayoffMatch,
+        simPlayoffMatch,
+        resetPlayoffBracket,
+        pendingRetentionModal,
+        setPendingRetentionModal,
+        finishMatch,
+        runBallSimulation,
+        simCurrentOver,
+        simEntireMatch,
+        updateBowlingTactics,
+        updateBattingTactics,
+        updateFielders,
+        activateImpactPlayer,
+        startSecondInnings,
+        selectNewBowler,
+        selectNextBatter,
+        selectOpeners,
+        setTossDecision,
+        triggerDrsReview,
+        resolveDrsReview,
+        triggerRainDLSInterruption,
+        activatePowerSurge,
+        declareInnings,
+        trainSquad,
+        claimDoubleTrainingXp,
+        boostTeamMorale,
+        releasePlayersForAuction,
+        startNewSeason,
+        auctionLot,
+        startAuctionSession,
+        placeUserBid,
+        skipAuctionLot,
+        useRtmCard,
+        nextAuctionLot,
+        isAiBidding,
+        aiBiddingSpeed,
+        setAiBiddingSpeed
+      }}
+    >
+      {children}
+    </GameContext.Provider>
+  );
+};
+
+export const useGame = () => {
+  const context = useContext(GameContext);
+  if (!context) throw new Error('useGame must be used within a GameProvider');
+  return context;
+};
