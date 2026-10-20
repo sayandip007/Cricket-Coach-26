@@ -4439,8 +4439,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const updatedStints = currentStints.map((stint, idx) => {
         if (idx === currentStints.length - 1 || stint.teamId === userTeam.id) {
           const sMatches = stint.matches + 1;
-          const sWins = stint.wins + (didUserWin ? 1 : 0);
-          const sLosses = stint.losses + (didUserWin ? 0 : 1);
+          const sWins = (stint.wins || 0) + (didUserWin ? 1 : 0);
+          const sLosses = (stint.losses || 0) + (didUserWin ? 0 : 1);
           return {
             ...stint,
             matches: sMatches,

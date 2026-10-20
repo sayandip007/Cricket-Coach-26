@@ -376,7 +376,7 @@ export const ProfileScreen: React.FC = () => {
             </div>
             <div className="flex flex-col gap-2">
               {(coachProfile.clubStints || []).map((stint, idx) => {
-                const isCurrentClub = stint.clubId === userTeam.id && stint.yearsLabel.includes('Present');
+                const isCurrentClub = (stint.clubId === userTeam.id || stint.teamId === userTeam.id) && Boolean((stint.yearsLabel || stint.period || '').includes('Present'));
                 return (
                   <div
                     key={`${stint.clubId}-${idx}`}

@@ -550,9 +550,50 @@ runTest('REGRESSION', 'Step 5.4: Batter-Bowler Analytics, Tactical Scenario Simu
   const optimalXI = selectOptimalAiPlayingXI(mi, CSV_PLAYERS, 'Dry & Turning');
   assert.equal(optimalXI.length, 11, 'AI Tactical Intelligence must select a valid 11-player lineup');
 
-  const h2h = computeHeadToHead('KOL', 'MUM', []);
-  assert.equal(h2h.teamAShort, 'KOL');
-  assert.equal(h2h.teamBShort, 'MUM');
+  const h2hEmpty = computeHeadToHead('KOL', 'MUM', []);
+  assert.equal(h2hEmpty.teamAShort, 'KOL');
+  assert.equal(h2hEmpty.teamBShort, 'MUM');
+
+  // Test with CompletedMatchRecord where homeTeam and awayTeam are strings (as saved in completedMatchesHistory)
+  const mockCompletedRecord: any = {
+    id: 'm_test_1',
+    dateStr: 'TODAY',
+    homeTeam: 'KOL',
+    awayTeam: 'MUM',
+    summary: 'KOL 182/4 vs MUM 175/8 · KOL won by 7 runs',
+    playerOfMatch: 'Andre Russell',
+    innings1: { team: 'KOLKATA KNIGHT RIDERS', runs: 182, wickets: 4, overs: '20.0', batters: [], bowlers: [] },
+    innings2: { team: 'MUMBAI INDIANS', runs: 175, wickets: 8, overs: '20.0', batters: [], bowlers: [] }
+  };
+  const h2hPopulated = computeHeadToHead('KOL', 'MUM', [mockCompletedRecord]);
+  assert.equal(h2hPopulated.totalPlayed, 1);
+  assert.equal(h2hPopulated.teamAWins, 1);
+  assert.equal(h2hPopulated.teamBWins, 0);
+  assert.equal(h2hPopulated.highestScoreA, '182/4');
+  assert.equal(h2hPopulated.highestScoreB, '175/8');
+
+  // Verify resilience against corrupted or missing records (e.g. undefined homeTeam, null matches, non-string items)
+  const corruptedHistory: any[] = [
+    null,
+    undefined,
+    { id: 'corrupt_1' },
+    { id: 'corrupt_2', homeTeam: undefined, awayTeam: null },
+    { id: 'corrupt_3', homeTeam: { id: 'team_kol' }, awayTeam: { id: 'team_mum' } },
+    { id: 'corrupt_4', homeTeam: 12345, awayTeam: false },
+    mockCompletedRecord
+  ];
+  const resilientH2H = computeHeadToHead('KOL', 'MUM', corruptedHistory);
+  assert.ok(resilientH2H.totalPlayed >= 1, 'Must safely parse mixed/corrupted match histories without throwing');
+
+  // Verify generateCricketDirectorBriefing runs cleanly with corrupted history and missing teams
+  const resilientBriefing = generateCricketDirectorBriefing(
+    mi,
+    { id: 'team_kol', name: 'Kolkata Knight Riders', shortName: 'KKR' } as any,
+    CSV_PLAYERS,
+    'Balanced Sporting',
+    corruptedHistory
+  );
+  assert.ok(resilientBriefing && resilientBriefing.director, 'Briefing must generate safely under edge conditions');
 });
 
 runTest('REGRESSION', 'Step 5.5: Manager Career Progression (Board targets, job security, reputation tiers, job offers) & Stadium Revenue', () => {
@@ -643,7 +684,7 @@ runTest('REGRESSION', 'Step 5.8: End-to-End Multi-Feature Integration (Director,
   assert.equal(briefing.recommendedXI.playerIds.length, 11);
 
   // Feature 2: Batter-Bowler Intelligence
-  const testBatter = INITIAL_PLAYERS.find(p => p.role === 'Batsman') || INITIAL_PLAYERS[0];
+  const testBatter = INITIAL_PLAYERS.find(p => p.role === 'Batter' || p.role === 'Top-order' || p.role === 'Batsman') || INITIAL_PLAYERS[0];
   const testBowler = INITIAL_PLAYERS.find(p => p.role === 'Pace' || p.role === 'Spin') || INITIAL_PLAYERS[1];
   const matchup = analyzeBatterBowlerMatchup(testBatter, testBowler, []);
   assert.ok(matchup.powerplaySR > 0 && matchup.deathOversSR > 0);

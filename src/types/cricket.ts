@@ -1,4 +1,6 @@
-export type PlayerRole = 'Top-order' | 'Middle-order' | 'Wk-bat' | 'All-rounder' | 'Pace' | 'Spin' | 'Bowler' | 'Batter' | 'Wicketkeeper' | 'All-Rounder';
+export type PitchType = 'Dry & Turning' | 'Green Seamer' | 'Flat Belter' | 'Sluggish Gripper' | 'Natural' | 'Dry Turner' | 'Flat Track' | 'Balanced Sporting' | 'Two-Paced' | string;
+
+export type PlayerRole = 'Top-order' | 'Middle-order' | 'Wk-bat' | 'All-rounder' | 'Pace' | 'Spin' | 'Bowler' | 'Batter' | 'Batsman' | 'Wicketkeeper' | 'All-Rounder';
 export type BowlingArm = 'RAF' | 'LAF' | 'RAM' | 'LAM' | 'ROB' | 'LSO' | 'LS';
 export type BattingHand = 'RHB' | 'LHB';
 export type PlayerTier = 'Platinum' | 'Gold' | 'Silver' | 'Bronze';
@@ -36,6 +38,7 @@ export interface Player {
   tier: PlayerTier;
   basePriceCr: number;
   salaryCr: number;
+  contractValueCr?: number;
   ratings: {
     bat: number; // 0-99
     pow: number; // Power hitting 0-99
@@ -77,7 +80,7 @@ export interface Team {
   name: string;
   shortName: string;
   city: string;
-  leagueId: string;
+  leagueId?: string;
   primaryColor: string;
   secondaryColor: string;
   logoEmoji: string;
@@ -87,7 +90,7 @@ export interface Team {
   playingXIIds: string[];
   impactPlayerIds?: string[];
   captainId: string;
-  isUserTeam: boolean;
+  isUserTeam?: boolean;
 }
 
 export interface LeagueStanding {
@@ -151,6 +154,8 @@ export interface CalendarMatchFixture {
 export interface League {
   id: string;
   name: string;
+  shortName?: string;
+  seasonYear?: number | string;
   country: string;
   seasonName: string;
   rules: LeagueRules;
@@ -165,6 +170,7 @@ export interface League {
     dayNumber: number;
     month: string;
     type?: 'match' | 'training' | 'rest' | 'international';
+    eventType?: string;
     title?: string;
     isHome?: boolean;
     opponentTeamId?: string;
@@ -223,7 +229,8 @@ export interface FielderPosition {
   name: string;
   x: number; // -100 to 100 coordinate relative to pitch center
   y: number; // -100 to 100
-  isDeep: boolean;
+  isDeep?: boolean;
+  isBoundary?: boolean;
 }
 
 export interface BallOutcome {
@@ -263,6 +270,7 @@ export interface BatterInningsScorecard {
   fours: number;
   sixes: number;
   dismissal: string;
+  isOut?: boolean;
   strikeRate: number;
   isOnStrike: boolean;
 }
@@ -274,6 +282,7 @@ export interface BowlerInningsScorecard {
   ballsInCurrentOver: number;
   maidens: number;
   runs: number;
+  runsConceded?: number;
   wickets: number;
   economy: number;
   isCurrentBowler: boolean;
@@ -285,6 +294,7 @@ export interface InningsData {
   runs: number;
   wickets: number;
   overs: number; // e.g. 3.4
+  balls?: number;
   ballsCompleted: number;
   maxOvers: number;
   currentOverRuns?: number;
@@ -433,7 +443,10 @@ export interface CoachProfile {
     id: string;
     teamId: string;
     teamName: string;
+    clubId?: string;
+    clubName?: string;
     period: string;
+    yearsLabel?: string;
     seasons: number;
     matches: number;
     wins?: number;

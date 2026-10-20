@@ -426,7 +426,7 @@ export const TacticalCommandSuiteModal: React.FC<TacticalCommandSuiteModalProps>
                           {directorBriefing.opponentAnalysis.dangerBatter.name}
                         </span>
                         <span className="text-[10px] text-slate-400 font-mono block">
-                          {directorBriefing.opponentAnalysis.dangerBatter.battingStyle} · {directorBriefing.opponentAnalysis.dangerBatter.ratings.bat} BAT
+                          {directorBriefing.opponentAnalysis.dangerBatter.battingHand} · {directorBriefing.opponentAnalysis.dangerBatter.ratings.bat} BAT
                         </span>
                       </div>
                       <div className="text-right">

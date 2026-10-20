@@ -1770,8 +1770,8 @@ export const SeasonScheduleModal: React.FC<SeasonScheduleModalProps> = ({
   userTeam
 }) => {
   const { leagues = [], coachProfile, players = [], completedMatchesHistory = [] } = useGame();
-  const calendarDays = leagues[0]?.calendarDates || coachProfile?.calendarDays || [];
-  const currentDayIndex = leagues[0]?.currentDateIndex ?? coachProfile?.currentDateIndex ?? 0;
+  const calendarDays = leagues[0]?.calendarDates || (coachProfile as any)?.calendarDays || [];
+  const currentDayIndex = leagues[0]?.currentDateIndex ?? (coachProfile as any)?.currentDateIndex ?? 0;
   const [selectedSeriesId, setSelectedSeriesId] = useState<string | null>(null);
   const [selectedMatchScorecard, setSelectedMatchScorecard] = useState<ScheduleMatchItem | null>(null);
   const [bookmarkedMatches, setBookmarkedMatches] = useState<Record<string, boolean>>({});
@@ -1941,8 +1941,8 @@ export const SeasonScheduleModal: React.FC<SeasonScheduleModalProps> = ({
           matches: p.stats.matches,
           innings: p.stats.matches,
           runs: p.stats.runs,
-          avg: p.stats.average.toFixed(1),
-          sr: p.stats.strikeRate.toFixed(1),
+          avg: (p.stats.average ?? 0).toFixed(1),
+          sr: (p.stats.strikeRate ?? 0).toFixed(1),
           hs: `${p.stats.highestScore || p.stats.runs}`
         }));
 
@@ -1958,7 +1958,7 @@ export const SeasonScheduleModal: React.FC<SeasonScheduleModalProps> = ({
           innings: p.stats.matches,
           wickets: p.stats.wickets,
           avg: (p.stats.runsConceded && p.stats.wickets ? (p.stats.runsConceded / p.stats.wickets) : 18.5).toFixed(1),
-          econ: p.stats.economy.toFixed(2),
+          econ: (p.stats.economy ?? 0).toFixed(2),
           bbi: p.stats.bestBowling || `${p.stats.wickets}/${p.stats.runsConceded || 24}`
         }));
 

@@ -270,13 +270,15 @@ export function analyzeBatterBowlerMatchup(
   let histRuns = 0;
   let histOuts = 0;
 
-  completedMatches.forEach(m => {
+  (completedMatches || []).forEach(m => {
+    if (!m) return;
     [m.innings1, m.innings2].forEach(inn => {
-      if (!inn || !inn.ballHistory) return;
-      inn.ballHistory.forEach(ball => {
-        if (ball.strikerId === batter.id && ball.bowlerId === bowler.id) {
+      const bHist = (inn as any)?.ballHistory;
+      if (!Array.isArray(bHist)) return;
+      bHist.forEach((ball: any) => {
+        if (ball && ball.strikerId === batter.id && ball.bowlerId === bowler.id) {
           histBalls += ball.isExtra ? 0 : 1;
-          histRuns += ball.runs;
+          histRuns += ball.runs || 0;
           if (ball.isWicket) histOuts += 1;
         }
       });
@@ -955,32 +957,58 @@ export function generateCricketDirectorBriefing(
   pitchType: PitchType = 'Balanced Sporting',
   completedMatches: CompletedMatchRecord[] = []
 ): CricketDirectorBriefing {
-  const directorInfo = DIRECTORS_MAP[userTeam.id] || {
+  const safeUserTeam: Team = userTeam || {
+    id: 'team_kol',
+    name: 'Kolkata Knight Riders',
+    shortName: 'KKR',
+    city: 'Kolkata',
+    purseCr: 12.5,
+    playingXIIds: [],
+    squad: []
+  } as unknown as Team;
+
+  const safeOppTeam: Team = opponentTeam || {
+    id: 'team_che',
+    name: 'Chennai Super Kings',
+    shortName: 'CSK',
+    city: 'Chennai',
+    purseCr: 10.0,
+    playingXIIds: [],
+    squad: []
+  } as unknown as Team;
+
+  const directorInfo = DIRECTORS_MAP[safeUserTeam.id] || {
     name: 'Sir Clive Lloyd',
     title: 'Senior Director of Cricket Operations',
     experience: 'Legendary Franchise & International Tactician',
-    tag: userTeam.shortName || 'DIRECTOR'
+    tag: safeUserTeam.shortName || 'DIRECTOR'
   };
 
-  const userSquad = allPlayers.filter(p => p.clubId === userTeam.id);
-  const oppSquad = allPlayers.filter(p => p.clubId === opponentTeam.id);
+  const safePlayers = Array.isArray(allPlayers) ? allPlayers : [];
+  const userSquad = safePlayers.filter(p => p && p.clubId === safeUserTeam.id);
+  const oppSquad = safePlayers.filter(p => p && p.clubId === safeOppTeam.id);
 
   // 1. OPPONENT & H2H ANALYSIS
-  const h2h = computeHeadToHead(userTeam.shortName, opponentTeam.shortName, completedMatches);
+  const userShort = safeUserTeam.shortName || (typeof safeUserTeam.id === 'string' ? safeUserTeam.id.replace('team_', '').toUpperCase() : 'MY TEAM');
+  const oppShort = safeOppTeam.shortName || (typeof safeOppTeam.id === 'string' ? safeOppTeam.id.replace('team_', '').toUpperCase() : 'OPP');
+  const h2h = computeHeadToHead(userShort, oppShort, completedMatches);
   const dangerBatter = [...oppSquad].sort((a, b) => {
-    const sA = Math.max(a.ratings.bat, a.ratings.vp ?? a.ratings.bat, a.ratings.pow);
-    const sB = Math.max(b.ratings.bat, b.ratings.vp ?? b.ratings.bat, b.ratings.pow);
+    const sA = Math.max(a.ratings?.bat || 70, a.ratings?.vp ?? a.ratings?.bat ?? 70, a.ratings?.pow || 70);
+    const sB = Math.max(b.ratings?.bat || 70, b.ratings?.vp ?? b.ratings?.bat ?? 70, b.ratings?.pow || 70);
     return sB - sA;
   })[0];
 
   const dangerBowler = [...oppSquad].sort((a, b) => {
-    const sA = Math.max(a.ratings.bowl, a.ratings.dth ?? a.ratings.bowl);
-    const sB = Math.max(b.ratings.bowl, b.ratings.dth ?? b.ratings.bowl);
+    const sA = Math.max(a.ratings?.bowl || 70, a.ratings?.dth ?? a.ratings?.bowl ?? 70);
+    const sB = Math.max(b.ratings?.bowl || 70, b.ratings?.dth ?? b.ratings?.bowl ?? 70);
     return sB - sA;
   })[0];
 
   const oppSpinners = oppSquad.filter(p => p.role === 'Spin' || (p.bowlingStyle || '').toLowerCase().includes('spin'));
-  const oppDeathAvg = oppSquad.slice(0, 5).reduce((acc, p) => acc + (p.ratings.dth || p.ratings.bowl), 0) / 5;
+  const oppDeathAvg =
+    oppSquad.length > 0
+      ? oppSquad.slice(0, 5).reduce((acc, p) => acc + (p.ratings?.dth || p.ratings?.bowl || 75), 0) / Math.min(5, oppSquad.length)
+      : 75;
 
   const tacticalVulnerability =
     oppSpinners.length <= 1
@@ -990,15 +1018,15 @@ export function generateCricketDirectorBriefing(
       : `${dangerBatter ? dangerBatter.name : 'Top Order'} is their primary engine. Bowling full & fourth-stump corridor in powerplay is essential.`;
 
   // 2. RECOMMENDED PLAYING XI
-  const optimalIds = selectOptimalAiPlayingXI(userTeam, allPlayers, pitchType);
+  const optimalIds = selectOptimalAiPlayingXI(safeUserTeam, safePlayers, pitchType);
   const optimalPlayers = optimalIds
-    .map(id => allPlayers.find(p => p.id === id))
+    .map(id => safePlayers.find(p => p.id === id))
     .filter((p): p is Player => Boolean(p));
 
-  const currentXIIds = new Set(userTeam.playingXIIds || []);
+  const currentXIIds = new Set(safeUserTeam.playingXIIds || []);
   const missingFromCurrent = optimalPlayers.filter(p => !currentXIIds.has(p.id));
-  const currentPlayers = (userTeam.playingXIIds || [])
-    .map(id => allPlayers.find(p => p.id === id))
+  const currentPlayers = (safeUserTeam.playingXIIds || [])
+    .map(id => safePlayers.find(p => p.id === id))
     .filter((p): p is Player => Boolean(p));
   const droppedFromCurrent = currentPlayers.filter(p => !optimalIds.includes(p.id));
 
@@ -1041,15 +1069,16 @@ export function generateCricketDirectorBriefing(
   let curatorInstruction = 'Maintain standard rolling with 4mm grass cover for true bounce and fair pace.';
   let strategicReason = 'Balances seam early with reliable bounce for your middle-order stroke-makers.';
 
+  const oppShortName = safeOppTeam.shortName || safeOppTeam.name || 'Opponent';
   if (userSpinCount >= 3 && oppSpinners.length <= 1) {
     suggestedPitch = 'Dry & Turning';
     curatorInstruction = 'Bake surface in sunlight, shave grass cover to 1mm, and prepare abrasive cracks for sharp finger & wrist spin.';
-    strategicReason = `Our spin battery (${userSpinCount} options) neutralizes ${opponentTeam.shortName}'s pace-heavy lineup on a turning deck.`;
-  } else if (userPaceCount >= 4 && (dangerBatter?.ratings.vp ?? 80) < 82) {
+    strategicReason = `Our spin battery (${userSpinCount} options) neutralizes ${oppShortName}'s pace-heavy lineup on a turning deck.`;
+  } else if (userPaceCount >= 4 && (dangerBatter?.ratings?.vp ?? 80) < 82) {
     suggestedPitch = 'Green Seamer';
     curatorInstruction = 'Leave 8mm green seam covering with moisture underneath for lateral deviation in overs 1–6.';
-    strategicReason = `Exploits ${opponentTeam.shortName}'s susceptibility to movement and unlocks early breakthroughs.`;
-  } else if (userSquad.some(p => p.ratings.pow >= 86)) {
+    strategicReason = `Exploits ${oppShortName}'s susceptibility to movement and unlocks early breakthroughs.`;
+  } else if (userSquad.some(p => (p.ratings?.pow || 0) >= 86)) {
     suggestedPitch = 'Flat Track';
     curatorInstruction = 'Heavy roller treatment to pack clay firm; eliminate all lateral seam movement.';
     strategicReason = 'Maximizes power-hitting strike rates and rewards clean strokeplay.';
@@ -1058,11 +1087,11 @@ export function generateCricketDirectorBriefing(
   // 4. WORKLOAD & MORALE ALERTS
   const alerts: DirectorRosterAlert[] = [];
   userSquad.forEach(p => {
-    if (p.isInjured || p.injuryDays > 0) {
+    if (p.isInjured || (p.injuryDays || 0) > 0) {
       alerts.push({
         player: p,
         severity: 'HIGH',
-        status: `Injured (${p.injuryDays} days remaining)`,
+        status: `Injured (${p.injuryDays || 0} days remaining)`,
         recommendation: `Complete rehab in Sports Science Clinic; do not rush back.`
       });
     } else if (p.fitness < 72) {
@@ -1124,7 +1153,7 @@ export function generateCricketDirectorBriefing(
     });
   }
 
-  const powerHitters = userSquad.filter(p => p.ratings.pow >= 84);
+  const powerHitters = userSquad.filter(p => (p.ratings?.pow || 0) >= 84);
   if (powerHitters.length < 3) {
     scoutingDirectives.push({
       targetDepartment: 'Lower-Order Finisher',
@@ -1154,14 +1183,14 @@ export function generateCricketDirectorBriefing(
     facilityName = 'Sports Science & Cryo Rehab Clinic';
     costCr = 3.6;
     strategicJustification = 'Multiple squad fatigue/injury flags detected. Upgrading Clinic boosts daily recovery and reduces injury days.';
-  } else if (userTeam.purseCr < 6.0) {
+  } else if ((safeUserTeam.purseCr || 0) < 6.0) {
     recommendedUpgrade = 'stadiumTier';
     facilityName = 'Stadium & Hospitality Bowl';
     costCr = 5.0;
     strategicJustification = 'Boost matchday gate revenue by +0.45 Cr per home game to replenish franchise purse.';
   }
 
-  const executiveSummary = `Director's Assessment: Facing ${opponentTeam.name} (${opponentTeam.shortName}). ${
+  const executiveSummary = `Director's Assessment: Facing ${safeOppTeam.name || 'Opponent'} (${safeOppTeam.shortName || 'OPP'}). ${
     h2h.totalPlayed > 0 ? `Historical record: ${h2h.teamAWins}W - ${h2h.teamBWins}L.` : 'First encounter this season.'
   } ${tacticalVulnerability} ${
     changesFromCurrent.length > 0
@@ -1178,7 +1207,7 @@ export function generateCricketDirectorBriefing(
     },
     executiveSummary,
     opponentAnalysis: {
-      opponentTeam,
+      opponentTeam: safeOppTeam,
       h2h,
       dangerBatter,
       dangerBowler,
@@ -1203,7 +1232,7 @@ export function generateCricketDirectorBriefing(
       recommendedUpgrade,
       facilityName,
       costCr,
-      affordable: userTeam.purseCr >= costCr,
+      affordable: (safeUserTeam.purseCr || 0) >= costCr,
       strategicJustification
     }
   };
@@ -1224,17 +1253,59 @@ export interface HeadToHeadSummary {
   recentMeetings: CompletedMatchRecord[];
 }
 
+function safeUpper(val: any): string {
+  if (val === null || val === undefined) return '';
+  if (typeof val === 'string') return val.toUpperCase().trim();
+  if (typeof val === 'number') return String(val).toUpperCase().trim();
+  return '';
+}
+
+function resolveTeamShort(teamInput: any): string {
+  if (!teamInput) return '';
+  if (typeof teamInput === 'string') return safeUpper(teamInput);
+  if (typeof teamInput === 'object') {
+    const rawId = typeof teamInput.id === 'string' ? teamInput.id.replace('team_', '') : '';
+    const cand = teamInput.shortName || rawId || teamInput.name || teamInput.code || teamInput.teamCode || '';
+    return safeUpper(cand);
+  }
+  return safeUpper(teamInput);
+}
+
+function resolveTeamName(teamInput: any): string {
+  if (!teamInput) return '';
+  if (typeof teamInput === 'string') return safeUpper(teamInput);
+  if (typeof teamInput === 'object') {
+    const cand = teamInput.name || teamInput.teamName || teamInput.shortName || '';
+    return safeUpper(cand);
+  }
+  return safeUpper(teamInput);
+}
+
 export function computeHeadToHead(
-  teamAShort: string,
-  teamBShort: string,
-  completedMatches: CompletedMatchRecord[]
+  teamAShort: string = '',
+  teamBShort: string = '',
+  completedMatches: CompletedMatchRecord[] = []
 ): HeadToHeadSummary {
-  const a = teamAShort.toUpperCase();
-  const b = teamBShort.toUpperCase();
+  const a = safeUpper(teamAShort);
+  const b = safeUpper(teamBShort);
+
+  if (!a || !b || !Array.isArray(completedMatches)) {
+    return {
+      teamAShort: a || 'TEAM A',
+      teamBShort: b || 'TEAM B',
+      totalPlayed: 0,
+      teamAWins: 0,
+      teamBWins: 0,
+      highestScoreA: '—',
+      highestScoreB: '—',
+      recentMeetings: []
+    };
+  }
 
   const meetings = completedMatches.filter(m => {
-    const h = m.homeTeam.shortName.toUpperCase();
-    const aw = m.awayTeam.shortName.toUpperCase();
+    if (!m) return false;
+    const h = resolveTeamShort(m.homeTeam);
+    const aw = resolveTeamShort(m.awayTeam);
     return (h === a && aw === b) || (h === b && aw === a);
   });
 
@@ -1246,32 +1317,54 @@ export function computeHeadToHead(
   let maxBWkts = 0;
 
   meetings.forEach(m => {
-    const summary = (m.resultSummary || '').toUpperCase();
-    if (summary.startsWith(a) || summary.includes(`${m.homeTeam.name.toUpperCase()} WON`)) {
-      if (m.homeTeam.shortName.toUpperCase() === a) aWins++;
-      else if (summary.startsWith(a)) aWins++;
-      else bWins++;
-    } else if (summary.startsWith(b)) {
+    if (!m) return;
+    const summary = safeUpper(m.summary || (m as any)?.resultSummary || '');
+    const hShort = resolveTeamShort(m.homeTeam);
+    const awShort = resolveTeamShort(m.awayTeam);
+    const hName = resolveTeamName(m.homeTeam);
+    const awName = resolveTeamName(m.awayTeam);
+
+    if (
+      (a && summary.includes(`${a} WON`)) ||
+      (a && summary.startsWith(a)) ||
+      (hShort === a && Boolean(hName) && summary.includes(`${hName} WON`)) ||
+      (awShort === a && Boolean(awName) && summary.includes(`${awName} WON`))
+    ) {
+      aWins++;
+    } else if (
+      (b && summary.includes(`${b} WON`)) ||
+      (b && summary.startsWith(b)) ||
+      (hShort === b && Boolean(hName) && summary.includes(`${hName} WON`)) ||
+      (awShort === b && Boolean(awName) && summary.includes(`${awName} WON`))
+    ) {
       bWins++;
-    } else {
-      const r1 = m.innings1.runs;
-      const r2 = m.innings2?.runs || 0;
-      const bat1Short = m.innings1.battingTeamId === m.homeTeam.id ? m.homeTeam.shortName.toUpperCase() : m.awayTeam.shortName.toUpperCase();
-      if ((r1 > r2 && bat1Short === a) || (r2 > r1 && bat1Short !== a)) aWins++;
-      else bWins++;
+    } else if (m.innings1 && m.innings2) {
+      const r1 = m.innings1.runs || 0;
+      const r2 = m.innings2.runs || 0;
+      const inn1Team = safeUpper(m.innings1.team || (m.innings1 as any)?.battingTeamId || '');
+      const inn1IsA = (a && inn1Team.includes(a)) || (Boolean(hShort === a && hName) && inn1Team.includes(hName));
+      if (r1 > r2) {
+        if (inn1IsA) aWins++;
+        else bWins++;
+      } else if (r2 > r1) {
+        if (inn1IsA) bWins++;
+        else aWins++;
+      }
     }
 
     [m.innings1, m.innings2].forEach(inn => {
       if (!inn) return;
-      const isTeamA =
-        (inn.battingTeamId === m.homeTeam.id && m.homeTeam.shortName.toUpperCase() === a) ||
-        (inn.battingTeamId === m.awayTeam.id && m.awayTeam.shortName.toUpperCase() === a);
-      if (isTeamA && inn.runs >= maxA) {
-        maxA = inn.runs;
-        maxAWkts = inn.wickets;
-      } else if (!isTeamA && inn.runs >= maxB) {
-        maxB = inn.runs;
-        maxBWkts = inn.wickets;
+      const innTeam = safeUpper(inn.team || (inn as any)?.battingTeamId || '');
+      const isTeamA = (a && innTeam.includes(a)) || (Boolean(hShort === a && hName) && innTeam.includes(hName));
+      const runs = inn.runs || 0;
+      const wickets = typeof inn.wickets === 'number' ? inn.wickets : 0;
+
+      if (isTeamA && runs >= maxA) {
+        maxA = runs;
+        maxAWkts = wickets;
+      } else if (!isTeamA && runs >= maxB) {
+        maxB = runs;
+        maxBWkts = wickets;
       }
     });
   });

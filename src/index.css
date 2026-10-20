@@ -1,22 +1,39 @@
 @import "tailwindcss";
 
+@theme {
+  --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  --font-display: 'Outfit', 'Barlow Condensed', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
 @layer base {
   :root {
     --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
-    --font-display: 'Barlow Condensed', sans-serif;
+    --font-display: 'Outfit', 'Barlow Condensed', sans-serif;
     --font-mono: 'JetBrains Mono', monospace;
   }
 
   body {
     font-family: var(--font-sans);
-    background-color: #0b0f17;
+    background-color: #070b13;
     color: #f1f5f9;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  h1, h2, h3 {
+    font-family: var(--font-display);
+    letter-spacing: 0.015em;
   }
 }
 
 .font-display {
-  font-family: 'Barlow Condensed', sans-serif;
+  font-family: 'Outfit', 'Barlow Condensed', sans-serif;
   letter-spacing: 0.02em;
+}
+
+.font-condensed {
+  font-family: 'Barlow Condensed', sans-serif;
+  letter-spacing: 0.03em;
 }
 
 .font-mono-nums {

@@ -202,7 +202,7 @@ export const MiniAuctionReleasesModal: React.FC<MiniAuctionReleasesModalProps> =
         <button
           onClick={() => {
             sound.playCrowdCheer(0.8);
-            releasePlayersForAuction(releasedIds, effectivePurseCr);
+            releasePlayersForAuction(userTeam.id, releasedIds, effectivePurseCr);
             onProceedToAuctionHall(releasedIds, effectivePurseCr);
           }}
           className="w-full py-4 bg-gradient-to-r from-[#eab308] via-[#f5b82e] to-[#eab308] hover:from-[#facc15] hover:to-[#f5b82e] text-black font-black text-xs uppercase tracking-widest rounded-2xl flex items-center justify-center gap-2 shadow-xl shadow-amber-500/25 active:scale-98 transition-all"

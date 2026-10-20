@@ -552,7 +552,7 @@ export const HubScreen: React.FC = () => {
                       type="button"
                       onClick={() => {
                         sound.playTap();
-                        boostTeamMorale(4);
+                        boostTeamMorale(userTeam.id, 4);
                         showToast('💬 Team Talk held: All squad players gained +4 Morale & +2 Form!');
                       }}
                       className="py-2 px-3 rounded-xl bg-slate-900 border border-purple-500/30 text-purple-300 text-xs font-mono font-bold flex items-center justify-center gap-1.5 hover:bg-slate-800 active:scale-95 transition-all"
@@ -572,27 +572,29 @@ export const HubScreen: React.FC = () => {
                   const inn1TeamName = inn1
                     ? (inn1.battingTeamId === userTeam.id ? userTeam.name : opponentTeam.name)
                     : opponentTeam.name;
+                  const b1Count = inn1?.ballsCompleted ?? inn1?.balls ?? 120;
                   const inn1ScoreStr = inn1
-                    ? `${inn1.runs}/${inn1.wickets} (${Math.floor(inn1.balls / 6)}.${inn1.balls % 6})`
+                    ? `${inn1.runs}/${inn1.wickets} (${Math.floor(b1Count / 6)}.${b1Count % 6})`
                     : '132/7 (20.0)';
                   const inn1TopBatters = inn1
                     ? [...inn1.batters].sort((a, b) => b.runs - a.runs).slice(0, 2)
                     : null;
                   const inn1TopBowler = inn1
-                    ? [...inn1.bowlers].sort((a, b) => b.wickets - a.wickets || a.runsConceded - b.runsConceded)[0]
+                    ? [...inn1.bowlers].sort((a, b) => b.wickets - a.wickets || (a.runsConceded ?? a.runs) - (b.runsConceded ?? b.runs))[0]
                     : null;
 
                   const inn2TeamName = inn2
                     ? (inn2.battingTeamId === userTeam.id ? userTeam.name : opponentTeam.name)
                     : userTeam.name;
+                  const b2Count = inn2?.ballsCompleted ?? inn2?.balls ?? 112;
                   const inn2ScoreStr = inn2
-                    ? `${inn2.runs}/${inn2.wickets} (${Math.floor(inn2.balls / 6)}.${inn2.balls % 6})`
+                    ? `${inn2.runs}/${inn2.wickets} (${Math.floor(b2Count / 6)}.${b2Count % 6})`
                     : '135/4 (18.4)';
                   const inn2TopBatters = inn2
                     ? [...inn2.batters].sort((a, b) => b.runs - a.runs).slice(0, 2)
                     : null;
                   const inn2TopBowler = inn2
-                    ? [...inn2.bowlers].sort((a, b) => b.wickets - a.wickets || a.runsConceded - b.runsConceded)[0]
+                    ? [...inn2.bowlers].sort((a, b) => b.wickets - a.wickets || (a.runsConceded ?? a.runs) - (b.runsConceded ?? b.runs))[0]
                     : null;
 
                   return (
