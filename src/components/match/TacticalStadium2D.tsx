@@ -13,6 +13,12 @@ import Svg, {
   Stop,
 } from 'react-native-svg';
 import { FielderPosition, BallOutcome, PitchLength, PitchLine } from '../../types/cricket';
+import {
+  computeAnimationFrame,
+  computeBouncePoint,
+  AnimationFrameState,
+} from '../../utils/cricketAnimationTimeline';
+import { sound } from '../../utils/soundEffects';
 
 export type CameraViewMode = 'broadcast' | 'tactical' | 'pitch';
 
@@ -22,7 +28,7 @@ interface TacticalStadium2DProps {
   onSelectFielder: (id: number | null) => void;
   onMoveFielder: (id: number, x: number, y: number) => void;
   lastBallOutcome: BallOutcome | null;
-  isBallInFlight: boolean;
+  isBallInFlight?: boolean;
   bowlerName: string;
   strikerName: string;
   nonStrikerName: string;
@@ -41,6 +47,8 @@ interface TacticalStadium2DProps {
   homeTeamColors?: { primary: string; secondary: string; shortName?: string; city?: string };
   venueName?: string;
   pitchType?: string;
+  strikerHand?: 'RHB' | 'LHB';
+  bowlerRole?: string;
   onPitchTargetClick?: (length: PitchLength, line: PitchLine) => void;
 }
 
@@ -189,12 +197,17 @@ export const TacticalStadium2D: React.FC<TacticalStadium2DProps> = ({
   homeTeamColors,
   venueName,
   pitchType,
+  plannedLength,
+  plannedLine,
   shotZoneLabels,
+  strikerHand = 'RHB',
+  bowlerRole = 'Pace',
 }) => {
   const [animProgress, setAnimProgress] = useState<number>(1);
   const [draggingFielderId, setDraggingFielderId] = useState<number | null>(null);
   const lastBallKeyRef = useRef<string>('');
   const svgContainerRef = useRef<HTMLDivElement | null>(null);
+  const audioPlayedRef = useRef<{ hit: boolean; wicket: boolean }>({ hit: false, wicket: false });
 
   useEffect(() => {
     const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -206,23 +219,49 @@ export const TacticalStadium2D: React.FC<TacticalStadium2DProps> = ({
     const key = `${lastBallOutcome.over}.${lastBallOutcome.ballNumber}-${lastBallOutcome.runs}-${lastBallOutcome.isWicket}-${lastBallOutcome.commentary}`;
     if (key === lastBallKeyRef.current) return;
     lastBallKeyRef.current = key;
+    audioPlayedRef.current = { hit: false, wicket: false };
 
     let frameId: number;
     const start = performance.now();
-    const duration = 1200;
+    const duration = 1250;
     setAnimProgress(0);
 
     const step = (now: number) => {
       const elapsed = now - start;
       const p = Math.min(1, elapsed / duration);
       setAnimProgress(p);
+
+      // Synchronized Sound Triggers
+      if (p >= 0.30 && !audioPlayedRef.current.hit) {
+        audioPlayedRef.current.hit = true;
+        if (lastBallOutcome.runs > 0 || lastBallOutcome.isFour || lastBallOutcome.isSix) {
+          sound.playBatHit(lastBallOutcome.isFour || lastBallOutcome.isSix, lastBallOutcome.isSix);
+        }
+      }
+
+      if (p >= 0.32 && !audioPlayedRef.current.wicket && lastBallOutcome.isWicket) {
+        audioPlayedRef.current.wicket = true;
+        sound.playWicketCrash();
+      }
+
       if (p < 1) {
         frameId = requestAnimationFrame(step);
       }
     };
+
     frameId = requestAnimationFrame(step);
     return () => cancelAnimationFrame(frameId);
   }, [lastBallOutcome]);
+
+  const frameState: AnimationFrameState = computeAnimationFrame(
+    animProgress,
+    lastBallOutcome,
+    fielders,
+    plannedLength,
+    plannedLine,
+    strikerHand,
+    bowlerRole
+  );
 
   const theme = getStadiumTheme(
     venueName,
@@ -243,94 +282,6 @@ export const TacticalStadium2D: React.FC<TacticalStadium2DProps> = ({
 
   const topCreaseY = 168;
   const bottomCreaseY = 232;
-  const bowlerBaseY = 147;
-  const keeperBaseY = 254;
-
-  const toSvg = (fx: number, fy: number) => ({
-    x: cx + fx * 1.52,
-    y: cy + fy * 1.52,
-  });
-
-  let bowlerAnimY = bowlerBaseY;
-  let ballX = cx;
-  let ballY = topCreaseY;
-  let showBall = false;
-  let showShotTrail = false;
-  let activeChaserIdx = -1;
-  let strikerY = bottomCreaseY;
-  let nonStrikerY = topCreaseY;
-  let batSwingAngle = 0;
-
-  if (lastBallOutcome && animProgress < 1) {
-    showBall = true;
-    const rad = ((lastBallOutcome.shotAngleDeg - 90) * Math.PI) / 180;
-    const rawDist = Math.min(
-      boundaryR + 8,
-      Math.max(25, (lastBallOutcome.shotDistanceM / 82) * boundaryR)
-    );
-    const targetX = cx + Math.cos(rad) * rawDist;
-    const targetY = cy + Math.sin(rad) * rawDist;
-
-    if (!lastBallOutcome.isSix && !lastBallOutcome.isFour && fielders.length > 0) {
-      let minDist = Infinity;
-      fielders.forEach((f, idx) => {
-        const pos = toSvg(f.x, f.y);
-        const d = Math.hypot(pos.x - targetX, pos.y - targetY);
-        if (d < minDist) {
-          minDist = d;
-          activeChaserIdx = idx;
-        }
-      });
-    }
-
-    if (animProgress < 0.25) {
-      const p1 = animProgress / 0.25;
-      bowlerAnimY = (bowlerBaseY - 24) + 24 * p1;
-      const bouncePointY = topCreaseY + (bottomCreaseY - topCreaseY) * 0.65;
-      if (p1 <= 0.65) {
-        const subP = p1 / 0.65;
-        ballX = cx + Math.sin(subP * Math.PI) * 4;
-        ballY = topCreaseY + (bouncePointY - topCreaseY) * subP;
-      } else {
-        const subP = (p1 - 0.65) / 0.35;
-        ballX = cx + Math.sin((0.65 + subP * 0.35) * Math.PI) * 2;
-        ballY = bouncePointY + (bottomCreaseY - bouncePointY) * subP;
-      }
-    } else {
-      showShotTrail = true;
-      const postP = (animProgress - 0.25) / 0.75;
-      
-      if (postP <= 0.15) {
-        batSwingAngle = Math.sin((postP / 0.15) * Math.PI) * 45;
-      }
-
-      if (postP <= 0.65 || lastBallOutcome.isFour || lastBallOutcome.isSix) {
-        const t = Math.min(1, postP / 0.65);
-        const easeOut = 1 - Math.pow(1 - t, 2);
-        ballX = cx + (targetX - cx) * easeOut;
-        ballY = bottomCreaseY + (targetY - bottomCreaseY) * easeOut;
-      } else {
-        const t = (postP - 0.65) / 0.35;
-        ballX = targetX + (cx - targetX) * t;
-        ballY = targetY + (topCreaseY - targetY) * t;
-      }
-
-      const runsTaken = lastBallOutcome.isFour || lastBallOutcome.isSix || lastBallOutcome.isExtra ? 0 : lastBallOutcome.runs;
-      if (runsTaken > 0) {
-        const totalRunProgress = Math.min(1, postP * 1.3) * runsTaken;
-        const currentLeg = Math.floor(totalRunProgress);
-        const legFrac = totalRunProgress - currentLeg;
-        const evenLeg = currentLeg % 2 === 0;
-        if (evenLeg) {
-          strikerY = bottomCreaseY - (bottomCreaseY - topCreaseY) * legFrac;
-          nonStrikerY = topCreaseY + (bottomCreaseY - topCreaseY) * legFrac;
-        } else {
-          strikerY = topCreaseY + (bottomCreaseY - topCreaseY) * legFrac;
-          nonStrikerY = bottomCreaseY - (bottomCreaseY - topCreaseY) * legFrac;
-        }
-      }
-    }
-  }
 
   const updateFielderFromClientPoint = (id: number, clientX: number, clientY: number) => {
     if (!svgContainerRef.current) return;
@@ -380,6 +331,8 @@ export const TacticalStadium2D: React.FC<TacticalStadium2DProps> = ({
     );
   };
 
+  const bouncePoint = computeBouncePoint(plannedLength, plannedLine);
+
   return (
     <View style={styles.wrapper}>
       <div
@@ -421,6 +374,7 @@ export const TacticalStadium2D: React.FC<TacticalStadium2DProps> = ({
             </RadialGradient>
           </Defs>
 
+          {/* 1. Stadium Outer Rim & Turf */}
           <Circle cx={cx} cy={cy} r={outerR + 8} fill="#111827" stroke="#1f2937" strokeWidth={2} />
           <Circle
             cx={cx}
@@ -432,15 +386,23 @@ export const TacticalStadium2D: React.FC<TacticalStadium2DProps> = ({
             strokeOpacity={0.65}
           />
 
+          {/* 2. Concentric Mowed Grass Rings */}
           <Circle cx={cx} cy={cy} r={144} fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth={16} />
           <Circle cx={cx} cy={cy} r={112} fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth={16} />
           <Circle cx={cx} cy={cy} r={78} fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth={14} />
           <Circle cx={cx} cy={cy} r={46} fill="none" stroke="rgba(255,255,255,0.035)" strokeWidth={12} />
           <Circle cx={cx} cy={cy} r={outerR} fill="url(#sheenGrad)" />
 
+          {/* 3. Boundary Rope & 30-Yard Circle */}
           <Circle cx={cx} cy={cy} r={boundaryR} fill="none" stroke="rgba(255,255,255,0.52)" strokeWidth={1.6} />
           <Circle cx={cx} cy={cy} r={circle30R} fill="none" stroke="rgba(255,255,255,0.48)" strokeWidth={1.4} strokeDasharray="5 5" />
 
+          {/* Boundary Splash Effect */}
+          {frameState.isBoundarySplash && (
+            <Circle cx={cx} cy={cy} r={boundaryR} fill="none" stroke="#f59e0b" strokeWidth={3.5} opacity={0.7} />
+          )}
+
+          {/* Optional Shot-Zone Labels */}
           {shotZoneLabels?.map((lbl, idx) => (
             <SvgText
               key={idx}
@@ -457,6 +419,7 @@ export const TacticalStadium2D: React.FC<TacticalStadium2DProps> = ({
             </SvgText>
           ))}
 
+          {/* 4. Center Cricket Pitch Strip */}
           <Rect
             x={cx - 14}
             y={cy - 44}
@@ -472,41 +435,55 @@ export const TacticalStadium2D: React.FC<TacticalStadium2DProps> = ({
           <Line x1={cx - 9} y1={topCreaseY} x2={cx - 9} y2={bottomCreaseY} stroke="rgba(255,255,255,0.22)" strokeWidth={0.8} />
           <Line x1={cx + 9} y1={topCreaseY} x2={cx + 9} y2={bottomCreaseY} stroke="rgba(255,255,255,0.22)" strokeWidth={0.8} />
 
-          <Rect x={cx - 4} y={cy - 41} width={8} height={2} fill="#ffffff" />
-          <Rect x={cx - 4} y={cy + 39} width={8} height={2} fill="#ffffff" />
+          {/* Stumps Top End */}
+          <Rect x={cx - 4} y={cy - 41} width={8} height={2.5} fill="#ffffff" />
+          
+          {/* Stumps Bottom End & Bails */}
+          <Rect x={cx - 4} y={cy + 38.5} width={8} height={2.5} fill="#ffffff" />
+          {frameState.bailsDislodged ? (
+            <G>
+              <Rect x={cx - 6 + frameState.bailLeftOffset.x} y={cy + 37 + frameState.bailLeftOffset.y} width={4} height={1.5} fill="#f43f5e" />
+              <Rect x={cx + 2 + frameState.bailRightOffset.x} y={cy + 37 + frameState.bailRightOffset.y} width={4} height={1.5} fill="#f43f5e" />
+            </G>
+          ) : (
+            <Rect x={cx - 4} y={cy + 37} width={8} height={1.5} fill="#e2e8f0" />
+          )}
 
-          {lastBallOutcome && showShotTrail && (
-            <Line
-              x1={cx}
-              y1={bottomCreaseY}
-              x2={ballX}
-              y2={ballY}
+          {/* Turf Dust Ripple on Pitch Bounce */}
+          {frameState.isTurfDust && (
+            <Circle cx={bouncePoint.x} cy={bouncePoint.y} r={6} fill="none" stroke="#d8b47c" strokeWidth={1.5} opacity={0.8} />
+          )}
+
+          {/* Contact Impact Flash */}
+          {frameState.isContactImpact && (
+            <G transform={`translate(${cx}, ${bottomCreaseY})`}>
+              <Circle cx={0} cy={0} r={10} fill="rgba(245,158,11,0.35)" />
+              <Circle cx={0} cy={0} r={5} fill="#ffffff" />
+            </G>
+          )}
+
+          {/* 5. Ball Motion Trail Path */}
+          {frameState.ballTrailPoints.length > 1 && (
+            <Path
+              d={`M ${frameState.ballTrailPoints.map(p => `${p.x} ${p.y}`).join(' L ')}`}
+              fill="none"
               stroke={
-                lastBallOutcome.isWicket
+                lastBallOutcome?.isWicket
                   ? '#f43f5e'
-                  : lastBallOutcome.isSix
+                  : lastBallOutcome?.isSix
                   ? '#f59e0b'
-                  : lastBallOutcome.isFour
+                  : lastBallOutcome?.isFour
                   ? '#38bdf8'
-                  : 'rgba(255,255,255,0.6)'
+                  : 'rgba(255,255,255,0.55)'
               }
-              strokeWidth={lastBallOutcome.isFour || lastBallOutcome.isSix ? 2.4 : 1.6}
-              strokeDasharray={lastBallOutcome.isSix ? '4 3' : undefined}
-              opacity={animProgress < 1 ? 0.92 : 0.35}
+              strokeWidth={lastBallOutcome?.isFour || lastBallOutcome?.isSix ? 2.4 : 1.5}
+              strokeDasharray={lastBallOutcome?.isSix ? '4 3' : undefined}
+              opacity={0.7}
             />
           )}
 
-          {fielders.map((f, idx) => {
-            const basePos = toSvg(f.x, f.y);
-            let fx = basePos.x;
-            let fy = basePos.y;
-            if (idx === activeChaserIdx && animProgress >= 0.25 && animProgress < 1) {
-              const postT = (animProgress - 0.25) / 0.75;
-              const chaseT = postT <= 0.65 ? postT / 0.65 : 1 - (postT - 0.65) / 0.35;
-              fx = basePos.x + (ballX - basePos.x) * Math.min(0.85, chaseT);
-              fy = basePos.y + (ballY - basePos.y) * Math.min(0.85, chaseT);
-            }
-
+          {/* 6. Fielders with Realistic Pursuit Animations */}
+          {frameState.fielders.map((f, idx) => {
             const isSelected = selectedFielderId === f.id || draggingFielderId === f.id;
             const jNum = fielderJerseys[idx % fielderJerseys.length] || f.id;
 
@@ -523,62 +500,99 @@ export const TacticalStadium2D: React.FC<TacticalStadium2DProps> = ({
                   onSelectFielder(selectedFielderId === f.id ? null : f.id);
                 }}
               >
-                <SvgText x={fx} y={fy - 14} fill="rgba(226,232,240,0.88)" fontSize={8.5} fontWeight="700" fontFamily="monospace" textAnchor="middle">
+                <SvgText x={f.x} y={f.y - 14} fill="rgba(226,232,240,0.88)" fontSize={8.5} fontWeight="700" fontFamily="monospace" textAnchor="middle">
                   F
                 </SvgText>
-                {isSelected && (
-                  <Circle cx={fx} cy={fy} r={14.5} fill="none" stroke="#f5b82e" strokeWidth={2} strokeDasharray="3 2" />
+
+                {/* Chasing / Action Indicator Ring */}
+                {f.isChasing && (
+                  <Circle cx={f.x} cy={f.y} r={13.5} fill="none" stroke="#38bdf8" strokeWidth={1.8} strokeDasharray="3 2" />
                 )}
-                <Circle cx={fx} cy={fy} r={10.5} fill={bowlColor} stroke="#ffffff" strokeWidth={1.8} />
-                <SvgText x={fx} y={fy + 3.2} fill={bowlColor === '#eab308' ? '#000000' : '#ffffff'} fontSize={9.5} fontWeight="800" fontFamily="monospace" textAnchor="middle">
+
+                {isSelected && (
+                  <Circle cx={f.x} cy={f.y} r={14.5} fill="none" stroke="#f5b82e" strokeWidth={2} strokeDasharray="3 2" />
+                )}
+
+                <Circle cx={f.x} cy={f.y} r={10.5} fill={bowlColor} stroke="#ffffff" strokeWidth={1.8} />
+                <SvgText x={f.x} y={f.y + 3.2} fill={bowlColor === '#eab308' ? '#000000' : '#ffffff'} fontSize={9.5} fontWeight="800" fontFamily="monospace" textAnchor="middle">
                   {jNum}
                 </SvgText>
               </G>
             );
           })}
 
-          <G>
-            <SvgText x={cx} y={bowlerAnimY - 14} fill="rgba(226,232,240,0.9)" fontSize={8.5} fontWeight="700" fontFamily="monospace" textAnchor="middle">
+          {/* 7. Bowler Token & Delivery Action Stride */}
+          <G transform={`translate(${frameState.bowlerPos.x}, ${frameState.bowlerPos.y})`}>
+            <SvgText x={0} y={-14} fill="rgba(226,232,240,0.9)" fontSize={8.5} fontWeight="700" fontFamily="monospace" textAnchor="middle">
               B
             </SvgText>
-            <Circle cx={cx} cy={bowlerAnimY} r={10.5} fill={bowlColor} stroke="#ffffff" strokeWidth={1.8} />
-            <SvgText x={cx} y={bowlerAnimY + 3.2} fill={bowlColor === '#eab308' ? '#000000' : '#ffffff'} fontSize={9.5} fontWeight="800" fontFamily="monospace" textAnchor="middle">
+            {/* Bowling Arm Rotation Arc */}
+            {frameState.bowlerArmAngle !== 0 && (
+              <Line
+                x1={0}
+                y1={0}
+                x2={Math.sin((frameState.bowlerArmAngle * Math.PI) / 180) * 12}
+                y2={Math.cos((frameState.bowlerArmAngle * Math.PI) / 180) * 12}
+                stroke="#ffffff"
+                strokeWidth={2}
+              />
+            )}
+            <Circle cx={0} cy={0} r={10.5} fill={bowlColor} stroke="#ffffff" strokeWidth={1.8} />
+            <SvgText x={0} y={3.2} fill={bowlColor === '#eab308' ? '#000000' : '#ffffff'} fontSize={9.5} fontWeight="800" fontFamily="monospace" textAnchor="middle">
               {bowlerJersey}
             </SvgText>
           </G>
 
-          <G>
-            <Circle cx={cx - 4} cy={keeperBaseY} r={10.5} fill={bowlColor} stroke="#ffffff" strokeWidth={1.8} />
-            <SvgText x={cx - 4} y={keeperBaseY + 3.2} fill={bowlColor === '#eab308' ? '#000000' : '#ffffff'} fontSize={9.5} fontWeight="800" fontFamily="monospace" textAnchor="middle">
+          {/* 8. Wicketkeeper Token */}
+          <G transform={`translate(${frameState.keeperPos.x}, ${frameState.keeperPos.y})`}>
+            <Circle cx={0} cy={0} r={10.5} fill={bowlColor} stroke="#ffffff" strokeWidth={1.8} />
+            <SvgText x={0} y={3.2} fill={bowlColor === '#eab308' ? '#000000' : '#ffffff'} fontSize={9.5} fontWeight="800" fontFamily="monospace" textAnchor="middle">
               {keeperJersey}
             </SvgText>
-            <SvgText x={cx - 4} y={keeperBaseY + 20} fill="rgba(226,232,240,0.9)" fontSize={8.5} fontWeight="700" fontFamily="monospace" textAnchor="middle">
+            <SvgText x={0} y={20} fill="rgba(226,232,240,0.9)" fontSize={8.5} fontWeight="700" fontFamily="monospace" textAnchor="middle">
               WK
             </SvgText>
           </G>
 
-          <G>
-            <Circle cx={cx + 2} cy={nonStrikerY} r={10.5} fill={batColor} stroke="#ffffff" strokeWidth={1.8} />
-            <SvgText x={cx + 2} y={nonStrikerY + 3.2} fill={batColor === '#eab308' ? '#000000' : '#ffffff'} fontSize={9.5} fontWeight="800" fontFamily="monospace" textAnchor="middle">
+          {/* 9. Non-Striker & Striker Tokens */}
+          <G transform={`translate(${frameState.nonStrikerPos.x}, ${frameState.nonStrikerPos.y})`}>
+            <Circle cx={0} cy={0} r={10.5} fill={batColor} stroke="#ffffff" strokeWidth={1.8} />
+            <SvgText x={0} y={3.2} fill={batColor === '#eab308' ? '#000000' : '#ffffff'} fontSize={9.5} fontWeight="800" fontFamily="monospace" textAnchor="middle">
               {nonStrikerJersey}
             </SvgText>
           </G>
 
-          <G transform={`translate(${cx - 2}, ${strikerY}) rotate(${batSwingAngle})`}>
+          {/* Striker Player Shape with Separate Bat Element & Pivot Rotation */}
+          <G transform={`translate(${frameState.strikerPos.x}, ${frameState.strikerPos.y})`}>
             <Circle cx={0} cy={0} r={13} fill="none" stroke="#f5b82e" strokeWidth={2.2} />
             <Circle cx={0} cy={0} r={10.5} fill={batColor} stroke="#ffffff" strokeWidth={1.6} />
             <SvgText x={0} y={3.2} fill={batColor === '#eab308' ? '#000000' : '#ffffff'} fontSize={9.5} fontWeight="800" fontFamily="monospace" textAnchor="middle">
               {strikerJersey}
             </SvgText>
+            
+            {/* Separate Bat Element attached to Striker */}
+            <G transform={`rotate(${frameState.strikerBatAngle})`}>
+              <Rect x={7} y={-2} width={10} height={3} rx={1} fill="#eab308" stroke="#78350f" strokeWidth={0.8} />
+            </G>
           </G>
 
-          {showBall && (
+          {/* 10. Ball Shadow & Live Ball Element */}
+          {frameState.showBall && (
             <G>
-              <Circle cx={ballX} cy={ballY} r={6.5} fill="rgba(255,255,255,0.28)" />
-              <Circle cx={ballX} cy={ballY} r={3.8} fill="#ffffff" stroke="#f59e0b" strokeWidth={1} />
+              {/* Ground Shadow Offset for Elevation Height */}
+              {frameState.ballHeight > 1 && (
+                <Circle cx={frameState.ballShadowPos.x} cy={frameState.ballShadowPos.y} r={3} fill="rgba(0,0,0,0.35)" />
+              )}
+
+              {/* Main Ball Dot with Scale Expansion when Elevated in Air */}
+              <G transform={`translate(${frameState.ballPos.x}, ${frameState.ballPos.y - frameState.ballHeight})`}>
+                <Circle cx={0} cy={0} r={6.5 + frameState.ballHeight * 0.12} fill="rgba(255,255,255,0.28)" />
+                <Circle cx={0} cy={0} r={3.8 + frameState.ballHeight * 0.08} fill="#ffffff" stroke="#f59e0b" strokeWidth={1} />
+              </G>
             </G>
           )}
 
+          {/* 11. Corner Floodlight Glow Cones & LED Towers */}
           <Circle cx={cx} cy={cy} r={outerR + 8} fill="url(#cornerGlowTL)" pointerEvents="none" />
           <Circle cx={cx} cy={cy} r={outerR + 8} fill="url(#cornerGlowTR)" pointerEvents="none" />
           <Circle cx={cx} cy={cy} r={outerR + 8} fill="url(#cornerGlowBL)" pointerEvents="none" />

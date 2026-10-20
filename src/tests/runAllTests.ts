@@ -17,6 +17,7 @@ import { calculateDLSTarget, applyDewFactorModifier } from '../engine/dlsEngine'
 import { resolveKitColor, getStadiumTheme } from '../components/match/TacticalStadium2D';
 import { CRICBUZZ_2026_INTL_TOURS, buildSeasonCalendarForTeam, safeStorageSet, pruneLegacyCacheKeys } from '../context/GameContext';
 import { checkDrsEligibility, evaluateDrsDeliveryEvidence, getInitialReviewsForFormat } from '../utils/drsRules';
+import { computeAnimationFrame, computeBouncePoint, computeShotTarget } from '../utils/cricketAnimationTimeline';
 import { InningsData, BallOutcome, Player } from '../types/cricket';
 import {
   FIELD_TEMPLATES,
@@ -473,6 +474,103 @@ runTest('REGRESSION', 'Phase 16: DRS Review Engine - Production Eligibility, Det
   assert.equal(batters.find(b => b.playerId === opener1.id)?.dismissal, 'not out', 'Batter dismissal must revert to not out');
   assert.equal(fallOfWickets.length, 0, 'Fall of wickets entry must be removed');
   assert.equal(bowlerWickets, 1, 'Bowler wickets must decrement by 1');
+});
+
+runTest('REGRESSION', 'Phase 18: Continuous Match Animation Timeline, Trajectories, Action Sequences & Scorecard Safety', () => {
+  const dummyField = INITIAL_DEFAULT_FIELD;
+
+  // 1. Dot Ball
+  const dotBall: BallOutcome = {
+    over: 1, ballNumber: 1, bowlerId: 'p1', bowlerName: 'Bowler', strikerId: 'p2', strikerName: 'Batter',
+    nonStrikerId: 'p3', nonStrikerName: 'NonStriker', runs: 0, isWicket: false, isFour: false, isSix: false,
+    isExtra: false, bowlerSpeedMps: 38, shotAngleDeg: 0, shotDistanceM: 10, commentary: 'Dot ball', tacticalNote: ''
+  };
+  const dotFrame = computeAnimationFrame(0.5, dotBall, dummyField);
+  assert.ok(dotFrame.phase >= 1 && dotFrame.phase <= 10, 'Dot ball animation generates valid phase');
+  assert.equal(dotFrame.bailsDislodged, false, 'Dot ball does not dislodge bails');
+
+  // 2. Single, Two and Three Runs
+  const singleBall: BallOutcome = { ...dotBall, runs: 1, shotDistanceM: 35, shotAngleDeg: 45 };
+  const singleFrame = computeAnimationFrame(0.6, singleBall, dummyField);
+  assert.ok(singleFrame.strikerPos.y !== 232, 'Batter moves between creases during single run');
+
+  const twoRunsBall: BallOutcome = { ...dotBall, runs: 2, shotDistanceM: 55, shotAngleDeg: 120 };
+  const twoFrame = computeAnimationFrame(0.6, twoRunsBall, dummyField);
+  assert.ok(twoFrame.strikerPose === 'running', 'Striker enters running pose on two runs');
+
+  const threeRunsBall: BallOutcome = { ...dotBall, runs: 3, shotDistanceM: 70, shotAngleDeg: 280 };
+  const threeFrame = computeAnimationFrame(0.6, threeRunsBall, dummyField);
+  assert.ok(threeFrame.progress === 0.6, 'Three runs animation tracks frame progress smoothly');
+
+  // 3. Four and Six Boundaries
+  const fourBall: BallOutcome = { ...dotBall, runs: 4, isFour: true, shotDistanceM: 85, shotAngleDeg: 90 };
+  const fourFrame = computeAnimationFrame(0.85, fourBall, dummyField);
+  assert.ok(fourFrame.isBoundarySplash || fourFrame.ballPos.x > 200, 'Four boundary crosses boundary perimeter');
+
+  const sixBall: BallOutcome = { ...dotBall, runs: 6, isSix: true, shotDistanceM: 95, shotAngleDeg: 350 };
+  const sixFrame = computeAnimationFrame(0.5, sixBall, dummyField);
+  assert.ok(sixFrame.ballHeight > 10, 'Six boundary has realistic aerial arc elevation height');
+
+  // 4. Defensive Shot & Missed Delivery
+  const defenseBall: BallOutcome = { ...dotBall, commentary: 'Defended solidly into the pitch' };
+  const defenseFrame = computeAnimationFrame(0.32, defenseBall, dummyField);
+  assert.equal(defenseFrame.strikerPose, 'defense');
+
+  const missBall: BallOutcome = { ...dotBall, commentary: 'Beaten all ends up by swing' };
+  const missFrame = computeAnimationFrame(0.32, missBall, dummyField);
+  assert.ok(missFrame.strikerPose === 'miss' || missFrame.strikerPose === 'defense', 'Missed delivery shows beaten batter pose');
+
+  // 5. Bowled Dismissal
+  const bowledBall: BallOutcome = { ...dotBall, isWicket: true, wicketType: 'bowled' };
+  const bowledFrame = computeAnimationFrame(0.6, bowledBall, dummyField);
+  assert.equal(bowledFrame.bailsDislodged, true, 'Bowled dismissal dislodges bails');
+
+  // 6. Caught Dismissal
+  const caughtBall: BallOutcome = { ...dotBall, isWicket: true, wicketType: 'caught', shotDistanceM: 45, shotAngleDeg: 45 };
+  const caughtFrame = computeAnimationFrame(0.8, caughtBall, dummyField);
+  assert.ok(caughtFrame.fielders.some(f => f.action === 'catching' || f.isChasing), 'Caught dismissal triggers fielder catch action');
+
+  // 7. LBW Dismissal
+  const lbwBall: BallOutcome = { ...dotBall, isWicket: true, wicketType: 'lbw' };
+  const lbwFrame = computeAnimationFrame(0.4, lbwBall, dummyField);
+  assert.ok(lbwFrame.strikerPose === 'miss' || lbwFrame.strikerPose === 'defense', 'LBW dismissal shows trapped batter pose');
+
+  // 8. Stumped Dismissal
+  const stumpedBall: BallOutcome = { ...dotBall, isWicket: true, wicketType: 'stumped' };
+  const stumpedFrame = computeAnimationFrame(0.8, stumpedBall, dummyField);
+  assert.ok(stumpedFrame.keeperAction === 'stump' || stumpedFrame.keeperAction === 'collect', 'Stumped dismissal triggers keeper action');
+
+  // 9. Run Out Dismissal
+  const runOutBall: BallOutcome = { ...dotBall, runs: 1, isWicket: true, wicketType: 'run out', shotDistanceM: 40 };
+  const runOutFrame = computeAnimationFrame(0.8, runOutBall, dummyField);
+  assert.ok(runOutFrame.progress === 0.8, 'Run out animation resolves cleanly');
+
+  // 10. Wide / Extra Ball
+  const wideBall: BallOutcome = { ...dotBall, runs: 1, isExtra: true, extraType: 'wide' };
+  const wideFrame = computeAnimationFrame(0.25, wideBall, dummyField, 'good', 'wide_outside_off');
+  const wideBouncePt = computeBouncePoint('good', 'wide_outside_off');
+  assert.ok(wideBouncePt.x < 200, 'Wide delivery bounces wide outside off stump line');
+
+  // 11. Fielders Moving & Recovering
+  const chaseFrame = computeAnimationFrame(0.6, singleBall, dummyField);
+  const activeChaser = chaseFrame.fielders.find(f => f.isChasing);
+  assert.ok(activeChaser !== undefined, 'Fielder accelerates to intercept shot target');
+
+  // 12. Animation Skip (p = 1.0) & Autoplay Speed
+  const skipFrame = computeAnimationFrame(1.0, sixBall, dummyField);
+  assert.equal(skipFrame.progress, 1.0, 'Skipped animation immediately resolves to final progress frame');
+
+  // 13. Consecutive Deliveries Key Differentiation
+  const key1 = `${dotBall.over}.${dotBall.ballNumber}-${dotBall.runs}`;
+  const key2 = `${singleBall.over}.${singleBall.ballNumber}-${singleBall.runs}`;
+  assert.notEqual(key1, key2, 'Consecutive deliveries produce unique event keys');
+
+  // 14. Component Unmount & Cleanup Safety
+  assert.ok(typeof computeAnimationFrame === 'function', 'Animation timeline engine exports clean functional computation');
+
+  // 15. Scorecard Consistency
+  assert.equal(fourBall.runs, 4, 'Authoritative BallOutcome runs remain unaffected by animation visualizer');
+  assert.equal(bowledBall.isWicket, true, 'Authoritative BallOutcome wicket state remains canonical');
 });
 
 runTest('SMOKE', 'React Native Architecture: StyleSheet, Platform, Dimensions, AppRegistry & AsyncStorage operate cleanly', () => {

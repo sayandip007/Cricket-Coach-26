@@ -710,6 +710,8 @@ export const LiveMatchEngine: React.FC = () => {
           }}
           venueName={matchLiveState.venue}
           pitchType={matchLiveState.pitchType}
+          strikerHand={striker.battingHand}
+          bowlerRole={currentBowler.role}
           onPitchTargetClick={(length, line) => {
             if (!isUserBatting) {
               sound.playTap();
