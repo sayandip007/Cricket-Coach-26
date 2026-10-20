@@ -24,9 +24,21 @@ export interface DrsDeliveryEvidence {
 }
 
 /**
-  * Canonical Cricket DRS Rules & Eligibility Check
-  * Single source of truth across GameContext handlers and all UI entry points.
-  */
+ * Get initial reviews count based on match format rules:
+ * - TEST: 3 reviews per team per innings
+ * - 100BALL: 1 review per team per innings
+ * - T20 / ODI / Default: 2 reviews per team per innings
+ */
+export function getInitialReviewsForFormat(format?: string): number {
+  if (format === 'TEST') return 3;
+  if (format === '100BALL') return 1;
+  return 2;
+}
+
+/**
+ * Canonical Cricket DRS Rules & Eligibility Check
+ * Single source of truth across GameContext handlers and all UI entry points.
+ */
 export function checkDrsEligibility(
   outcome: BallOutcome | null,
   isUserBatting: boolean,
@@ -68,7 +80,8 @@ export function checkDrsEligibility(
       d.includes('c keeper') ||
       d.includes('c †') ||
       d.includes('c slip') ||
-      d.includes('c wicketkeeper');
+      d.includes('c wicketkeeper') ||
+      (d.includes('b ') && (d.includes('c ') || d.includes('caught')));
 
     if (wt === 'caught' && isEdgeToKeeperOrSlip) {
       return { canReview: true, reason: 'Caught behind: Review bat edge with UltraEdge Snickometer.', reviewType: 'caught_behind' };
@@ -111,6 +124,7 @@ export function checkDrsEligibility(
       comm.includes('pad') ||
       comm.includes('lbw') ||
       comm.includes('shout') ||
+      comm.includes('appeal') ||
       tac.includes('pad') ||
       tac.includes('lbw');
 
@@ -122,16 +136,12 @@ export function checkDrsEligibility(
       comm.includes('keeper') ||
       tac.includes('edge');
 
-    if (isLbwAppeal) {
-      return { canReview: true, reason: 'Appeal for LBW on pads (Hawk-Eye Ball Tracking).', reviewType: 'lbw' };
-    }
     if (isEdgeAppeal) {
       return { canReview: true, reason: 'Appeal for faint edge to keeper (UltraEdge Snickometer).', reviewType: 'caught_behind' };
     }
 
-    // On zero-run dot ball with full/good length, allow LBW appeal if close to stumps
-    if (outcome.runs === 0 && (comm.includes('dot') || comm.includes('defend') || comm.includes('swing') || comm.includes('miss'))) {
-      return { canReview: true, reason: 'Close LBW shout on stumps (Hawk-Eye / UltraEdge).', reviewType: 'lbw' };
+    if (isLbwAppeal || outcome.runs === 0) {
+      return { canReview: true, reason: 'Appeal for LBW on pads (Hawk-Eye Ball Tracking).', reviewType: 'lbw' };
     }
 
     return { canReview: false, reason: 'No LBW or edge-to-keeper appeal on this ball.', reviewType: 'none' };
@@ -163,18 +173,22 @@ export function evaluateDrsDeliveryEvidence(
   isUserBatting: boolean,
   onFieldCall: 'OUT' | 'NOT OUT',
   line?: string,
-  length?: string
+  length?: string,
+  forcedReviewType?: 'lbw' | 'caught_behind'
 ): DrsDeliveryEvidence {
+  let reviewType: 'lbw' | 'caught_behind' = forcedReviewType || 'lbw';
+  if (!forcedReviewType) {
+    const el = checkDrsEligibility(outcome, isUserBatting, 2);
+    if (el.reviewType === 'caught_behind') {
+      reviewType = 'caught_behind';
+    } else {
+      reviewType = 'lbw';
+    }
+  }
+
   const seedString = `${outcome.over}_${outcome.ballNumber}_${outcome.bowlerId}_${outcome.strikerId}_${outcome.runs}_${outcome.wicketType || 'none'}_${outcome.dismissalText || ''}_${outcome.bowlerSpeedMps || 36}`;
   const seed = hashString(seedString);
   const normalizedVal = (seed % 1000) / 1000;
-
-  const isLbw = onFieldCall === 'OUT'
-    ? (outcome.wicketType === 'lbw' || (outcome.dismissalText || '').toLowerCase().includes('lbw'))
-    : (line === 'stumps' || line === 'off_stump' || line === 'leg_side') &&
-      (length === 'full' || length === 'good' || length === 'yorker');
-
-  const reviewType: 'lbw' | 'caught_behind' = isLbw ? 'lbw' : 'caught_behind';
 
   // 1. Batting Review (On-Field OUT)
   if (onFieldCall === 'OUT') {
@@ -353,3 +367,4 @@ export function evaluateDrsDeliveryEvidence(
     }
   }
 }
+

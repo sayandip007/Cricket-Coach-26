@@ -1404,6 +1404,7 @@ export const LiveMatchEngine: React.FC = () => {
         }}
         reviewsRemaining={userReviewsLeft}
         drsAlreadyReviewed={Boolean(lastBallOutcome?.drsReviewed)}
+        lastBallOutcome={lastBallOutcome}
       />
 
       {/* 7. IMPACT PLAYER MODAL (Video 2 at 1:17 - 1:34) */}

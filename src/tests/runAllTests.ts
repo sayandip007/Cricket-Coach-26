@@ -16,7 +16,7 @@ import { simulateBall } from '../engine/cricketEngine';
 import { calculateDLSTarget, applyDewFactorModifier } from '../engine/dlsEngine';
 import { resolveKitColor, getStadiumTheme } from '../components/match/TacticalStadium2D';
 import { CRICBUZZ_2026_INTL_TOURS, buildSeasonCalendarForTeam, safeStorageSet, pruneLegacyCacheKeys } from '../context/GameContext';
-import { checkDrsEligibility, evaluateDrsDeliveryEvidence } from '../utils/drsRules';
+import { checkDrsEligibility, evaluateDrsDeliveryEvidence, getInitialReviewsForFormat } from '../utils/drsRules';
 import { InningsData, BallOutcome, Player } from '../types/cricket';
 import {
   FIELD_TEMPLATES,
@@ -367,6 +367,12 @@ runTest('REGRESSION', 'Phase 16: DRS Review Engine - Production Eligibility, Det
     nonStrikerId: 'p3', nonStrikerName: 'NonStriker', runs: 1, isWicket: false, isFour: false, isSix: false,
     isExtra: true, extraType: 'wide', bowlerSpeedMps: 38, shotAngleDeg: 0, shotDistanceM: 0, commentary: 'Wide', tacticalNote: ''
   };
+  // 1. Format-based DRS review allowance tests
+  assert.equal(getInitialReviewsForFormat('TEST'), 3, 'TEST format must grant 3 reviews per team');
+  assert.equal(getInitialReviewsForFormat('T20'), 2, 'T20 format must grant 2 reviews per team');
+  assert.equal(getInitialReviewsForFormat('ODI'), 2, 'ODI format must grant 2 reviews per team');
+  assert.equal(getInitialReviewsForFormat('100BALL'), 1, '100BALL format must grant 1 review per team');
+
   const wideDrs = checkDrsEligibility(wideBall, true, 2);
   assert.equal(wideDrs.canReview, false, 'Wide delivery must not be reviewable');
 
@@ -399,6 +405,17 @@ runTest('REGRESSION', 'Phase 16: DRS Review Engine - Production Eligibility, Det
   assert.equal(keeperDrs.canReview, true, 'Caught behind by keeper must be reviewable');
   assert.equal(keeperDrs.reviewType, 'caught_behind');
 
+  // Caught behind appeal on NOT OUT ball (bowling team review)
+  const edgeNotOutBall: BallOutcome = {
+    over: 1, ballNumber: 5, bowlerId: 'p1', bowlerName: 'Bowler', strikerId: 'p2', strikerName: 'Batter',
+    nonStrikerId: 'p3', nonStrikerName: 'NonStriker', runs: 0, isWicket: false,
+    isFour: false, isSix: false, isExtra: false, bowlerSpeedMps: 38, shotAngleDeg: 0,
+    shotDistanceM: 0, commentary: 'Massive appeal from keeper for an edge down the leg side!', tacticalNote: ''
+  };
+  const edgeBowlingDrs = checkDrsEligibility(edgeNotOutBall, false, 2);
+  assert.equal(edgeBowlingDrs.canReview, true, 'Bowling team can review caught behind appeal on NOT OUT call');
+  assert.equal(edgeBowlingDrs.reviewType, 'caught_behind');
+
   const zeroReviewsDrs = checkDrsEligibility(lbwBall, true, 0);
   assert.equal(zeroReviewsDrs.canReview, false, 'Review must be disallowed when 0 reviews remaining');
 
@@ -408,6 +425,10 @@ runTest('REGRESSION', 'Phase 16: DRS Review Engine - Production Eligibility, Det
   assert.equal(eval1.finalDecision, eval2.finalDecision, 'Deterministic DRS evaluation must produce identical verdict on same delivery');
   assert.equal(eval1.snickoSpike, eval2.snickoSpike, 'Deterministic DRS evaluation must produce identical Snicko spike on same delivery');
   assert.equal(eval1.hawkeye.wickets, eval2.hawkeye.wickets, 'Deterministic DRS evaluation must produce identical Hawk-Eye trajectory on same delivery');
+
+  // Evaluate evidence with explicit forcedReviewType = 'caught_behind'
+  const evalCaughtBehind = evaluateDrsDeliveryEvidence(edgeNotOutBall, false, 'NOT OUT', 'off', 'good', 'caught_behind');
+  assert.ok(evalCaughtBehind.reviewType === 'caught_behind', 'Evidence evaluation honors forced review type');
 
   // 3. Test repeat review attempt rejection on already reviewed ball
   const reviewedBall: BallOutcome = { ...lbwBall, drsReviewed: true };

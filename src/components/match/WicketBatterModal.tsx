@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Player } from '../../types/cricket';
+import { Player, BallOutcome } from '../../types/cricket';
 import { sound } from '../../utils/soundEffects';
 import { Zap, AlertTriangle, Radio, ShieldCheck } from 'lucide-react';
 
@@ -19,6 +19,7 @@ interface WicketBatterModalProps {
   onTriggerDrs?: () => void;
   reviewsRemaining?: number;
   drsAlreadyReviewed?: boolean;
+  lastBallOutcome?: BallOutcome | null;
 }
 
 export const WicketBatterModal: React.FC<WicketBatterModalProps> = ({
@@ -34,7 +35,8 @@ export const WicketBatterModal: React.FC<WicketBatterModalProps> = ({
   onOpenImpactModal,
   onTriggerDrs,
   reviewsRemaining = 2,
-  drsAlreadyReviewed = false
+  drsAlreadyReviewed = false,
+  lastBallOutcome
 }) => {
   const [selectedId, setSelectedId] = useState<string>(availableBatters[0]?.id || '');
 
@@ -91,7 +93,7 @@ export const WicketBatterModal: React.FC<WicketBatterModalProps> = ({
 
             {/* DRS Challenge Button inside Wicket Modal - Strictly for LBWs and Edges to Keeper/Slip */}
             {onTriggerDrs && (() => {
-              if (drsAlreadyReviewed) {
+              if (drsAlreadyReviewed || lastBallOutcome?.drsReviewed) {
                 return (
                   <div className="w-full py-2 px-3 rounded-xl bg-slate-900/90 border border-rose-500/40 text-rose-300 font-mono font-bold text-[10px] uppercase flex items-center justify-center gap-1.5">
                     <ShieldCheck className="w-3.5 h-3.5 text-rose-400" />
@@ -102,14 +104,32 @@ export const WicketBatterModal: React.FC<WicketBatterModalProps> = ({
 
               const dLower = (dismissalText || '').toLowerCase();
               const isLbw = dLower.startsWith('lbw') || dLower.includes('lbw');
-              const syntheticBall: any = {
+              const outcomeToTest: BallOutcome = lastBallOutcome || {
+                over: 1,
+                ballNumber: 1,
+                bowlerId: 'bowler',
+                bowlerName,
+                strikerId: 'striker',
+                strikerName: outBatterName,
+                nonStrikerId: 'nonStriker',
+                nonStrikerName: 'NonStriker',
+                runs: 0,
                 isWicket: true,
                 wicketType: isLbw ? 'lbw' : 'caught',
+                fielderName: isLbw ? undefined : 'Wicketkeeper',
                 dismissalText,
-                drsReviewed: drsAlreadyReviewed
+                drsReviewed: drsAlreadyReviewed,
+                isFour: false,
+                isSix: false,
+                isExtra: false,
+                bowlerSpeedMps: 38,
+                shotAngleDeg: 0,
+                shotDistanceM: 0,
+                commentary: dismissalText,
+                tacticalNote
               };
 
-              const drs = checkDrsEligibility(syntheticBall, true, reviewsRemaining);
+              const drs = checkDrsEligibility(outcomeToTest, true, reviewsRemaining);
 
               if (!drs.canReview) {
                 return (

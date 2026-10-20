@@ -230,124 +230,134 @@ export const DRSReviewModal: React.FC<DRSReviewModalProps> = ({
             </div>
           )}
 
-          {/* STEP 2: HAWK-EYE 3D BALL TRACKING */}
+          {/* STEP 2: HAWK-EYE 3D BALL TRACKING OR EDGE RESOLUTION */}
           {stage === 'hawkeye' && (
             <div className="flex flex-col gap-2.5">
               <span className="text-xs font-bold font-mono text-amber-400 flex items-center gap-1.5">
                 <Radio className="w-4 h-4 text-amber-400" />
-                HAWK-EYE™ 3D BALL TRACKING TRAJECTORY
+                {reviewState.type === 'lbw' ? 'HAWK-EYE™ 3D BALL TRACKING TRAJECTORY' : 'ULTRAEDGE™ EDGE RESOLUTION'}
               </span>
 
-              {/* 3 Hawk-Eye Criteria Cards */}
-              <div className="grid grid-cols-3 gap-2">
-                {/* 1. Pitching */}
-                <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-center">
-                  <span className="text-[9px] font-mono text-slate-400 block mb-1">PITCHING</span>
-                  <span className={`text-[11px] font-mono font-black ${
-                    reviewState.hawkeye.pitching === 'In-line' || reviewState.hawkeye.pitching === 'Outside Off'
-                      ? 'text-rose-400'
-                      : 'text-emerald-400'
-                  }`}>
-                    {reviewState.hawkeye.pitching.toUpperCase()}
+              {reviewState.type === 'lbw' ? (
+                <>
+                  {/* 3 Hawk-Eye Criteria Cards */}
+                  <div className="grid grid-cols-3 gap-2">
+                    {/* 1. Pitching */}
+                    <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-center">
+                      <span className="text-[9px] font-mono text-slate-400 block mb-1">PITCHING</span>
+                      <span className={`text-[11px] font-mono font-black ${
+                        reviewState.hawkeye.pitching === 'In-line' || reviewState.hawkeye.pitching === 'Outside Off'
+                          ? 'text-rose-400'
+                          : 'text-emerald-400'
+                      }`}>
+                        {reviewState.hawkeye.pitching.toUpperCase()}
+                      </span>
+                    </div>
+
+                    {/* 2. Impact */}
+                    <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-center">
+                      <span className="text-[9px] font-mono text-slate-400 block mb-1">IMPACT</span>
+                      <span className={`text-[11px] font-mono font-black ${
+                        reviewState.hawkeye.impact === 'In-line'
+                          ? 'text-rose-400'
+                          : reviewState.hawkeye.impact === "Umpire's Call"
+                          ? 'text-amber-400'
+                          : 'text-emerald-400'
+                      }`}>
+                        {reviewState.hawkeye.impact.toUpperCase()}
+                      </span>
+                    </div>
+
+                    {/* 3. Wickets */}
+                    <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-center">
+                      <span className="text-[9px] font-mono text-slate-400 block mb-1">WICKETS</span>
+                      <span className={`text-[11px] font-mono font-black ${
+                        reviewState.hawkeye.wickets === 'Hitting Stumps'
+                          ? 'text-rose-400'
+                          : reviewState.hawkeye.wickets === "Umpire's Call"
+                          ? 'text-amber-400'
+                          : 'text-emerald-400'
+                      }`}>
+                        {reviewState.hawkeye.wickets.toUpperCase()}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Graphical 3D-style Stumps & Pitch Strip Trajectory Indicator */}
+                  <div className="p-3 bg-gradient-to-b from-[#132338] to-[#0a121f] rounded-2xl border border-cyan-500/30 text-center flex flex-col items-center relative overflow-hidden">
+                    <svg viewBox="0 0 260 110" className="w-full h-28">
+                      {/* Perspective Pitch Mat */}
+                      <polygon points="85,105 175,105 152,25 108,25" fill="rgba(194, 161, 110, 0.25)" stroke="#475569" strokeWidth="1" />
+                      <polygon points="108,105 152,105 142,25 118,25" fill="rgba(56, 189, 248, 0.22)" />
+                      {/* Stumps at far end */}
+                      <rect x="120" y="10" width="3" height="22" rx="1" fill="#f8fafc" />
+                      <rect x="128.5" y="10" width="3" height="22" rx="1" fill="#f8fafc" />
+                      <rect x="137" y="10" width="3" height="22" rx="1" fill="#f8fafc" />
+                      <line x1="120" y1="10" x2="140" y2="10" stroke="#fbbf24" strokeWidth="2" />
+
+                      {/* Ball Trajectory Path */}
+                      {(() => {
+                        const hitX = reviewState.hawkeye.wickets === 'Hitting Stumps'
+                          ? 130
+                          : reviewState.hawkeye.wickets === "Umpire's Call"
+                          ? 140
+                          : 158;
+                        const hitY = reviewState.hawkeye.wickets === 'Missing Stumps' ? 6 : 18;
+                        const impactX = reviewState.hawkeye.impact === 'Outside Off' ? 148 : 131;
+                        const pitchX = reviewState.hawkeye.pitching === 'Outside Leg' ? 105 : 132;
+                        return (
+                          <>
+                            <path
+                              d={`M 136 104 Q 134 88 ${pitchX} 74`}
+                              fill="none"
+                              stroke="#f43f5e"
+                              strokeWidth="3"
+                            />
+                            <path
+                              d={`M ${pitchX} 74 Q ${(pitchX + impactX) / 2} 58 ${impactX} 45`}
+                              fill="none"
+                              stroke="#f43f5e"
+                              strokeWidth="3"
+                            />
+                            <path
+                              d={`M ${impactX} 45 Q ${(impactX + hitX) / 2} 30 ${hitX} ${hitY}`}
+                              fill="none"
+                              stroke={reviewState.hawkeye.wickets === 'Missing Stumps' ? '#38bdf8' : '#fbbf24'}
+                              strokeWidth="2.5"
+                              strokeDasharray="4 2"
+                            />
+                            <circle cx={pitchX} cy={74} r="4" fill="#ef4444" stroke="#ffffff" strokeWidth="1" />
+                            <circle cx={impactX} cy={45} r="4.5" fill="#f59e0b" stroke="#ffffff" strokeWidth="1" />
+                            <circle
+                              cx={hitX}
+                              cy={hitY}
+                              r="5"
+                              fill={reviewState.hawkeye.wickets === 'Missing Stumps' ? '#10b981' : '#f43f5e'}
+                              stroke="#ffffff"
+                              strokeWidth="1.5"
+                            />
+                          </>
+                        );
+                      })()}
+                    </svg>
+                    <span className="text-[11px] font-mono font-bold text-white mt-0.5">
+                      Projection: {reviewState.hawkeye.wickets} ({reviewState.hawkeye.impact})
+                    </span>
+                  </div>
+                </>
+              ) : (
+                <div className="p-4 bg-[#111927] rounded-2xl border border-cyan-500/30 text-center flex flex-col items-center gap-2">
+                  <div className="text-2xl">{reviewState.snickoSpike ? '⚡' : '〰️'}</div>
+                  <span className="text-sm font-mono font-bold text-white">
+                    {reviewState.snickoSpike ? 'ULTRAEDGE: SPIKE CONFIRMED ON BAT EDGE' : 'ULTRAEDGE: FLAT LINE — NO BAT CONTACT'}
                   </span>
+                  <p className="text-xs text-slate-300">
+                    {reviewState.snickoSpike
+                      ? 'UltraEdge audio-visual synchronization confirms contact between ball and bat.'
+                      : 'Flat audio noise floor as ball passes bat edge. No contact detected.'}
+                  </p>
                 </div>
-
-                {/* 2. Impact */}
-                <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-center">
-                  <span className="text-[9px] font-mono text-slate-400 block mb-1">IMPACT</span>
-                  <span className={`text-[11px] font-mono font-black ${
-                    reviewState.hawkeye.impact === 'In-line'
-                      ? 'text-rose-400'
-                      : reviewState.hawkeye.impact === "Umpire's Call"
-                      ? 'text-amber-400'
-                      : 'text-emerald-400'
-                  }`}>
-                    {reviewState.hawkeye.impact.toUpperCase()}
-                  </span>
-                </div>
-
-                {/* 3. Wickets */}
-                <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-center">
-                  <span className="text-[9px] font-mono text-slate-400 block mb-1">WICKETS</span>
-                  <span className={`text-[11px] font-mono font-black ${
-                    reviewState.hawkeye.wickets === 'Hitting Stumps'
-                      ? 'text-rose-400'
-                      : reviewState.hawkeye.wickets === "Umpire's Call"
-                      ? 'text-amber-400'
-                      : 'text-emerald-400'
-                  }`}>
-                    {reviewState.hawkeye.wickets.toUpperCase()}
-                  </span>
-                </div>
-              </div>
-
-              {/* Graphical 3D-style Stumps & Pitch Strip Trajectory Indicator */}
-              <div className="p-3 bg-gradient-to-b from-[#132338] to-[#0a121f] rounded-2xl border border-cyan-500/30 text-center flex flex-col items-center relative overflow-hidden">
-                <svg viewBox="0 0 260 110" className="w-full h-28">
-                  {/* Perspective Pitch Mat (Blue/Cyan in-line zone) */}
-                  <polygon points="85,105 175,105 152,25 108,25" fill="rgba(194, 161, 110, 0.25)" stroke="#475569" strokeWidth="1" />
-                  <polygon points="108,105 152,105 142,25 118,25" fill="rgba(56, 189, 248, 0.22)" />
-                  {/* Stumps at far end */}
-                  <rect x="120" y="10" width="3" height="22" rx="1" fill="#f8fafc" />
-                  <rect x="128.5" y="10" width="3" height="22" rx="1" fill="#f8fafc" />
-                  <rect x="137" y="10" width="3" height="22" rx="1" fill="#f8fafc" />
-                  <line x1="120" y1="10" x2="140" y2="10" stroke="#fbbf24" strokeWidth="2" />
-
-                  {/* Ball Trajectory Path */}
-                  {(() => {
-                    const hitX = reviewState.hawkeye.wickets === 'Hitting Stumps'
-                      ? 130
-                      : reviewState.hawkeye.wickets === "Umpire's Call"
-                      ? 140
-                      : 158;
-                    const hitY = reviewState.hawkeye.wickets === 'Missing Stumps' ? 6 : 18;
-                    const impactX = reviewState.hawkeye.impact === 'Outside Off' ? 148 : 131;
-                    const pitchX = reviewState.hawkeye.pitching === 'Outside Leg' ? 105 : 132;
-                    return (
-                      <>
-                        {/* Bowled to Pitching */}
-                        <path
-                          d={`M 136 104 Q 134 88 ${pitchX} 74`}
-                          fill="none"
-                          stroke="#f43f5e"
-                          strokeWidth="3"
-                        />
-                        {/* Pitching to Impact */}
-                        <path
-                          d={`M ${pitchX} 74 Q ${(pitchX + impactX) / 2} 58 ${impactX} 45`}
-                          fill="none"
-                          stroke="#f43f5e"
-                          strokeWidth="3"
-                        />
-                        {/* Predicted Path to Stumps */}
-                        <path
-                          d={`M ${impactX} 45 Q ${(impactX + hitX) / 2} 30 ${hitX} ${hitY}`}
-                          fill="none"
-                          stroke={reviewState.hawkeye.wickets === 'Missing Stumps' ? '#38bdf8' : '#fbbf24'}
-                          strokeWidth="2.5"
-                          strokeDasharray="4 2"
-                        />
-                        {/* Pitching Dot */}
-                        <circle cx={pitchX} cy={74} r="4" fill="#ef4444" stroke="#ffffff" strokeWidth="1" />
-                        {/* Impact Dot */}
-                        <circle cx={impactX} cy={45} r="4.5" fill="#f59e0b" stroke="#ffffff" strokeWidth="1" />
-                        {/* Stump / Final Dot */}
-                        <circle
-                          cx={hitX}
-                          cy={hitY}
-                          r="5"
-                          fill={reviewState.hawkeye.wickets === 'Missing Stumps' ? '#10b981' : '#f43f5e'}
-                          stroke="#ffffff"
-                          strokeWidth="1.5"
-                        />
-                      </>
-                    );
-                  })()}
-                </svg>
-                <span className="text-[11px] font-mono font-bold text-white mt-0.5">
-                  Projection: {reviewState.hawkeye.wickets} ({reviewState.hawkeye.impact})
-                </span>
-              </div>
+              )}
             </div>
           )}
 

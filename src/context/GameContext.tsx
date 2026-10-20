@@ -10,7 +10,7 @@ import {
 } from '../data/initialData';
 import { simulateBall } from '../engine/cricketEngine';
 import { calculateDLSTarget } from '../engine/dlsEngine';
-import { checkDrsEligibility, evaluateDrsDeliveryEvidence } from '../utils/drsRules';
+import { checkDrsEligibility, evaluateDrsDeliveryEvidence, getInitialReviewsForFormat } from '../utils/drsRules';
 import { sound } from '../utils/soundEffects';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import confetti from 'canvas-confetti';
@@ -4696,10 +4696,11 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const startSecondInnings = useCallback(() => {
     setMatchLiveState(prev => {
       if (!prev) return null;
+      const initRevs = getInitialReviewsForFormat(prev.format);
       return {
         ...prev,
         currentInningsIndex: 2,
-        reviewsRemaining: { home: 2, away: 2 },
+        reviewsRemaining: { home: initRevs, away: initRevs },
         hasDew: prev.weather === 'Clear Night' || prev.weather === 'Overcast & Humid',
         status: 'in_progress'
       };
@@ -4720,7 +4721,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const isUserHome = prev.homeTeam.id === userTeam.id || Boolean(prev.homeTeam.isUserTeam);
       const isUserBatting = isFirst ? isUserHome : !isUserHome;
       const userSideKey: 'home' | 'away' = isUserHome ? 'home' : 'away';
-      const reviewsLeft = prev.reviewsRemaining?.[userSideKey] ?? 2;
+      const initRevs = getInitialReviewsForFormat(prev.format);
+      const reviewsLeft = prev.reviewsRemaining?.[userSideKey] ?? initRevs;
 
       // Enforce shared canonical DRS eligibility check
       const eligibility = checkDrsEligibility(lbo, isUserBatting, reviewsLeft);
@@ -4738,14 +4740,17 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const line = prev.bowlingTactics?.line;
       const length = prev.bowlingTactics?.length;
 
-      // Evaluate evidence deterministically based on delivery telemetry
-      const evidence = evaluateDrsDeliveryEvidence(lbo, isUserBatting, originalDecision, line, length);
+      // Evaluate evidence deterministically based on delivery telemetry and reviewType
+      const forcedType = eligibility.reviewType === 'none' ? undefined : eligibility.reviewType;
+      const evidence = evaluateDrsDeliveryEvidence(lbo, isUserBatting, originalDecision, line, length, forcedType);
+
+      const reviewingTeamId = isUserBatting ? curInnings.battingTeamId : curInnings.bowlingTeamId;
 
       return {
         ...prev,
         activeDrsReview: {
           isActive: true,
-          reviewingTeamId: userTeam.id,
+          reviewingTeamId,
           batterId: reviewedBatterId,
           batterName: lbo.dismissedPlayerName || lbo.strikerName || reviewedBatterObj.name,
           bowlerId: reviewedBowlerId,
@@ -4771,13 +4776,14 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (!curInnings) return prev;
 
       const rev = prev.activeDrsReview;
-      const isUserHome = prev.homeTeam.id === userTeam.id || Boolean(prev.homeTeam.isUserTeam);
-      const currentHomeRevs = prev.reviewsRemaining?.home ?? 2;
-      const currentAwayRevs = prev.reviewsRemaining?.away ?? 2;
-      const nextHomeRevs = isUserHome
+      const isReviewerHome = rev.reviewingTeamId === prev.homeTeam.id;
+      const initRevs = getInitialReviewsForFormat(prev.format);
+      const currentHomeRevs = prev.reviewsRemaining?.home ?? initRevs;
+      const currentAwayRevs = prev.reviewsRemaining?.away ?? initRevs;
+      const nextHomeRevs = isReviewerHome
         ? (reviewRetained ? currentHomeRevs : Math.max(0, currentHomeRevs - 1))
         : currentHomeRevs;
-      const nextAwayRevs = !isUserHome
+      const nextAwayRevs = !isReviewerHome
         ? (reviewRetained ? currentAwayRevs : Math.max(0, currentAwayRevs - 1))
         : currentAwayRevs;
 
