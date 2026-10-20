@@ -310,6 +310,7 @@ export interface InningsData {
 
 export interface MatchLiveState {
   id: string;
+  fixtureId?: string;
   leagueId: string;
   format: 'T20' | 'ODI' | 'TEST' | '100BALL';
   homeTeam: Team;

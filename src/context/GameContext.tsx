@@ -901,8 +901,8 @@ interface GameContextType {
   replyToInboxMessage: (messageId: string, replyOption: 'promise_game_time' | 'demand_nets' | 'back_current_xi') => void;
   // Match Engine
   matchLiveState: MatchLiveState | null;
-  startMatch: (opponentTeamId?: string, format?: 'T20' | 'ODI' | 'TEST' | '100BALL', isAwayMatch?: boolean) => void;
-  createFranchiseMatchState: (homeTeamObj: Team, awayTeamObj: Team, leagueId: string, format: 'T20' | 'ODI' | 'TEST' | '100BALL') => MatchLiveState;
+  startMatch: (opponentTeamId?: string, format?: 'T20' | 'ODI' | 'TEST' | '100BALL', isAwayMatch?: boolean, fixtureId?: string) => void;
+  createFranchiseMatchState: (homeTeamObj: Team, awayTeamObj: Team, leagueId: string, format: 'T20' | 'ODI' | 'TEST' | '100BALL', playoffStage?: 'q1' | 'eliminator' | 'q2' | 'final', fixtureId?: string) => MatchLiveState;
   startInternationalMatch: (homeCountry?: string, awayCountry?: string, venue?: string, format?: 'T20' | 'ODI' | 'TEST' | '100BALL') => void;
   playPlayoffMatch: (leagueId: string, stage: 'q1' | 'eliminator' | 'q2' | 'final') => void;
   simPlayoffMatch: (leagueId: string, stage: 'q1' | 'eliminator' | 'q2' | 'final') => void;
@@ -2791,7 +2791,12 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [players, teams, userTeam]);
 
   // START MATCH
-  const startMatch = useCallback((opponentTeamId?: string, format: 'T20' | 'ODI' | 'TEST' | '100BALL' = 'T20', isAwayMatch: boolean = false) => {
+  const startMatch = useCallback((
+    opponentTeamId?: string,
+    format: 'T20' | 'ODI' | 'TEST' | '100BALL' = 'T20',
+    isAwayMatch: boolean = false,
+    fixtureId?: string
+  ) => {
     const opp = (opponentTeamId ? teams.find(t => t.id === opponentTeamId && t.id !== userTeam.id) : null)
       || teams.find(t => t.id !== userTeam.id)
       || teams[1];
@@ -2886,7 +2891,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           : 'Natural');
 
     const newMatch: MatchLiveState = {
-      id: `match_${Date.now()}`,
+      id: fixtureId || `match_${Date.now()}`,
+      fixtureId,
       leagueId: currentLeagueId || 'pt20',
       format,
       homeTeam: isAwayMatch ? opp : userTeam,
@@ -4207,23 +4213,30 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         // Mark current calendar fixture completed if applicable and persist full completedMatchState
         const updatedCalendar = league.calendarDates.map((cd, idx) => {
-          if (
-            idx === league.currentDateIndex ||
-            (cd.matchFixture &&
-              !cd.matchFixture.completed &&
-              ((cd.matchFixture.homeTeamId === finishedMatch.homeTeam.id && cd.matchFixture.awayTeamId === finishedMatch.awayTeam.id) ||
-               (cd.matchFixture.homeTeamId === finishedMatch.awayTeam.id && cd.matchFixture.awayTeamId === finishedMatch.homeTeam.id)))
-          ) {
+          const isExactFixture = Boolean(
+            (finishedMatch.fixtureId && cd.matchFixture?.id === finishedMatch.fixtureId) ||
+            (finishedMatch.id && cd.matchFixture?.id === finishedMatch.id)
+          );
+          const isCurrentMatchDay = idx === league.currentDateIndex && (cd.type === 'match' || cd.type === 'international');
+          const isMatchingUncompleted = Boolean(
+            !finishedMatch.fixtureId &&
+            idx === league.currentDateIndex &&
+            cd.matchFixture &&
+            !cd.matchFixture.completed &&
+            ((cd.matchFixture.homeTeamId === finishedMatch.homeTeam.id && cd.matchFixture.awayTeamId === finishedMatch.awayTeam.id) ||
+             (cd.matchFixture.homeTeamId === finishedMatch.awayTeam.id && cd.matchFixture.awayTeamId === finishedMatch.homeTeam.id))
+          );
+
+          if (isExactFixture || isCurrentMatchDay || isMatchingUncompleted) {
+            if (!cd.matchFixture) return cd;
             return {
               ...cd,
-              matchFixture: cd.matchFixture
-                ? {
-                    ...cd.matchFixture,
-                    completed: true,
-                    resultSummary: shortScoreSummary,
-                    completedMatchState: finishedMatch
-                  }
-                : undefined
+              matchFixture: {
+                ...cd.matchFixture,
+                completed: true,
+                resultSummary: shortScoreSummary,
+                completedMatchState: finishedMatch
+              }
             };
           }
           return cd;
@@ -4493,7 +4506,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     awayTeamObj: Team,
     leagueId: string,
     format: 'T20' | 'ODI' | 'TEST' | '100BALL',
-    playoffStage?: 'q1' | 'eliminator' | 'q2' | 'final'
+    playoffStage?: 'q1' | 'eliminator' | 'q2' | 'final',
+    fixtureId?: string
   ): MatchLiveState => {
     const homeXIPlayers = homeTeamObj.playingXIIds
       .map(id => players.find(p => p.id === id))
@@ -4558,7 +4572,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     return {
-      id: `match_${leagueId}_${playoffStage || 'reg'}_${Date.now()}`,
+      id: fixtureId || `match_${leagueId}_${playoffStage || 'reg'}_${Date.now()}`,
+      fixtureId,
       leagueId,
       format,
       playoffStage,
