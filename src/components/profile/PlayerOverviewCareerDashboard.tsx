@@ -448,29 +448,42 @@ export const PlayerOverviewCareerDashboard: React.FC<PlayerOverviewCareerDashboa
                         IPL SEASON-BY-SEASON HISTORY
                       </span>
                       <div className="overflow-x-auto">
-                        <table className="w-full text-left font-mono text-xs">
+                        <table className="w-full text-left font-mono text-[11px] whitespace-nowrap">
                           <thead>
                             <tr className="text-[9px] text-slate-400 border-b border-slate-800 uppercase">
-                              <th className="pb-1.5 font-normal">SEASON</th>
-                              <th className="pb-1.5 font-normal text-center">MAT</th>
-                              <th className="pb-1.5 font-normal text-right">RUNS</th>
-                              <th className="pb-1.5 font-normal text-right">AVG</th>
-                              <th className="pb-1.5 font-normal text-right">WKTS</th>
-                              <th className="pb-1.5 font-normal text-right">ECON</th>
+                              <th className="pb-1.5 pr-2 font-normal text-left">YR</th>
+                              <th className="pb-1.5 px-1 font-normal text-center">M</th>
+                              <th className="pb-1.5 px-1 font-normal text-right">R</th>
+                              <th className="pb-1.5 px-1 font-normal text-right">HS</th>
+                              <th className="pb-1.5 px-1 font-normal text-right">AVG</th>
+                              <th className="pb-1.5 px-1 font-normal text-right">SR</th>
+                              <th className="pb-1.5 px-1 font-normal text-right">W</th>
+                              <th className="pb-1.5 px-1 font-normal text-right">BBI</th>
+                              <th className="pb-1.5 px-1 font-normal text-right">ECON</th>
+                              <th className="pb-1.5 px-1 font-normal text-right">CT</th>
+                              <th className="pb-1.5 pl-1 font-normal text-right">MOM</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-800/60">
                             {Object.entries(iplSeasonsMap).map(([sKey, sStats]) => {
                               const bSt = getBattingStats(sStats);
                               const bwSt = getBowlingStats(sStats);
+                              const yearLabel = sKey.replace(/^Season\s*/i, '');
+                              const ctVal = sStats.catches !== undefined ? sStats.catches : ((sStats as any).ct ?? '-');
+                              const momVal = (sStats as any).mom ?? (sStats as any).manOfTheMatch ?? (sStats as any).awards ?? '-';
                               return (
                                 <tr key={sKey} className="hover:bg-slate-800/40">
-                                  <td className="py-2 font-bold text-amber-300">{sKey}</td>
-                                  <td className="py-2 text-center text-white">{bSt.matches}</td>
-                                  <td className="py-2 text-right font-bold text-amber-400">{bSt.runs}</td>
-                                  <td className="py-2 text-right text-emerald-400">{bSt.average}</td>
-                                  <td className="py-2 text-right font-bold text-emerald-300">{bwSt.wickets}</td>
-                                  <td className="py-2 text-right text-cyan-300">{bwSt.economy}</td>
+                                  <td className="py-2 pr-2 font-bold text-amber-300 text-left">{yearLabel}</td>
+                                  <td className="py-2 px-1 text-center text-white">{bSt.matches}</td>
+                                  <td className="py-2 px-1 text-right font-bold text-amber-400">{bSt.runs}</td>
+                                  <td className="py-2 px-1 text-right text-slate-200">{bSt.highestScore}</td>
+                                  <td className="py-2 px-1 text-right text-emerald-400">{bSt.average}</td>
+                                  <td className="py-2 px-1 text-right text-cyan-400">{bSt.strikeRate}</td>
+                                  <td className="py-2 px-1 text-right font-bold text-emerald-300">{bwSt.wickets}</td>
+                                  <td className="py-2 px-1 text-right text-slate-200">{bwSt.bestBowling}</td>
+                                  <td className="py-2 px-1 text-right text-cyan-300">{bwSt.economy}</td>
+                                  <td className="py-2 px-1 text-right text-purple-300">{ctVal}</td>
+                                  <td className="py-2 pl-1 text-right text-amber-300">{momVal}</td>
                                 </tr>
                               );
                             })}
@@ -523,6 +536,58 @@ export const PlayerOverviewCareerDashboard: React.FC<PlayerOverviewCareerDashboa
                         </div>
                       </div>
                     )
+                  )}
+
+                  {/* International Season-by-Season History Table */}
+                  {Object.keys(intlSeasonsMap).length > 0 && (
+                    <div className="p-3 bg-slate-900/80 rounded-2xl border border-slate-800">
+                      <span className="text-[10px] font-mono text-cyan-400 uppercase tracking-wider block mb-2 font-bold">
+                        INTERNATIONAL SEASON-BY-SEASON HISTORY
+                      </span>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left font-mono text-[11px] whitespace-nowrap">
+                          <thead>
+                            <tr className="text-[9px] text-slate-400 border-b border-slate-800 uppercase">
+                              <th className="pb-1.5 pr-2 font-normal text-left">YR</th>
+                              <th className="pb-1.5 px-1 font-normal text-center">M</th>
+                              <th className="pb-1.5 px-1 font-normal text-right">R</th>
+                              <th className="pb-1.5 px-1 font-normal text-right">HS</th>
+                              <th className="pb-1.5 px-1 font-normal text-right">AVG</th>
+                              <th className="pb-1.5 px-1 font-normal text-right">SR</th>
+                              <th className="pb-1.5 px-1 font-normal text-right">W</th>
+                              <th className="pb-1.5 px-1 font-normal text-right">BBI</th>
+                              <th className="pb-1.5 px-1 font-normal text-right">ECON</th>
+                              <th className="pb-1.5 px-1 font-normal text-right">CT</th>
+                              <th className="pb-1.5 pl-1 font-normal text-right">MOM</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-800/60">
+                            {Object.entries(intlSeasonsMap).map(([sKey, sStats]) => {
+                              const bSt = getBattingStats(sStats);
+                              const bwSt = getBowlingStats(sStats);
+                              const yearLabel = sKey.replace(/^Season\s*/i, '');
+                              const ctVal = sStats.catches !== undefined ? sStats.catches : ((sStats as any).ct ?? '-');
+                              const momVal = (sStats as any).mom ?? (sStats as any).manOfTheMatch ?? (sStats as any).awards ?? '-';
+                              return (
+                                <tr key={sKey} className="hover:bg-slate-800/40">
+                                  <td className="py-2 pr-2 font-bold text-cyan-300 text-left">{yearLabel}</td>
+                                  <td className="py-2 px-1 text-center text-white">{bSt.matches}</td>
+                                  <td className="py-2 px-1 text-right font-bold text-amber-400">{bSt.runs}</td>
+                                  <td className="py-2 px-1 text-right text-slate-200">{bSt.highestScore}</td>
+                                  <td className="py-2 px-1 text-right text-emerald-400">{bSt.average}</td>
+                                  <td className="py-2 px-1 text-right text-cyan-400">{bSt.strikeRate}</td>
+                                  <td className="py-2 px-1 text-right font-bold text-emerald-300">{bwSt.wickets}</td>
+                                  <td className="py-2 px-1 text-right text-slate-200">{bwSt.bestBowling}</td>
+                                  <td className="py-2 px-1 text-right text-cyan-300">{bwSt.economy}</td>
+                                  <td className="py-2 px-1 text-right text-purple-300">{ctVal}</td>
+                                  <td className="py-2 pl-1 text-right text-amber-300">{momVal}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
                   )}
                 </div>
               )}
