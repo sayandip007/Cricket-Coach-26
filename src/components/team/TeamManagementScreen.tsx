@@ -6,6 +6,7 @@ import { sound } from '../../utils/soundEffects';
 import { derivePlayerPersonality } from '../../services/cricketServices';
 import { TeamLogo } from '../common/TeamLogo';
 import { PlayerCareerStatsCard } from '../common/PlayerCareerStatsCard';
+import { PlayerOverviewCareerDashboard } from '../profile/PlayerOverviewCareerDashboard';
 
 export const TeamManagementScreen: React.FC = () => {
   const {
@@ -553,208 +554,18 @@ export const TeamManagementScreen: React.FC = () => {
         )}
       </div>
 
-      {/* Player Detail Bottom Sheet Modal */}
+      {/* Player Overview & Career Dashboard Modal */}
       {selectedPlayer && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-end justify-center">
-          <div className="bg-[#0b101c] border-t border-slate-800 rounded-t-3xl w-full max-w-md p-5 shadow-2xl max-h-[85vh] overflow-y-auto">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-              <div>
-                <h3 className="font-display font-black text-xl text-white uppercase">
-                  {selectedPlayer.name}
-                </h3>
-                <span className="text-xs text-slate-400 block">
-                  {selectedPlayer.primaryRole || selectedPlayer.role} · {selectedPlayer.battingHand}
-                  {selectedPlayer.bowlingStyle ? ` · ${selectedPlayer.bowlingStyle}` : ''} · {selectedPlayer.age}y
-                </span>
-                {selectedPlayer.dataConfidence && (
-                  <span className="text-[10px] text-amber-400/90 font-mono block mt-0.5">
-                    Verified: {selectedPlayer.dataConfidence}
-                  </span>
-                )}
-              </div>
-              <button
-                onClick={() => setSelectedPlayer(null)}
-                className="p-1.5 text-slate-400 hover:text-white rounded-lg bg-slate-800"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Condition & Status */}
-            <div className="grid grid-cols-3 gap-2 my-3 text-center font-mono">
-              <div className="p-2 bg-slate-900 rounded-xl border border-slate-800">
-                <span className="text-[9px] text-slate-400 block uppercase font-bold">FORM</span>
-                <span className="text-sm font-bold text-emerald-400">{selectedPlayer.form}</span>
-              </div>
-              <div className="p-2 bg-slate-900 rounded-xl border border-slate-800">
-                <span className="text-[9px] text-slate-400 block uppercase font-bold">MORALE</span>
-                <span className="text-sm font-bold text-amber-400">{Math.round(selectedPlayer.morale / 10)}/10</span>
-              </div>
-              <div className="p-2 bg-slate-900 rounded-xl border border-slate-800">
-                <span className="text-[9px] text-slate-400 block uppercase font-bold">STAMINA</span>
-                <span className="text-sm font-bold text-cyan-400">{selectedPlayer.fitness}%</span>
-              </div>
-            </div>
-
-            {/* Player Personality & Dressing Room Dynamics */}
-            {(() => {
-              const isInXI = userTeam.playingXIIds.includes(selectedPlayer.id);
-              const pers = derivePlayerPersonality(selectedPlayer, isInXI);
-              return (
-                <div className="p-3 bg-slate-900/80 rounded-2xl border border-purple-500/30 mb-3 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-mono text-purple-300 uppercase tracking-wider font-bold">
-                      PERSONALITY · {pers.archetype.toUpperCase()}
-                    </span>
-                    <span
-                      className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded ${
-                        pers.dressingRoomStatus === 'Thriving'
-                          ? 'bg-emerald-500/20 text-emerald-300'
-                          : pers.dressingRoomStatus === 'Content'
-                          ? 'bg-cyan-500/20 text-cyan-300'
-                          : 'bg-rose-500/20 text-rose-300'
-                      }`}
-                    >
-                      {pers.dressingRoomStatus} ({pers.playingTimeExpectation})
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-3 gap-1.5 text-center font-mono text-[11px]">
-                    <div className="p-1.5 rounded-lg bg-[#141d2f] border border-slate-800">
-                      <span className="text-[9px] text-slate-400 block">LEADERSHIP</span>
-                      <span className="font-bold text-amber-400">{pers.leadershipScore}</span>
-                    </div>
-                    <div className="p-1.5 rounded-lg bg-[#141d2f] border border-slate-800">
-                      <span className="text-[9px] text-slate-400 block">PRO WORK ETHIC</span>
-                      <span className="font-bold text-emerald-400">{pers.professionalism}</span>
-                    </div>
-                    <div className="p-1.5 rounded-lg bg-[#141d2f] border border-slate-800">
-                      <span className="text-[9px] text-slate-400 block">MEDIA</span>
-                      <span className="font-bold text-cyan-300">{pers.mediaHandling}</span>
-                    </div>
-                  </div>
-                  <p className="text-[11px] text-slate-300 leading-snug">
-                    {pers.mentorBonusDescription}
-                  </p>
-                </div>
-              );
-            })()}
-
-            {/* Batting Ratings Grid */}
-            <div className="p-3 bg-slate-900/60 rounded-2xl border border-slate-800 mb-3">
-              <span className="text-[10px] font-mono text-slate-400 uppercase tracking-wider block mb-2 font-bold">
-                BATTING ATTRIBUTES
-              </span>
-              <div className="grid grid-cols-4 gap-1.5 text-center font-mono text-xs">
-                <div className="p-1.5 bg-[#141d2f] rounded-lg border border-slate-800">
-                  <span className="text-[9px] text-slate-400 block">BAT</span>
-                  <span className="font-bold text-white">{selectedPlayer.ratings.bat}</span>
-                </div>
-                <div className="p-1.5 bg-[#141d2f] rounded-lg border border-slate-800">
-                  <span className="text-[9px] text-slate-400 block">POW</span>
-                  <span className="font-bold text-amber-400">{selectedPlayer.ratings.pow}</span>
-                </div>
-                <div className="p-1.5 bg-[#141d2f] rounded-lg border border-slate-800">
-                  <span className="text-[9px] text-slate-400 block">TEC</span>
-                  <span className="font-bold text-cyan-400">{selectedPlayer.ratings.tec ?? selectedPlayer.ratings.ctrl}</span>
-                </div>
-                <div className="p-1.5 bg-[#141d2f] rounded-lg border border-slate-800">
-                  <span className="text-[9px] text-slate-400 block">TMP</span>
-                  <span className="font-bold text-slate-200">{selectedPlayer.ratings.tmp}</span>
-                </div>
-                <div className="p-1.5 bg-[#141d2f] rounded-lg border border-slate-800">
-                  <span className="text-[9px] text-slate-400 block">AGG</span>
-                  <span className="font-bold text-amber-300">{selectedPlayer.ratings.agg ?? 75}</span>
-                </div>
-                <div className="p-1.5 bg-[#141d2f] rounded-lg border border-slate-800">
-                  <span className="text-[9px] text-slate-400 block">STY</span>
-                  <span className="font-bold text-purple-300">{selectedPlayer.ratings.sty ?? 75}</span>
-                </div>
-                <div className="p-1.5 bg-[#141d2f] rounded-lg border border-slate-800">
-                  <span className="text-[9px] text-slate-400 block">vP</span>
-                  <span className="font-bold text-emerald-400">{selectedPlayer.ratings.vp ?? 75}</span>
-                </div>
-                <div className="p-1.5 bg-[#141d2f] rounded-lg border border-slate-800">
-                  <span className="text-[9px] text-slate-400 block">vS</span>
-                  <span className="font-bold text-blue-400">{selectedPlayer.ratings.vs ?? 75}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Bowling & Fielding Ratings Grid */}
-            <div className="p-3 bg-slate-900/60 rounded-2xl border border-slate-800 mb-3">
-              <span className="text-[10px] font-mono text-slate-400 uppercase tracking-wider block mb-2 font-bold">
-                BOWLING & FIELDING ATTRIBUTES
-              </span>
-              <div className="grid grid-cols-4 gap-1.5 text-center font-mono text-xs">
-                <div className="p-1.5 bg-[#141d2f] rounded-lg border border-slate-800">
-                  <span className="text-[9px] text-slate-400 block">BOWL</span>
-                  <span className="font-bold text-emerald-400">{selectedPlayer.ratings.bowl}</span>
-                </div>
-                <div className="p-1.5 bg-[#141d2f] rounded-lg border border-slate-800">
-                  <span className="text-[9px] text-slate-400 block">PAC</span>
-                  <span className="font-bold text-cyan-400">{selectedPlayer.ratings.pace}</span>
-                </div>
-                <div className="p-1.5 bg-[#141d2f] rounded-lg border border-slate-800">
-                  <span className="text-[9px] text-slate-400 block">CTR</span>
-                  <span className="font-bold text-blue-400">{selectedPlayer.ratings.ctrl}</span>
-                </div>
-                <div className="p-1.5 bg-[#141d2f] rounded-lg border border-slate-800">
-                  <span className="text-[9px] text-slate-400 block">DTH</span>
-                  <span className="font-bold text-rose-400">{selectedPlayer.ratings.dth}</span>
-                </div>
-                <div className="p-1.5 bg-[#141d2f] rounded-lg border border-slate-800">
-                  <span className="text-[9px] text-slate-400 block">VAR</span>
-                  <span className="font-bold text-amber-300">{selectedPlayer.ratings.var ?? 75}</span>
-                </div>
-                <div className="p-1.5 bg-[#141d2f] rounded-lg border border-slate-800">
-                  <span className="text-[9px] text-slate-400 block">COMP</span>
-                  <span className="font-bold text-teal-300">{selectedPlayer.ratings.comp ?? 75}</span>
-                </div>
-                <div className="p-1.5 bg-[#141d2f] rounded-lg border border-slate-800">
-                  <span className="text-[9px] text-slate-400 block">CAT</span>
-                  <span className="font-bold text-amber-400">{selectedPlayer.ratings.cat}</span>
-                </div>
-                <div className="p-1.5 bg-[#141d2f] rounded-lg border border-slate-800">
-                  <span className="text-[9px] text-slate-400 block">FIT</span>
-                  <span className="font-bold text-emerald-300">{selectedPlayer.ratings.fit ?? selectedPlayer.fitness}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Role-Specific Career Stats Card */}
-            <PlayerCareerStatsCard player={selectedPlayer} className="mb-4" />
-
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setTeamCaptain(selectedPlayer.id);
-                  setSelectedPlayer(prev => prev ? { ...prev, isCaptain: true } : null);
-                }}
-                disabled={userTeam.captainId === selectedPlayer.id || selectedPlayer.isCaptain}
-                className={`py-3 font-black text-xs uppercase rounded-xl tracking-wider flex items-center justify-center gap-1.5 transition-all ${
-                  userTeam.captainId === selectedPlayer.id || selectedPlayer.isCaptain
-                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 cursor-default'
-                    : 'bg-slate-800 hover:bg-slate-700 text-amber-400 border border-amber-400/40 active:scale-95'
-                }`}
-              >
-                <Star className="w-3.5 h-3.5 fill-current" />
-                <span>
-                  {userTeam.captainId === selectedPlayer.id || selectedPlayer.isCaptain
-                    ? 'TEAM CAPTAIN (★)'
-                    : 'MAKE CAPTAIN (★)'}
-                </span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setSelectedPlayer(null)}
-                className="py-3 bg-amber-400 text-black font-black text-xs uppercase rounded-xl tracking-wider"
-              >
-                DONE
-              </button>
-            </div>
-          </div>
-        </div>
+        <PlayerOverviewCareerDashboard
+          player={selectedPlayer}
+          onClose={() => setSelectedPlayer(null)}
+          onMakeCaptain={(pId) => {
+            setTeamCaptain(pId);
+            setSelectedPlayer(prev => prev ? { ...prev, isCaptain: true } : null);
+          }}
+          isCaptain={userTeam.captainId === selectedPlayer.id || Boolean(selectedPlayer.isCaptain)}
+          isInXI={userTeam.playingXIIds.includes(selectedPlayer.id)}
+        />
       )}
     </div>
   );

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Player } from '../../types/cricket';
+import { Player, PlayerStats } from '../../types/cricket';
 import {
   getRoleDisciplines,
   getBattingStats,
@@ -9,26 +9,31 @@ import {
 
 interface PlayerCareerStatsCardProps {
   player: Player;
+  customStats?: PlayerStats;
   className?: string;
   showTitle?: boolean;
+  titleOverride?: string;
 }
 
 export const PlayerCareerStatsCard: React.FC<PlayerCareerStatsCardProps> = ({
   player,
+  customStats,
   className = '',
-  showTitle = true
+  showTitle = true,
+  titleOverride
 }) => {
   const disciplines = getRoleDisciplines(player);
-  const batting = getBattingStats(player);
-  const bowling = getBowlingStats(player);
-  const keeping = getKeepingStats(player);
+  const targetStats = customStats || player.stats;
+  const batting = getBattingStats(targetStats);
+  const bowling = getBowlingStats(targetStats);
+  const keeping = getKeepingStats(targetStats, player.role);
 
   return (
     <div className={`space-y-3 ${className}`}>
       {showTitle && (
         <div className="flex items-center justify-between pb-1 border-b border-slate-800/80">
           <span className="text-[11px] font-mono text-amber-400 uppercase tracking-wider font-bold">
-            CAREER STATISTICS
+            {titleOverride || 'STATISTICS SUMMARY'}
           </span>
           <span className="text-[10px] font-mono text-slate-400 uppercase">
             {player.role}

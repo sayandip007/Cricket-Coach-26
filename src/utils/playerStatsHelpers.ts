@@ -1,9 +1,11 @@
-import { Player, PlayerRole } from '../types/cricket';
+import { Player, PlayerRole, PlayerStats, MatchLiveState, PlayerMatchLogEntry } from '../types/cricket';
 import {
   oversToBalls,
   formatOversDisplay,
   calculateBowlingEconomy,
-  isUnsetBestBowling
+  isUnsetBestBowling,
+  addCricketOvers,
+  aggregateBowlerMatchStatsIntoCareer
 } from './bowlingStats';
 
 export interface FormattedBattingStats {
@@ -90,8 +92,16 @@ export function getRoleDisciplines(player: Player): RoleDisciplineConfig {
   };
 }
 
-export function getBattingStats(player: Player): FormattedBattingStats {
-  const stats = player.stats;
+function extractStats(playerOrStats?: Player | PlayerStats): PlayerStats | undefined {
+  if (!playerOrStats) return undefined;
+  if ('stats' in playerOrStats && playerOrStats.stats) {
+    return playerOrStats.stats;
+  }
+  return playerOrStats as PlayerStats;
+}
+
+export function getBattingStats(playerOrStats?: Player | PlayerStats): FormattedBattingStats {
+  const stats = extractStats(playerOrStats);
   if (!stats) {
     return {
       hasBatted: false,
@@ -173,8 +183,8 @@ export function getBattingStats(player: Player): FormattedBattingStats {
   };
 }
 
-export function getBowlingStats(player: Player): FormattedBowlingStats {
-  const stats = player.stats;
+export function getBowlingStats(playerOrStats?: Player | PlayerStats): FormattedBowlingStats {
+  const stats = extractStats(playerOrStats);
   if (!stats) {
     return {
       hasBowled: false,
@@ -257,9 +267,9 @@ export function getBowlingStats(player: Player): FormattedBowlingStats {
   };
 }
 
-export function getKeepingStats(player: Player): FormattedKeepingStats {
-  const stats = player.stats;
-  const isKeeper = isWicketkeeperRole(player.role);
+export function getKeepingStats(playerOrStats?: Player | PlayerStats, role?: string): FormattedKeepingStats {
+  const stats = extractStats(playerOrStats);
+  const isKeeper = role ? isWicketkeeperRole(role) : (playerOrStats && 'role' in playerOrStats ? isWicketkeeperRole((playerOrStats as Player).role) : false);
   if (!stats) {
     return {
       hasKept: isKeeper,
@@ -283,5 +293,140 @@ export function getKeepingStats(player: Player): FormattedKeepingStats {
     catches: catches !== undefined ? String(catches) : '-',
     stumpings: stumpings !== undefined ? String(stumpings) : '-',
     totalDismissals
+  };
+}
+
+/**
+ * Dynamically records match participation and statistics to a player record.
+ * Guarantees exact-once (idempotent) match aggregation and separates IPL vs International records.
+ */
+export function recordMatchToPlayerStats(
+  p: Player,
+  finishedMatch: MatchLiveState,
+  seasonKey: string = 'Season 2026'
+): Player {
+  const matchId = finishedMatch.id || finishedMatch.matchId || `match_${Date.now()}_${Math.random()}`;
+  const compStats = p.competitionStats || {};
+  const processedIds = new Set(compStats.processedMatchIds || []);
+
+  if (processedIds.has(matchId)) {
+    return p; // Idempotent: match already aggregated for this player
+  }
+
+  const inn1 = finishedMatch.innings1;
+  const inn2 = finishedMatch.innings2;
+
+  const bCard = [...(inn1?.batters || []), ...(inn2?.batters || [])].find(b => b.playerId === p.id);
+  const bwCards = [...(inn1?.bowlers || []), ...(inn2?.bowlers || [])].filter(bw => bw.playerId === p.id);
+
+  if (!bCard && bwCards.length === 0) {
+    return p; // Player did not participate in this match
+  }
+
+  const isInternational = Boolean(
+    finishedMatch.isInternational ||
+    finishedMatch.leagueId === 'intl' ||
+    (p.clubId && p.clubId.startsWith('nat_'))
+  );
+  const compType: 'ipl' | 'international' = isInternational ? 'international' : 'ipl';
+
+  const addRuns = bCard ? bCard.runs : 0;
+  const addBalls = bCard ? bCard.balls : 0;
+  const addFours = bCard ? bCard.fours : 0;
+  const addSixes = bCard ? bCard.sixes : 0;
+  const addFifty = bCard && bCard.runs >= 50 && bCard.runs < 100 ? 1 : 0;
+  const addHundred = bCard && bCard.runs >= 100 ? 1 : 0;
+  const totalWktsThisMatch = bwCards.reduce((sum, c) => sum + (c.wickets || 0), 0);
+
+  const accumulateStats = (prev?: PlayerStats): PlayerStats => {
+    const base = prev || {
+      matches: 0, runs: 0, balls: 0, fours: 0, sixes: 0,
+      fifties: 0, hundreds: 0, highestScore: 0, wickets: 0,
+      oversBowled: 0, runsConceded: 0, maidens: 0, bestBowling: '0/0',
+      economy: 0, average: 0, strikeRate: 0
+    };
+
+    const newMatches = (base.matches || 0) + 1;
+    const newRuns = (base.runs || 0) + addRuns;
+    const newBalls = (base.balls || 0) + addBalls;
+    const newFours = (base.fours || 0) + addFours;
+    const newSixes = (base.sixes || 0) + addSixes;
+    const newFifties = (base.fifties || 0) + addFifty;
+    const newHundreds = (base.hundreds || 0) + addHundred;
+    const newHighest = Math.max(base.highestScore || 0, addRuns);
+
+    const bowlingAgg = aggregateBowlerMatchStatsIntoCareer(base, bwCards);
+
+    const estDismissals = Math.max(1, Math.round(newMatches * 0.75));
+    const average = newRuns > 0 ? Number((newRuns / estDismissals).toFixed(1)) : 0;
+    const strikeRate = newBalls > 0 ? Number(((newRuns / newBalls) * 100).toFixed(1)) : 0;
+
+    return {
+      matches: newMatches,
+      runs: newRuns,
+      balls: newBalls,
+      fours: newFours,
+      sixes: newSixes,
+      fifties: newFifties,
+      hundreds: newHundreds,
+      highestScore: newHighest,
+      wickets: bowlingAgg.wickets,
+      oversBowled: bowlingAgg.oversBowled,
+      runsConceded: bowlingAgg.runsConceded,
+      maidens: bowlingAgg.maidens,
+      bestBowling: bowlingAgg.bestBowling,
+      average,
+      strikeRate,
+      economy: bowlingAgg.economy
+    };
+  };
+
+  const updatedOverallStats = accumulateStats(p.stats);
+
+  let iplStats = compStats.ipl;
+  let intlStats = compStats.international;
+  const iplSeasons = { ...(compStats.iplSeasons || {}) };
+  const intlSeasons = { ...(compStats.internationalSeasons || {}) };
+
+  if (compType === 'ipl') {
+    iplStats = accumulateStats(iplStats || (p.stats ? { ...p.stats } : undefined));
+    iplSeasons[seasonKey] = accumulateStats(iplSeasons[seasonKey]);
+  } else {
+    intlStats = accumulateStats(intlStats);
+    intlSeasons[seasonKey] = accumulateStats(intlSeasons[seasonKey]);
+  }
+
+  const homeShort = finishedMatch.homeTeamShort || finishedMatch.homeTeam?.shortName || finishedMatch.homeTeam?.name || 'HOME';
+  const awayShort = finishedMatch.awayTeamShort || finishedMatch.awayTeam?.shortName || finishedMatch.awayTeam?.name || 'AWAY';
+  const opponentName = (homeShort === p.clubId ? awayShort : homeShort) || 'OPP';
+  const matchLog: PlayerMatchLogEntry = {
+    matchId,
+    dateStr: finishedMatch.dateStr || new Date().toLocaleDateString(),
+    opponent: opponentName,
+    competition: compType,
+    runs: addRuns,
+    balls: addBalls,
+    isOut: bCard?.dismissal !== 'not out',
+    wickets: totalWktsThisMatch,
+    overs: bwCards.reduce((sum, bw) => sum + (bw.overs || 0), 0),
+    runsConceded: bwCards.reduce((sum, bw) => sum + (bw.runs || 0), 0)
+  };
+
+  const recentPerformances = [matchLog, ...(compStats.recentPerformances || [])].slice(0, 10);
+  const nextProcessedMatchIds = [...Array.from(processedIds), matchId];
+
+  return {
+    ...p,
+    form: Math.max(40, Math.min(100, p.form + (addRuns >= 35 || totalWktsThisMatch >= 2 ? 4 : -1))),
+    stats: updatedOverallStats,
+    competitionStats: {
+      ...compStats,
+      ipl: iplStats,
+      international: intlStats,
+      iplSeasons,
+      internationalSeasons: intlSeasons,
+      recentPerformances,
+      processedMatchIds: nextProcessedMatchIds
+    }
   };
 }

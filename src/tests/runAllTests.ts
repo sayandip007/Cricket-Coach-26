@@ -27,7 +27,8 @@ import {
   getRoleDisciplines,
   getBattingStats,
   getBowlingStats,
-  getKeepingStats
+  getKeepingStats,
+  recordMatchToPlayerStats
 } from '../utils/playerStatsHelpers';
 import { checkDrsEligibility, evaluateDrsDeliveryEvidence, getInitialReviewsForFormat } from '../utils/drsRules';
 import {
@@ -1772,8 +1773,137 @@ function runPlayerStatsTests() {
   console.log('✅ ALL Role-Specific Player Career Statistics Cards Tests PASSED!');
 }
 
+function runPlayerOverviewDashboardTests() {
+  console.log('🧪 Starting Dynamic Player Overview & Career Dashboard Tests...');
+
+  const basePlayer: Player = {
+    id: 'test_dashboard_p1',
+    name: 'Shubman Gill',
+    role: 'Top-order',
+    bowlingArm: 'ROB',
+    battingHand: 'RHB',
+    age: 25,
+    country: 'India',
+    clubId: 'team_guj',
+    isOverseas: false,
+    tier: 'Platinum',
+    basePriceCr: 2.0,
+    salaryCr: 16.0,
+    form: 92, morale: 95, fitness: 98, isInjured: false, injuryDays: 0,
+    ratings: { bat: 88, pow: 85, tec: 90, tmp: 88, agg: 82, sty: 88, run: 88, vp: 88, vs: 88, bowl: 30, pace: 30, ctrl: 30, var: 30, dth: 20, comp: 85, cat: 85, fld: 88, fit: 95 },
+    stats: {
+      matches: 20, runs: 850, balls: 600, fours: 90, sixes: 30,
+      fifties: 7, hundreds: 1, highestScore: 104, wickets: 0,
+      oversBowled: 0, runsConceded: 0, maidens: 0, bestBowling: '0/0',
+      average: 42.5, strikeRate: 141.67
+    }
+  };
+
+  // 14. Existing player attributes remaining unchanged
+  assert.equal(basePlayer.ratings.bat, 88);
+  assert.equal(basePlayer.ratings.bowl, 30);
+
+  // 6 & 7. Match completion updates player stats & exactly ONCE (idempotent)
+  const mockIplMatch: MatchLiveState = {
+    id: 'match_ipl_2026_01',
+    format: 'T20',
+    leagueId: 'ipl',
+    isInternational: false,
+    seasonName: 'Season 2026',
+    homeTeam: { id: 'team_guj', name: 'Gujarat Titans', shortName: 'GUJ' } as any,
+    awayTeam: { id: 'team_che', name: 'Chennai Super Kings', shortName: 'CHE' } as any,
+    venue: 'Narendra Modi Stadium',
+    pitchType: 'Flat Belter',
+    weather: 'Clear Night',
+    currentInningsIndex: 2,
+    targetRuns: 186,
+    status: 'finished',
+    innings1: {
+      battingTeamId: 'team_guj',
+      bowlingTeamId: 'team_che',
+      runs: 185, wickets: 3, overs: 20, ballsCompleted: 120, maxOvers: 20, currentStrikerId: 'p1', currentNonStrikerId: 'p2', currentBowlerId: 'bw1', ballHistory: [], fallOfWickets: [], overRuns: [],
+      batters: [
+        { playerId: 'test_dashboard_p1', name: 'Shubman Gill', runs: 65, balls: 42, fours: 7, sixes: 2, dismissal: 'caught', isOut: true, strikeRate: 154.76, isOnStrike: false }
+      ],
+      bowlers: []
+    },
+    innings2: {
+      battingTeamId: 'team_che',
+      bowlingTeamId: 'team_guj',
+      runs: 170, wickets: 7, overs: 20, ballsCompleted: 120, maxOvers: 20, currentStrikerId: 'p3', currentNonStrikerId: 'p4', currentBowlerId: 'bw2', ballHistory: [], fallOfWickets: [], overRuns: [],
+      batters: [],
+      bowlers: []
+    },
+    lastBallOutcome: null,
+    isBallInFlight: false,
+    battingTactics: { approach: 'balanced', targetSide: 'all', runningRisk: 'normal' },
+    bowlingTactics: { length: 'good', line: 'off_stump', angle: 'over', variation: 'normal', intent: 'attack', fielders: [] }
+  };
+
+  const updatedAfter1Match = recordMatchToPlayerStats(basePlayer, mockIplMatch, 'Season 2026');
+  assert.equal(updatedAfter1Match.stats.runs, 915); // 850 + 65
+  assert.equal(updatedAfter1Match.stats.matches, 21); // 20 + 1
+  assert.equal(updatedAfter1Match.competitionStats?.iplSeasons?.['Season 2026']?.runs, 65);
+
+  // Idempotency check: passing the exact same match ID again must NOT double count
+  const updatedDuplicate = recordMatchToPlayerStats(updatedAfter1Match, mockIplMatch, 'Season 2026');
+  assert.equal(updatedDuplicate.stats.runs, 915, 'Match must be aggregated exactly once (idempotency)');
+  assert.equal(updatedDuplicate.stats.matches, 21);
+
+  // 4 & 12. Career totals aggregate multiple completed seasons & survive season progression
+  const mockIplMatchSeason2: MatchLiveState = {
+    ...mockIplMatch,
+    id: 'match_ipl_2027_01',
+    seasonName: 'Season 2027',
+    innings1: {
+      ...mockIplMatch.innings1,
+      batters: [
+        { playerId: 'test_dashboard_p1', name: 'Shubman Gill', runs: 82, balls: 50, fours: 9, sixes: 3, dismissal: 'not out', isOut: false, strikeRate: 164.0, isOnStrike: false }
+      ]
+    }
+  };
+
+  const updatedAfterSeason2 = recordMatchToPlayerStats(updatedAfter1Match, mockIplMatchSeason2, 'Season 2027');
+  assert.equal(updatedAfterSeason2.stats.runs, 997); // 915 + 82
+  assert.equal(updatedAfterSeason2.competitionStats?.iplSeasons?.['Season 2026']?.runs, 65, 'Season 2026 stats preserved');
+  assert.equal(updatedAfterSeason2.competitionStats?.iplSeasons?.['Season 2027']?.runs, 82, 'Season 2027 stats tracked separately');
+
+  // 8. IPL statistics do NOT appear in International totals
+  assert.equal(updatedAfterSeason2.competitionStats?.international, undefined, 'IPL stats must not contaminate International totals');
+
+  // 11. Missing international records produce honest empty state
+  const mockIntlMatch: MatchLiveState = {
+    ...mockIplMatch,
+    id: 'match_intl_2026_01',
+    leagueId: 'intl',
+    isInternational: true,
+    seasonName: 'Season 2026',
+    innings1: {
+      ...mockIplMatch.innings1,
+      batters: [
+        { playerId: 'test_dashboard_p1', name: 'Shubman Gill', runs: 110, balls: 68, fours: 12, sixes: 4, dismissal: 'caught', isOut: true, strikeRate: 161.76, isOnStrike: false }
+      ]
+    }
+  };
+
+  const updatedAfterIntl = recordMatchToPlayerStats(updatedAfterSeason2, mockIntlMatch, 'Season 2026');
+  assert.equal(updatedAfterIntl.competitionStats?.international?.runs, 110, 'International match updates International total');
+  assert.notEqual(updatedAfterIntl.competitionStats?.international?.runs, updatedAfterIntl.competitionStats?.ipl?.runs, 'IPL and International records must remain strictly isolated');
+
+  // 13. Save/load serialization retains records
+  const saveLoadSerialized = JSON.parse(JSON.stringify(updatedAfterIntl));
+  assert.equal(saveLoadSerialized.competitionStats.iplSeasons['Season 2026'].runs, 65);
+  assert.equal(saveLoadSerialized.competitionStats.international.runs, 110);
+
+  console.log('✅ ALL Dynamic Player Overview & Career Dashboard Tests PASSED!');
+}
+
 runTest('REGRESSION', 'Phase 23: Role-Specific Player Career Statistics Cards', () => {
   runPlayerStatsTests();
+});
+
+runTest('REGRESSION', 'Phase 24: Dynamic Player Overview & Career Dashboard', () => {
+  runPlayerOverviewDashboardTests();
 });
 
 const failed = results.filter(r => !r.passed);

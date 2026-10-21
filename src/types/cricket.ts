@@ -31,6 +31,31 @@ export interface PlayerStats {
   stumpings?: number;
 }
 
+export interface PlayerMatchLogEntry {
+  matchId: string;
+  dateStr?: string;
+  opponent: string;
+  competition: 'ipl' | 'international';
+  format?: string;
+  runs?: number;
+  balls?: number;
+  fours?: number;
+  sixes?: number;
+  isOut?: boolean;
+  wickets?: number;
+  overs?: number;
+  runsConceded?: number;
+}
+
+export interface CompetitionStats {
+  ipl?: PlayerStats;
+  international?: PlayerStats;
+  iplSeasons?: Record<string, PlayerStats>;
+  internationalSeasons?: Record<string, PlayerStats>;
+  recentPerformances?: PlayerMatchLogEntry[];
+  processedMatchIds?: string[];
+}
+
 export interface Player {
   id: string;
   name: string;
@@ -74,6 +99,7 @@ export interface Player {
   isInjured: boolean;
   injuryDays: number;
   stats: PlayerStats;
+  competitionStats?: CompetitionStats;
   isImpactPlayer?: boolean;
   isCaptain?: boolean;
   primaryRole?: string;
@@ -318,8 +344,14 @@ export interface InningsData {
 
 export interface MatchLiveState {
   id: string;
+  matchId?: string;
   fixtureId?: string;
   leagueId: string;
+  isInternational?: boolean;
+  seasonName?: string;
+  dateStr?: string;
+  homeTeamShort?: string;
+  awayTeamShort?: string;
   format: 'T20' | 'ODI' | 'TEST' | '100BALL';
   homeTeam: Team;
   awayTeam: Team;

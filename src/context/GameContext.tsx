@@ -24,6 +24,9 @@ import {
   aggregateBowlerMatchStatsIntoCareer
 } from '../utils/bowlingStats';
 import {
+  recordMatchToPlayerStats
+} from '../utils/playerStatsHelpers';
+import {
   AuctionSandboxMode,
   buildAuctionSandboxState,
   isOverseasPlayer
@@ -1074,80 +1077,8 @@ interface GameContextType {
 
 const GameContext = createContext<GameContextType | undefined>(undefined);
 
-function applyMatchToPlayerList(playerList: Player[], finishedMatch: MatchLiveState): Player[] {
-  const inn1 = finishedMatch.innings1;
-  const inn2 = finishedMatch.innings2;
-
-  const batterMap = new Map<string, BatterInningsScorecard>();
-  const bowlerEntriesMap = new Map<string, BowlerInningsScorecard[]>();
-
-  [...(inn1?.batters || []), ...(inn2?.batters || [])].forEach(b => {
-    batterMap.set(b.playerId, b);
-  });
-  [...(inn1?.bowlers || []), ...(inn2?.bowlers || [])].forEach(bw => {
-    const list = bowlerEntriesMap.get(bw.playerId) || [];
-    list.push(bw);
-    bowlerEntriesMap.set(bw.playerId, list);
-  });
-
-  return playerList.map(p => {
-    const bCard = batterMap.get(p.id);
-    const bwCards = bowlerEntriesMap.get(p.id) || [];
-    if (!bCard && bwCards.length === 0) return p;
-
-    const prevStats = p.stats || {
-      matches: 0, runs: 0, balls: 0, fours: 0, sixes: 0,
-      fifties: 0, hundreds: 0, highestScore: 0, wickets: 0,
-      oversBowled: 0, runsConceded: 0, maidens: 0, bestBowling: '0/0',
-      economy: 0, average: 0, strikeRate: 0
-    };
-
-    const newMatches = (prevStats.matches || 0) + 1;
-    const addRuns = bCard ? bCard.runs : 0;
-    const addBalls = bCard ? bCard.balls : 0;
-    const addFours = bCard ? bCard.fours : 0;
-    const addSixes = bCard ? bCard.sixes : 0;
-    const addFifty = bCard && bCard.runs >= 50 && bCard.runs < 100 ? 1 : 0;
-    const addHundred = bCard && bCard.runs >= 100 ? 1 : 0;
-
-    const newRuns = (prevStats.runs || 0) + addRuns;
-    const newBalls = (prevStats.balls || 0) + addBalls;
-    const newFours = (prevStats.fours || 0) + addFours;
-    const newSixes = (prevStats.sixes || 0) + addSixes;
-    const newFifties = (prevStats.fifties || 0) + addFifty;
-    const newHundreds = (prevStats.hundreds || 0) + addHundred;
-    const newHighest = Math.max(prevStats.highestScore || 0, addRuns);
-
-    const bowlingAgg = aggregateBowlerMatchStatsIntoCareer(prevStats, bwCards);
-    const totalWktsThisMatch = bwCards.reduce((sum, c) => sum + (c.wickets || 0), 0);
-
-    const estDismissals = Math.max(1, Math.round(newMatches * 0.75));
-    const average = newRuns > 0 ? Number((newRuns / estDismissals).toFixed(1)) : 0;
-    const strikeRate = newBalls > 0 ? Number(((newRuns / newBalls) * 100).toFixed(1)) : 0;
-
-    return {
-      ...p,
-      form: Math.max(40, Math.min(100, p.form + (addRuns >= 35 || totalWktsThisMatch >= 2 ? 4 : -1))),
-      stats: {
-        matches: newMatches,
-        runs: newRuns,
-        balls: newBalls,
-        fours: newFours,
-        sixes: newSixes,
-        fifties: newFifties,
-        hundreds: newHundreds,
-        highestScore: newHighest,
-        wickets: bowlingAgg.wickets,
-        oversBowled: bowlingAgg.oversBowled,
-        runsConceded: bowlingAgg.runsConceded,
-        maidens: bowlingAgg.maidens,
-        bestBowling: bowlingAgg.bestBowling,
-        average,
-        strikeRate,
-        economy: bowlingAgg.economy
-      }
-    };
-  });
+function applyMatchToPlayerList(playerList: Player[], finishedMatch: MatchLiveState, seasonKey: string = 'Season 2026'): Player[] {
+  return playerList.map(p => recordMatchToPlayerStats(p, finishedMatch, seasonKey));
 }
 
 function simulateAiFixtureScorecard(
@@ -4022,64 +3953,9 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     // 1. Update participating players' season & career stats
-    const applyStatsToPlayer = (p: Player): Player => {
-      const bCard = batterMap.get(p.id);
-      const bwCards = bowlerEntriesMap.get(p.id) || [];
-      if (!bCard && bwCards.length === 0) return p;
-
-      const prevStats = p.stats || {
-        matches: 0, runs: 0, balls: 0, fours: 0, sixes: 0,
-        fifties: 0, hundreds: 0, highestScore: 0, wickets: 0,
-        oversBowled: 0, runsConceded: 0, maidens: 0, bestBowling: '0/0',
-        economy: 0, average: 0, strikeRate: 0
-      };
-
-      const newMatches = (prevStats.matches || 0) + 1;
-      const addRuns = bCard ? bCard.runs : 0;
-      const addBalls = bCard ? bCard.balls : 0;
-      const addFours = bCard ? bCard.fours : 0;
-      const addSixes = bCard ? bCard.sixes : 0;
-      const addFifty = bCard && bCard.runs >= 50 && bCard.runs < 100 ? 1 : 0;
-      const addHundred = bCard && bCard.runs >= 100 ? 1 : 0;
-
-      const newRuns = (prevStats.runs || 0) + addRuns;
-      const newBalls = (prevStats.balls || 0) + addBalls;
-      const newFours = (prevStats.fours || 0) + addFours;
-      const newSixes = (prevStats.sixes || 0) + addSixes;
-      const newFifties = (prevStats.fifties || 0) + addFifty;
-      const newHundreds = (prevStats.hundreds || 0) + addHundred;
-      const newHighest = Math.max(prevStats.highestScore || 0, addRuns);
-
-      const bowlingAgg = aggregateBowlerMatchStatsIntoCareer(prevStats, bwCards);
-      const totalWktsThisMatch = bwCards.reduce((sum, c) => sum + (c.wickets || 0), 0);
-
-      const estDismissals = Math.max(1, Math.round(newMatches * 0.82));
-      const average = Number((newRuns / estDismissals).toFixed(1));
-      const strikeRate = newBalls > 0 ? Number(((newRuns / newBalls) * 100).toFixed(1)) : 130.0;
-
-      return {
-        ...p,
-        form: Math.max(40, Math.min(100, p.form + (addRuns >= 35 || totalWktsThisMatch >= 2 ? 4 : -1))),
-        stats: {
-          matches: newMatches,
-          runs: newRuns,
-          balls: newBalls,
-          fours: newFours,
-          sixes: newSixes,
-          fifties: newFifties,
-          hundreds: newHundreds,
-          highestScore: newHighest,
-          wickets: bowlingAgg.wickets,
-          oversBowled: bowlingAgg.oversBowled,
-          runsConceded: bowlingAgg.runsConceded,
-          maidens: bowlingAgg.maidens,
-          bestBowling: bowlingAgg.bestBowling,
-          average,
-          strikeRate,
-          economy: bowlingAgg.economy
-        }
-      };
-    };
+    const activeLeague = leagues.find(l => l.id === currentLeagueId) || leagues[0];
+    const currentActiveSeasonKey = activeLeague?.seasonName || 'Season 2026';
+    const applyStatsToPlayer = (p: Player): Player => recordMatchToPlayerStats(p, finishedMatch, currentActiveSeasonKey);
 
     setPlayers(prev => prev.map(applyStatsToPlayer));
     setTeams(prev => prev.map(t => ({
