@@ -1663,7 +1663,7 @@ export const HubScreen: React.FC = () => {
           setPostSeasonPurseCr(finalPurseCr);
           const names = releasedIds.map(id => {
             const p = userTeamPlayers.find(pl => pl.id === id);
-            return p ? p.name.split(' ').pop() || p.name : id;
+            return p ? p.name : id;
           });
           if (names.length > 0) setReleasedPlayerNames(names);
           setIsReleasesModalOpen(false);

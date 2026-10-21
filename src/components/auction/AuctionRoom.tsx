@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   ArrowLeft,
   ChevronDown,
@@ -9,9 +9,6 @@ import {
   FastForward,
   Lightbulb,
   X,
-  Volume2,
-  VolumeX,
-  Sparkles,
   Gavel
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
@@ -20,9 +17,17 @@ import { sound } from '../../utils/soundEffects';
 import {
   AUCTION_PLAYERS_2026,
   AUCTION_SETS_META,
+  AUCTION_SET_SEQUENCE,
   INITIAL_AUCTION_CLUBS,
   AuctionPlayerItem,
-  AuctionSetType
+  AuctionSetType,
+  AiTeamSnapshot,
+  resolveAuctionFranchise,
+  getNextAuctionBidCr,
+  formatAuctionPriceCr,
+  canFranchiseBidOnLot,
+  evaluateAiCounterBid,
+  settleAuctionLotAmongAi
 } from '../../data/auctionSets2026';
 import { Player } from '../../types/cricket';
 
@@ -51,12 +56,20 @@ export const AuctionRoom: React.FC = () => {
     unlockAchievement
   } = useGame();
 
+  const userFranchise = useMemo(
+    () => resolveAuctionFranchise(userTeam.id) || resolveAuctionFranchise(userTeam.shortName),
+    [userTeam.id, userTeam.shortName]
+  );
+  const userShort = userFranchise?.shortName || userTeam.shortName;
+
   // -------------------------------------------------------------
   // STATE MANAGEMENT
   // -------------------------------------------------------------
-  const [allLots, setAllLots] = useState<AuctionPlayerItem[]>(AUCTION_PLAYERS_2026);
+  const [allLots] = useState<AuctionPlayerItem[]>(AUCTION_PLAYERS_2026);
   const [currentLotIndex, setCurrentLotIndex] = useState<number>(0);
-  const [activeSetId, setActiveSetId] = useState<AuctionSetType>('PLATINUM');
+  const [activeSetId, setActiveSetId] = useState<AuctionSetType>(
+    AUCTION_PLAYERS_2026[0]?.set || 'BA1'
+  );
   const [isPoolDropdownOpen, setIsPoolDropdownOpen] = useState<boolean>(false);
   const [isSetSheetOpen, setIsSetSheetOpen] = useState<boolean>(false);
   const [isSquadPlannerOpen, setIsSquadPlannerOpen] = useState<boolean>(false);
@@ -64,156 +77,248 @@ export const AuctionRoom: React.FC = () => {
   // Speed controls: 1x, 2x, 3x, instant
   const [speed, setSpeed] = useState<'1x' | '2x' | '3x' | 'instant'>('1x');
   const [showSpeedMenu, setShowSpeedMenu] = useState<boolean>(false);
-  const [isMuted, setIsMuted] = useState<boolean>(false);
+  const [isMuted] = useState<boolean>(false);
   const [showHelpBanner, setShowHelpBanner] = useState<boolean>(true);
   const [showAllStats, setShowAllStats] = useState<boolean>(false);
   const [showMoreTeams, setShowMoreTeams] = useState<boolean>(false);
 
   // Current Lot Bidding States
-  const [currentBidCr, setCurrentBidCr] = useState<number>(2.0);
+  const [currentBidCr, setCurrentBidCr] = useState<number>(
+    AUCTION_PLAYERS_2026[0]?.basePriceCr ?? 2.0
+  );
   const [currentBidderShort, setCurrentBidderShort] = useState<string | null>(null);
   const [bidHistory, setBidHistory] = useState<BidRecord[]>([]);
   const [lotStatus, setLotStatus] = useState<'bidding' | 'sold' | 'unsold'>('bidding');
   const [lastSoldInfo, setLastSoldInfo] = useState<SoldOutcome | null>(null);
 
-  // Overall Sales Record { [playerId]: SoldOutcome }
+  // Overall Sales & Unsold Records { [playerId]: ... }
   const [salesRecord, setSalesRecord] = useState<Record<string, SoldOutcome>>({});
+  const [unsoldIds, setUnsoldIds] = useState<Record<string, boolean>>({});
 
-  // Team Purses mapping synced with global teams state
+  // Timer Refs to prevent race conditions when skipping or changing lots
+  const aiTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const advanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearAuctionTimers = useCallback(() => {
+    if (aiTimerRef.current) {
+      clearTimeout(aiTimerRef.current);
+      aiTimerRef.current = null;
+    }
+    if (advanceTimerRef.current) {
+      clearTimeout(advanceTimerRef.current);
+      advanceTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => clearAuctionTimers();
+  }, [clearAuctionTimers]);
+
+  // Team Purses mapping synced with global teams state & INITIAL_AUCTION_CLUBS
   const [teamPurses, setTeamPurses] = useState<Record<string, number>>(() => {
     const map: Record<string, number> = {};
     INITIAL_AUCTION_CLUBS.forEach(c => {
-      const liveTeam = teams.find(t => t.shortName === c.shortName);
-      map[c.shortName] = liveTeam ? liveTeam.purseCr : c.purseCr;
+      const liveTeam = teams.find(
+        t => t.id === c.teamId || t.shortName.toUpperCase() === c.shortName.toUpperCase()
+      );
+      // Use liveTeam.purseCr if it has been set to a mini-auction purse (<= 65 Cr), otherwise use club mini-auction purse
+      map[c.shortName] =
+        liveTeam && liveTeam.purseCr > 0 && liveTeam.purseCr <= 65
+          ? liveTeam.purseCr
+          : c.purseCr;
     });
-    map[userTeam.shortName] = userTeam.purseCr || 28.65;
+    if (userTeam.purseCr > 0 && userTeam.purseCr <= 65) {
+      map[userShort] = userTeam.purseCr;
+    }
     return map;
   });
 
-  // Helper to commit a completed lot sale into global players & teams state
-  const commitAuctionSale = (lot: AuctionPlayerItem, buyerShort: string, priceCr: number) => {
-    const winnerTeam = teams.find(t => t.shortName === buyerShort);
-    if (!winnerTeam) return;
-
-    const existingPlayer = players.find(
-      p => p.id === lot.id || p.name.toLowerCase() === lot.name.toLowerCase()
-    );
-
-    const mappedPlayer: Player = existingPlayer
-      ? {
-          ...existingPlayer,
-          clubId: winnerTeam.id,
-          salaryCr: priceCr,
-          basePriceCr: lot.basePriceCr || existingPlayer.basePriceCr
-        }
-      : {
-          id: lot.id,
-          name: lot.name,
-          jerseyNumber: lot.jerseyNumber || 45,
-          role: lot.role,
-          bowlingArm: lot.bowlingArm || 'RAF',
-          battingHand: lot.battingHand || 'RHB',
-          age: lot.age,
-          country: lot.country || lot.countryCode || 'India',
-          clubId: winnerTeam.id,
-          isOverseas: lot.isOverseas,
-          tier: lot.tier,
-          basePriceCr: lot.basePriceCr,
-          salaryCr: priceCr,
-          ratings: {
-            bat: lot.ratings.bat,
-            pow: lot.ratings.pow ?? 75,
-            tec: lot.ratings.tec ?? 75,
-            tmp: lot.ratings.tmp ?? 78,
-            agg: lot.ratings.agg ?? 75,
-            run: lot.ratings.run ?? 76,
-            vp: lot.ratings.vp ?? lot.ratings.bat,
-            vs: lot.ratings.vs ?? lot.ratings.bat,
-            bowl: lot.ratings.bowl,
-            pace: lot.ratings.pace ?? 76,
-            ctrl: lot.ratings.ctrl ?? 76,
-            dis: lot.ratings.dis ?? 75,
-            var: lot.ratings.var ?? 75,
-            dth: lot.ratings.dth ?? 75,
-            comp: lot.ratings.comp ?? 78,
-            cat: lot.ratings.cat ?? 76,
-            fld: lot.ratings.fld ?? 76,
-            fit: lot.ratings.fit ?? 88,
-            exp: lot.ratings.exp ?? 78
-          },
-          form: lot.form ?? 82,
-          morale: lot.morale ?? 86,
-          fitness: 96,
-          isInjured: false,
-          injuryDays: 0,
-          stats: {
-            matches: 0,
-            runs: 0,
-            balls: 0,
-            fours: 0,
-            sixes: 0,
-            fifties: 0,
-            hundreds: 0,
-            highestScore: 0,
-            wickets: 0,
-            oversBowled: 0,
-            runsConceded: 0,
-            maidens: 0,
-            bestBowling: '0/0'
-          }
-        };
-
-    setPlayers(prev => {
-      const exists = prev.some(p => p.id === mappedPlayer.id);
-      if (exists) {
-        return prev.map(p => (p.id === mappedPlayer.id ? mappedPlayer : p));
-      }
-      return [...prev, mappedPlayer];
+  // Compute live squad & overseas counts for every franchise
+  const franchiseMetricsMap = useMemo(() => {
+    const metrics: Record<string, { squadCount: number; overseasCount: number; teamId: string }> = {};
+    INITIAL_AUCTION_CLUBS.forEach(c => {
+      const liveTeam = teams.find(
+        t => t.id === c.teamId || t.shortName.toUpperCase() === c.shortName.toUpperCase()
+      );
+      const tId = liveTeam?.id || c.teamId;
+      const clubPlayers = players.filter(p => p.clubId === tId);
+      const squadCount = clubPlayers.length > 0 ? clubPlayers.length : c.keptCount;
+      const overseasCount = clubPlayers.filter(p => p.isOverseas).length;
+      metrics[c.shortName] = {
+        squadCount,
+        overseasCount,
+        teamId: tId
+      };
     });
+    return metrics;
+  }, [players, teams]);
 
-    setTeams(prev =>
-      prev.map(t => {
-        if (t.id === winnerTeam.id) {
-          const filteredSquad = t.squad.filter(sp => sp.id !== mappedPlayer.id);
-          const nextSquad = [...filteredSquad, mappedPlayer];
-          const nextXI =
-            t.playingXIIds.length < 11 && !t.playingXIIds.includes(mappedPlayer.id)
-              ? [...t.playingXIIds, mappedPlayer.id]
-              : t.playingXIIds;
-          return {
-            ...t,
-            purseCr: Math.max(0, Number(((t.purseCr || 25) - priceCr).toFixed(2))),
-            squad: nextSquad,
-            playingXIIds: nextXI
-          };
-        }
-        // Remove from previous club if transferred
-        if (t.squad.some(sp => sp.id === mappedPlayer.id)) {
-          return {
-            ...t,
-            squad: t.squad.filter(sp => sp.id !== mappedPlayer.id),
-            playingXIIds: t.playingXIIds.filter(id => id !== mappedPlayer.id)
-          };
-        }
-        return t;
-      })
-    );
-  };
+  // Helper to commit a completed lot sale into global players & teams state
+  const commitAuctionSale = useCallback(
+    (lot: AuctionPlayerItem, buyerShort: string, priceCr: number) => {
+      const clubMeta = resolveAuctionFranchise(buyerShort);
+      const winnerTeam = teams.find(
+        t =>
+          (clubMeta && t.id === clubMeta.teamId) ||
+          t.shortName.toUpperCase() === buyerShort.toUpperCase()
+      );
+      if (!winnerTeam) return;
 
-  // Current Player
+      const existingPlayer = players.find(
+        p => p.id === lot.id || p.name.toLowerCase() === lot.name.toLowerCase()
+      );
+
+      const mappedPlayer: Player = existingPlayer
+        ? {
+            ...existingPlayer,
+            name: lot.name,
+            age: lot.age,
+            country: lot.country,
+            isOverseas: lot.isOverseas,
+            battingHand: lot.battingHand,
+            bowlingArm: lot.bowlingArm || existingPlayer.bowlingArm || 'RAM',
+            bowlingStyle: lot.bowlingStyle || existingPlayer.bowlingStyle,
+            clubId: winnerTeam.id,
+            salaryCr: priceCr,
+            basePriceCr: lot.basePriceCr
+          }
+        : {
+            id: lot.id,
+            name: lot.name,
+            jerseyNumber: lot.jerseyNumber || 45,
+            role: lot.role,
+            bowlingArm: lot.bowlingArm || 'RAM',
+            bowlingStyle: lot.bowlingStyle || undefined,
+            battingHand: lot.battingHand || 'RHB',
+            age: lot.age,
+            country: lot.country,
+            clubId: winnerTeam.id,
+            isOverseas: lot.isOverseas,
+            tier: lot.tier,
+            basePriceCr: lot.basePriceCr,
+            salaryCr: priceCr,
+            ratings: {
+              bat: lot.ratings.bat,
+              pow: lot.ratings.pow ?? 75,
+              tec: lot.ratings.tec ?? 75,
+              tmp: lot.ratings.tmp ?? 78,
+              agg: lot.ratings.agg ?? 75,
+              run: lot.ratings.run ?? 76,
+              vp: lot.ratings.vp ?? lot.ratings.bat,
+              vs: lot.ratings.vs ?? lot.ratings.bat,
+              bowl: lot.ratings.bowl,
+              pace: lot.ratings.pace ?? 76,
+              ctrl: lot.ratings.ctrl ?? 76,
+              dis: lot.ratings.dis ?? 75,
+              var: lot.ratings.var ?? 75,
+              dth: lot.ratings.dth ?? 75,
+              comp: lot.ratings.comp ?? 78,
+              cat: lot.ratings.cat ?? 76,
+              fld: lot.ratings.fld ?? 76,
+              fit: lot.ratings.fit ?? 88,
+              exp: lot.ratings.exp ?? 78
+            },
+            form: lot.form ?? 82,
+            morale: lot.morale ?? 86,
+            fitness: 96,
+            isInjured: false,
+            injuryDays: 0,
+            stats: {
+              matches: lot.iplMatches ?? 0,
+              runs: 0,
+              balls: 0,
+              fours: 0,
+              sixes: 0,
+              fifties: 0,
+              hundreds: 0,
+              highestScore: 0,
+              wickets: 0,
+              oversBowled: 0,
+              runsConceded: 0,
+              maidens: 0,
+              bestBowling: '0/0'
+            }
+          };
+
+      setPlayers(prev => {
+        const exists = prev.some(p => p.id === mappedPlayer.id);
+        if (exists) {
+          return prev.map(p => (p.id === mappedPlayer.id ? mappedPlayer : p));
+        }
+        return [...prev, mappedPlayer];
+      });
+
+      setTeams(prev =>
+        prev.map(t => {
+          if (t.id === winnerTeam.id) {
+            const filteredSquad = t.squad.filter(sp => sp.id !== mappedPlayer.id);
+            const nextSquad = [...filteredSquad, mappedPlayer];
+            const nextXI =
+              t.playingXIIds.length < 11 && !t.playingXIIds.includes(mappedPlayer.id)
+                ? [...t.playingXIIds, mappedPlayer.id]
+                : t.playingXIIds;
+            const currentTeamPurse =
+              teamPurses[buyerShort] ?? (t.purseCr <= 65 ? t.purseCr : clubMeta?.purseCr ?? 25);
+            return {
+              ...t,
+              purseCr: Math.max(0, Number((currentTeamPurse - priceCr).toFixed(2))),
+              squad: nextSquad,
+              playingXIIds: nextXI
+            };
+          }
+          // Remove from previous club if transferred
+          if (t.squad.some(sp => sp.id === mappedPlayer.id)) {
+            return {
+              ...t,
+              squad: t.squad.filter(sp => sp.id !== mappedPlayer.id),
+              playingXIIds: t.playingXIIds.filter(id => id !== mappedPlayer.id)
+            };
+          }
+          return t;
+        })
+      );
+    },
+    [players, setPlayers, setTeams, teamPurses, teams]
+  );
+
+  // Current Player & Set Metadata
   const currentPlayer = allLots[currentLotIndex] || allLots[0];
-  const currentSetMeta = AUCTION_SETS_META.find(s => s.id === activeSetId) || AUCTION_SETS_META[0];
+  const currentSetMeta =
+    AUCTION_SETS_META.find(s => s.id === activeSetId) || AUCTION_SETS_META[0];
 
   // Initialize lot when currentLotIndex changes
   useEffect(() => {
+    clearAuctionTimers();
     if (!currentPlayer) return;
-    const base = currentPlayer.basePriceCr;
-    setCurrentBidCr(base);
-    setCurrentBidderShort(null);
-    setBidHistory([]);
-    setLotStatus('bidding');
-    setLastSoldInfo(null);
-  }, [currentLotIndex, currentPlayer]);
+    const existingSale = salesRecord[currentPlayer.id];
+    const existingUnsold = unsoldIds[currentPlayer.id];
+
+    if (existingSale) {
+      setCurrentBidCr(existingSale.finalPriceCr);
+      setCurrentBidderShort(existingSale.buyerTeamShort);
+      setBidHistory([
+        {
+          teamShort: existingSale.buyerTeamShort,
+          teamColor: existingSale.buyerTeamColor,
+          amountCr: existingSale.finalPriceCr
+        }
+      ]);
+      setLotStatus('sold');
+      setLastSoldInfo(existingSale);
+    } else if (existingUnsold) {
+      setCurrentBidCr(currentPlayer.basePriceCr);
+      setCurrentBidderShort(null);
+      setBidHistory([]);
+      setLotStatus('unsold');
+      setLastSoldInfo(null);
+    } else {
+      setCurrentBidCr(currentPlayer.basePriceCr);
+      setCurrentBidderShort(null);
+      setBidHistory([]);
+      setLotStatus('bidding');
+      setLastSoldInfo(null);
+    }
+  }, [currentLotIndex, currentPlayer, clearAuctionTimers, salesRecord, unsoldIds]);
 
   // Keep activeSetId in sync with current player's set
   useEffect(() => {
@@ -225,77 +330,156 @@ export const AuctionRoom: React.FC = () => {
   // -------------------------------------------------------------
   // AUCTION SOUND & AI BIDDING SPEED
   // -------------------------------------------------------------
-  const aiDelayMs = speed === 'instant' ? 100 : speed === '3x' ? 250 : speed === '2x' ? 500 : 900;
+  const aiDelayMs =
+    speed === 'instant' ? 90 : speed === '3x' ? 220 : speed === '2x' ? 450 : 850;
 
-  // AI Bidding Logic
-  const triggerAiResponse = (userJustBid: boolean, newAmount: number) => {
-    setTimeout(() => {
-      // 65% chance an AI franchise counters if price not absurdly high
-      const shouldAiBid = Math.random() < 0.65 && newAmount < 18.0;
-      if (!shouldAiBid) return;
+  // Build AI team snapshots for eligibility checks
+  const buildAiSnapshots = useCallback(
+    (pursesOverride?: Record<string, number>): AiTeamSnapshot[] => {
+      const activePurses = pursesOverride || teamPurses;
+      return INITIAL_AUCTION_CLUBS.map(c => {
+        const m = franchiseMetricsMap[c.shortName] || {
+          squadCount: c.keptCount,
+          overseasCount: 4,
+          teamId: c.teamId
+        };
+        return {
+          shortName: c.shortName,
+          teamName: c.teamName,
+          primaryColor: c.primaryColor,
+          purseCr: activePurses[c.shortName] ?? c.purseCr,
+          squadCount: m.squadCount,
+          overseasCount: m.overseasCount
+        };
+      });
+    },
+    [franchiseMetricsMap, teamPurses]
+  );
 
-      const candidates = INITIAL_AUCTION_CLUBS.filter(
-        c => c.shortName !== userTeam.shortName && (teamPurses[c.shortName] || 0) > newAmount + 0.25
-      );
-      if (candidates.length === 0) return;
+  // User Squad numbers dynamically computed from live global players state
+  const liveUserSquad = useMemo(
+    () => players.filter(p => p.clubId === userTeam.id),
+    [players, userTeam.id]
+  );
+  const userPurseRemaining =
+    teamPurses[userShort] ??
+    (userTeam.purseCr <= 65 ? userTeam.purseCr : userFranchise?.purseCr ?? 28.65);
+  const userSquadCount = liveUserSquad.length;
+  const userOverseasCount = liveUserSquad.filter(p => p.isOverseas).length;
 
-      const aiFranchise = candidates[Math.floor(Math.random() * candidates.length)];
-      const nextAmount = Number((newAmount + 0.25).toFixed(2));
+  // Next bid amount calculation using official IPL increments
+  const nextBidAmountCr = useMemo(
+    () => getNextAuctionBidCr(currentBidCr, currentBidderShort !== null),
+    [currentBidCr, currentBidderShort]
+  );
 
-      if (!isMuted) sound.playGavel();
+  // Canonical eligibility check for User Bid button
+  const userBidEligibility = useMemo(
+    () =>
+      canFranchiseBidOnLot({
+        franchiseShort: userShort,
+        currentBidderShort,
+        lotStatus,
+        nextBidCr: nextBidAmountCr,
+        purseCr: userPurseRemaining,
+        squadCount: userSquadCount,
+        overseasCount: userOverseasCount,
+        isOverseasLot: currentPlayer.isOverseas
+      }),
+    [
+      userShort,
+      currentBidderShort,
+      lotStatus,
+      nextBidAmountCr,
+      userPurseRemaining,
+      userSquadCount,
+      userOverseasCount,
+      currentPlayer.isOverseas
+    ]
+  );
 
-      setCurrentBidCr(nextAmount);
-      setCurrentBidderShort(aiFranchise.shortName);
-      setBidHistory(prev => [
-        ...prev,
-        {
-          teamShort: aiFranchise.shortName,
-          teamColor: aiFranchise.primaryColor,
-          amountCr: nextAmount
-        }
-      ]);
-    }, aiDelayMs);
-  };
+  // AI Counter-Bid Response after User Bid
+  const triggerAiResponse = useCallback(
+    (newAmount: number, bidderShort: string) => {
+      clearAuctionTimers();
+      aiTimerRef.current = setTimeout(() => {
+        const counter = evaluateAiCounterBid({
+          lot: currentPlayer,
+          currentBidCr: newAmount,
+          currentBidderShort: bidderShort,
+          userTeamShort: userShort,
+          aiTeams: buildAiSnapshots()
+        });
+        if (!counter) return;
+
+        if (!isMuted) sound.playGavel();
+
+        setCurrentBidCr(counter.amountCr);
+        setCurrentBidderShort(counter.teamShort);
+        setBidHistory(prev => [
+          ...prev,
+          {
+            teamShort: counter.teamShort,
+            teamColor: counter.teamColor,
+            amountCr: counter.amountCr
+          }
+        ]);
+      }, aiDelayMs);
+    },
+    [aiDelayMs, buildAiSnapshots, clearAuctionTimers, currentPlayer, isMuted, userShort]
+  );
 
   // Place User Bid
   const handleUserBid = () => {
-    const nextAmount = currentBidderShort ? Number((currentBidCr + 0.25).toFixed(2)) : currentBidCr;
-    const userPurse = teamPurses[userTeam.shortName] || 28.65;
-
-    if (userPurse < nextAmount) {
+    if (!userBidEligibility.allowed) {
       sound.playTap();
       return;
     }
 
     if (!isMuted) sound.playGavel();
 
-    setCurrentBidCr(nextAmount);
-    setCurrentBidderShort(userTeam.shortName);
+    const bidAmount = nextBidAmountCr;
+    setCurrentBidCr(bidAmount);
+    setCurrentBidderShort(userShort);
     setBidHistory(prev => [
       ...prev,
       {
-        teamShort: userTeam.shortName,
-        teamColor: '#f5b82e',
-        amountCr: nextAmount
+        teamShort: userShort,
+        teamColor: userFranchise?.primaryColor || '#f5b82e',
+        amountCr: bidAmount
       }
     ]);
 
-    triggerAiResponse(true, nextAmount);
+    triggerAiResponse(bidAmount, userShort);
   };
 
-  // Finalize Lot (SKIP / SOLD / UNSOLD)
+  const handleNextLot = useCallback(() => {
+    clearAuctionTimers();
+    if (currentLotIndex < allLots.length - 1) {
+      setCurrentLotIndex(prev => prev + 1);
+    } else {
+      setIsSquadPlannerOpen(true);
+    }
+  }, [allLots.length, clearAuctionTimers, currentLotIndex]);
+
+  // Finalize Lot (HAMMER / PASS / SETTLE)
   const handleSkipOrFinalize = () => {
+    if (lotStatus !== 'bidding') {
+      handleNextLot();
+      return;
+    }
+    clearAuctionTimers();
     if (!isMuted) sound.playGavel();
 
-    if (currentBidderShort) {
-      const winnerClub = INITIAL_AUCTION_CLUBS.find(c => c.shortName === currentBidderShort);
-      const winnerName = winnerClub ? winnerClub.teamName : `${currentBidderShort} Franchise`;
-      const winnerColor = winnerClub ? winnerClub.primaryColor : '#0057b8';
+    // Case 1: User already holds the leading bid -> Hammer down & sell to user
+    if (currentBidderShort === userShort) {
+      const winnerName = userFranchise?.teamName || userTeam.name;
+      const winnerColor = userFranchise?.primaryColor || userTeam.primaryColor || '#f5b82e';
       const finalPrice = currentBidCr;
 
       const outcome: SoldOutcome = {
         playerId: currentPlayer.id,
-        buyerTeamShort: currentBidderShort,
+        buyerTeamShort: userShort,
         buyerTeamName: winnerName,
         buyerTeamColor: winnerColor,
         finalPriceCr: finalPrice
@@ -305,44 +489,73 @@ export const AuctionRoom: React.FC = () => {
       setLastSoldInfo(outcome);
       setLotStatus('sold');
 
-      // Deduct purse locally & persist sale to global GameContext
       setTeamPurses(prev => ({
         ...prev,
-        [currentBidderShort]: Math.max(0, Number(((prev[currentBidderShort] || 0) - finalPrice).toFixed(2)))
+        [userShort]: Math.max(0, Number(((prev[userShort] ?? userPurseRemaining) - finalPrice).toFixed(2)))
       }));
-      commitAuctionSale(currentPlayer, currentBidderShort, finalPrice);
+      commitAuctionSale(currentPlayer, userShort, finalPrice);
 
-      // If user won
-      if (currentBidderShort === userTeam.shortName) {
-        if (!isMuted) sound.playCrowdCheer(1.0);
-        confetti({ particleCount: 60, spread: 70, origin: { y: 0.6 } });
-        unlockAchievement('ach_3');
-        if (finalPrice >= 15) unlockAchievement('ach_32');
-      }
+      if (!isMuted) sound.playCrowdCheer(1.0);
+      confetti({ particleCount: 60, spread: 70, origin: { y: 0.6 } });
+      unlockAchievement('ach_3');
+      if (finalPrice >= 15) unlockAchievement('ach_32');
 
-      // Auto advance to next lot after delay
-      setTimeout(() => {
+      advanceTimerRef.current = setTimeout(() => {
         handleNextLot();
-      }, speed === 'instant' ? 600 : 1800);
-    } else {
-      setLotStatus('unsold');
-      setTimeout(() => {
-        handleNextLot();
-      }, speed === 'instant' ? 600 : 1400);
+      }, speed === 'instant' ? 500 : 1500);
+      return;
     }
-  };
 
-  const handleNextLot = () => {
-    if (currentLotIndex < allLots.length - 1) {
-      setCurrentLotIndex(prev => prev + 1);
+    // Case 2: User passes / drops out -> Settle lot among eligible AI franchises
+    const settlement = settleAuctionLotAmongAi({
+      lot: currentPlayer,
+      startingBidCr: currentBidCr,
+      startingBidderShort: currentBidderShort,
+      userTeamShort: userShort,
+      aiTeams: buildAiSnapshots()
+    });
+
+    if (settlement.status === 'sold' && settlement.buyerTeamShort && settlement.finalPriceCr) {
+      const outcome: SoldOutcome = {
+        playerId: currentPlayer.id,
+        buyerTeamShort: settlement.buyerTeamShort,
+        buyerTeamName: settlement.buyerTeamName || `${settlement.buyerTeamShort} Franchise`,
+        buyerTeamColor: settlement.buyerTeamColor || '#0057b8',
+        finalPriceCr: settlement.finalPriceCr
+      };
+
+      if (settlement.bids.length > 0) {
+        setBidHistory(prev => [...prev, ...settlement.bids]);
+      }
+      setCurrentBidCr(settlement.finalPriceCr);
+      setCurrentBidderShort(settlement.buyerTeamShort);
+      setSalesRecord(prev => ({ ...prev, [currentPlayer.id]: outcome }));
+      setLastSoldInfo(outcome);
+      setLotStatus('sold');
+
+      const buyerShort = settlement.buyerTeamShort;
+      const finalPrice = settlement.finalPriceCr;
+      setTeamPurses(prev => ({
+        ...prev,
+        [buyerShort]: Math.max(0, Number(((prev[buyerShort] || 0) - finalPrice).toFixed(2)))
+      }));
+      commitAuctionSale(currentPlayer, buyerShort, finalPrice);
+
+      advanceTimerRef.current = setTimeout(() => {
+        handleNextLot();
+      }, speed === 'instant' ? 500 : 1400);
     } else {
-      // Completed all lots
-      setIsSquadPlannerOpen(true);
+      setUnsoldIds(prev => ({ ...prev, [currentPlayer.id]: true }));
+      setLotStatus('unsold');
+      advanceTimerRef.current = setTimeout(() => {
+        handleNextLot();
+      }, speed === 'instant' ? 450 : 1100);
     }
   };
 
   // Jump to specific set
   const handleSelectSet = (setId: AuctionSetType) => {
+    clearAuctionTimers();
     setActiveSetId(setId);
     setIsPoolDropdownOpen(false);
     const targetIdx = allLots.findIndex(p => p.set === setId);
@@ -351,13 +564,102 @@ export const AuctionRoom: React.FC = () => {
     }
   };
 
+  // Skip remaining lots in current set (simulates AI-only bidding, respects purses/quotas, advances to next set)
+  const handleSkipCurrentSet = () => {
+    clearAuctionTimers();
+    sound.playTap();
+
+    const nextSales: Record<string, SoldOutcome> = { ...salesRecord };
+    const nextUnsold: Record<string, boolean> = { ...unsoldIds };
+    const runningPurses: Record<string, number> = { ...teamPurses };
+    const runningMetrics: Record<string, { squadCount: number; overseasCount: number }> = {};
+
+    INITIAL_AUCTION_CLUBS.forEach(c => {
+      const m = franchiseMetricsMap[c.shortName] || {
+        squadCount: c.keptCount,
+        overseasCount: 4
+      };
+      runningMetrics[c.shortName] = {
+        squadCount: m.squadCount,
+        overseasCount: m.overseasCount
+      };
+    });
+
+    const currentSetLots = allLots.filter(p => p.set === activeSetId);
+    currentSetLots.forEach(pl => {
+      if (nextSales[pl.id] || nextUnsold[pl.id]) return;
+
+      const aiSnapshots: AiTeamSnapshot[] = INITIAL_AUCTION_CLUBS.map(c => ({
+        shortName: c.shortName,
+        teamName: c.teamName,
+        primaryColor: c.primaryColor,
+        purseCr: runningPurses[c.shortName] ?? c.purseCr,
+        squadCount: runningMetrics[c.shortName]?.squadCount ?? c.keptCount,
+        overseasCount: runningMetrics[c.shortName]?.overseasCount ?? 4
+      }));
+
+      const res = settleAuctionLotAmongAi({
+        lot: pl,
+        startingBidCr: pl.basePriceCr,
+        startingBidderShort: null,
+        userTeamShort: userShort,
+        aiTeams: aiSnapshots
+      });
+
+      if (res.status === 'sold' && res.buyerTeamShort && res.finalPriceCr) {
+        const winnerShort = res.buyerTeamShort;
+        const price = res.finalPriceCr;
+        nextSales[pl.id] = {
+          playerId: pl.id,
+          buyerTeamShort: winnerShort,
+          buyerTeamName: res.buyerTeamName || winnerShort,
+          buyerTeamColor: res.buyerTeamColor || '#0057b8',
+          finalPriceCr: price
+        };
+        runningPurses[winnerShort] = Math.max(
+          0,
+          Number(((runningPurses[winnerShort] ?? 0) - price).toFixed(2))
+        );
+        if (runningMetrics[winnerShort]) {
+          runningMetrics[winnerShort].squadCount += 1;
+          if (pl.isOverseas) {
+            runningMetrics[winnerShort].overseasCount += 1;
+          }
+        }
+        commitAuctionSale(pl, winnerShort, price);
+      } else {
+        nextUnsold[pl.id] = true;
+      }
+    });
+
+    setSalesRecord(nextSales);
+    setUnsoldIds(nextUnsold);
+    setTeamPurses(runningPurses);
+    setIsSetSheetOpen(false);
+
+    // Advance to the first lot of the NEXT set in AUCTION_SET_SEQUENCE
+    const curSetSeqIdx = AUCTION_SET_SEQUENCE.indexOf(activeSetId);
+    if (curSetSeqIdx !== -1 && curSetSeqIdx < AUCTION_SET_SEQUENCE.length - 1) {
+      const nextSetId = AUCTION_SET_SEQUENCE[curSetSeqIdx + 1];
+      const nextSetFirstLotIdx = allLots.findIndex(p => p.set === nextSetId);
+      if (nextSetFirstLotIdx !== -1) {
+        setActiveSetId(nextSetId);
+        setCurrentLotIndex(nextSetFirstLotIdx);
+        return;
+      }
+    }
+    setIsSquadPlannerOpen(true);
+  };
+
   // Compute set counts
   const currentSetPlayers = useMemo(() => {
     return allLots.filter(p => p.set === activeSetId);
   }, [allLots, activeSetId]);
 
-  const soldInCurrentSetCount = currentSetPlayers.filter(p => salesRecord[p.id]).length;
-  const remainingInSetCount = currentSetPlayers.length - soldInCurrentSetCount;
+  const resolvedInCurrentSetCount = currentSetPlayers.filter(
+    p => salesRecord[p.id] || unsoldIds[p.id]
+  ).length;
+  const remainingInSetCount = currentSetPlayers.length - resolvedInCurrentSetCount;
 
   // Formatted attribute stats for current player
   const statsKey = currentPlayer.statsKey || {
@@ -368,26 +670,19 @@ export const AuctionRoom: React.FC = () => {
     stat3Label: 'BOWL',
     stat3Val: currentPlayer.ratings?.bowl || 60,
     stat4Label: 'DTH',
-    stat4Val: currentPlayer.ratings?.dth || 65,
+    stat4Val: currentPlayer.ratings?.dth || 65
   };
-  const isBowler = currentPlayer.role === 'Bowler';
 
   // Announcer text
   const announcerMessage = currentBidderShort
-    ? `${currentBidderShort} leads the bidding at ${currentBidCr.toFixed(2)} cr!`
-    : 'No takers yet. Who opens the bidding?';
-
-  // User Squad numbers dynamically computed from live global players state
-  const liveUserSquad = useMemo(
-    () => players.filter(p => p.clubId === userTeam.id),
-    [players, userTeam.id]
-  );
-  const userPurseRemaining = teamPurses[userTeam.shortName] ?? userTeam.purseCr ?? 28.65;
-  const userSquadCount = liveUserSquad.length;
-  const userOverseasCount = liveUserSquad.filter(p => p.isOverseas).length;
+    ? `${currentBidderShort} leads the bidding at ${formatAuctionPriceCr(currentBidCr)}!`
+    : `Opening reserve price: ${formatAuctionPriceCr(currentPlayer.basePriceCr)}`;
 
   const plannerBatters = useMemo(
-    () => liveUserSquad.filter(p => p.role === 'Top-order' || p.role === 'Middle-order' || p.role === 'Batter'),
+    () =>
+      liveUserSquad.filter(
+        p => p.role === 'Top-order' || p.role === 'Middle-order' || p.role === 'Batter' || p.role === 'Batsman'
+      ),
     [liveUserSquad]
   );
   const plannerAllRounders = useMemo(
@@ -408,10 +703,14 @@ export const AuctionRoom: React.FC = () => {
       {/* ========================================================= */}
       {/* 1. TOP BAR                                                */}
       {/* ========================================================= */}
-      <div className="px-6 py-3 flex items-center justify-between border-b border-slate-800/80 bg-[#0d131f]/95 sticky top-0 z-30">
+      <div className="px-4 sm:px-6 py-3 flex items-center justify-between border-b border-slate-800/80 bg-[#0d131f]/95 sticky top-0 z-30">
         <div className="flex items-center gap-2">
           <button
-            onClick={() => { sound.playTap(); setActiveTab('hub'); }}
+            onClick={() => {
+              clearAuctionTimers();
+              sound.playTap();
+              setActiveTab('hub');
+            }}
             className="p-1 rounded-lg text-slate-400 hover:text-white"
           >
             <ArrowLeft className="w-5 h-5" />
@@ -419,7 +718,7 @@ export const AuctionRoom: React.FC = () => {
 
           <div>
             <span className="text-[10px] font-mono text-slate-400 block tracking-widest uppercase">
-              LOT {currentLotIndex + 1} / {allLots.length}
+              LOT {currentPlayer.listSrNo} / {allLots.length} · {currentSetMeta.categoryLabel}
             </span>
 
             {/* Set Dropdown Trigger */}
@@ -428,9 +727,9 @@ export const AuctionRoom: React.FC = () => {
                 sound.playTap();
                 setIsPoolDropdownOpen(!isPoolDropdownOpen);
               }}
-              className="flex items-center gap-1 text-[11px] font-black font-mono text-amber-300 uppercase tracking-wider py-0.5 px-2 rounded-lg bg-amber-500/15 border border-amber-500/40 hover:bg-amber-500/25 transition-all"
+              className="flex items-center gap-1.5 text-[11px] font-black font-mono text-amber-300 uppercase tracking-wider py-0.5 px-2.5 rounded-lg bg-amber-500/15 border border-amber-500/40 hover:bg-amber-500/25 transition-all mt-0.5"
             >
-              <span>{activeSetId}</span>
+              <span>{currentSetMeta.name}</span>
               <ChevronDown className="w-3.5 h-3.5" />
             </button>
           </div>
@@ -438,7 +737,7 @@ export const AuctionRoom: React.FC = () => {
 
         {/* Top Right Controls: Autosaved, Speed, Menu */}
         <div className="flex items-center gap-2 relative">
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-950/80 text-emerald-400 border border-emerald-800/50 text-[10px] font-mono font-bold">
+          <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-950/80 text-emerald-400 border border-emerald-800/50 text-[10px] font-mono font-bold">
             <Check className="w-3 h-3" />
             AUTOSAVED
           </span>
@@ -475,14 +774,14 @@ export const AuctionRoom: React.FC = () => {
             </div>
           )}
 
-          {/* More options (Mute / Set Sheet / Squad) */}
+          {/* Set Sheet Trigger */}
           <button
             onClick={() => {
               sound.playTap();
               setIsSetSheetOpen(true);
             }}
             className="p-1 rounded-lg text-slate-400 hover:text-white"
-            title="View Upcoming Lots"
+            title="View Set Lots"
           >
             <MoreVertical className="w-4 h-4" />
           </button>
@@ -490,15 +789,20 @@ export const AuctionRoom: React.FC = () => {
       </div>
 
       {/* ========================================================= */}
-      {/* 2. AUCTION POOLS DROPDOWN (Screenshot_20261019_234929_f36edefa.jpg) */}
+      {/* 2. AUCTION POOLS DROPDOWN (ALL 42 OFFICIAL PDF SETS)      */}
       {/* ========================================================= */}
       {isPoolDropdownOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-start justify-center pt-14 max-w-md mx-auto">
-          <div className="w-11/12 bg-[#121927] border border-slate-700 rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-            <div className="p-3 border-b border-slate-800 bg-[#0f1522] flex items-center justify-between">
-              <span className="text-xs font-black font-mono uppercase tracking-widest text-slate-300">
-                AUCTION POOLS
-              </span>
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-start justify-center pt-14 p-4">
+          <div className="w-full max-w-md max-h-[80vh] bg-[#121927] border border-slate-700 rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="p-3 border-b border-slate-800 bg-[#0f1522] flex items-center justify-between shrink-0">
+              <div>
+                <span className="text-xs font-black font-mono uppercase tracking-widest text-slate-200 block">
+                  TATA IPL 2026 AUCTION SETS (42 SETS · 350 LOTS)
+                </span>
+                <span className="text-[10px] font-mono text-slate-400">
+                  Official PDF Set Order: BA1 to UAL10
+                </span>
+              </div>
               <button
                 onClick={() => setIsPoolDropdownOpen(false)}
                 className="p-1 text-slate-400 hover:text-white rounded"
@@ -507,23 +811,37 @@ export const AuctionRoom: React.FC = () => {
               </button>
             </div>
 
-            <div className="py-1">
+            <div className="overflow-y-auto py-1 flex-1">
               {AUCTION_SETS_META.map(setMeta => {
                 const isLive = setMeta.id === activeSetId;
+                const setLots = allLots.filter(p => p.set === setMeta.id);
+                const resolvedCnt = setLots.filter(p => salesRecord[p.id] || unsoldIds[p.id]).length;
+
                 return (
                   <button
                     key={setMeta.id}
                     onClick={() => handleSelectSet(setMeta.id)}
-                    className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-slate-800/60 transition-all border-b border-slate-800/40 last:border-none"
+                    className="w-full px-4 py-2.5 flex items-center justify-between text-left hover:bg-slate-800/60 transition-all border-b border-slate-800/40 last:border-none"
                   >
-                    <span className={`text-xs font-black font-mono uppercase tracking-wider ${
-                      isLive ? 'text-amber-400' : 'text-slate-300'
-                    }`}>
-                      {setMeta.name}
-                    </span>
-                    {isLive && (
+                    <div>
+                      <span
+                        className={`text-xs font-black font-mono uppercase tracking-wider block ${
+                          isLive ? 'text-amber-400' : 'text-slate-200'
+                        }`}
+                      >
+                        {setMeta.name}
+                      </span>
+                      <span className="text-[10px] font-mono text-slate-400">
+                        {setMeta.categoryLabel} · {setMeta.lotsCount} lots ({resolvedCnt}/{setMeta.lotsCount} done)
+                      </span>
+                    </div>
+                    {isLive ? (
                       <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 font-bold">
                         LIVE
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-mono text-slate-400">
+                        {setMeta.id}
                       </span>
                     )}
                   </button>
@@ -542,17 +860,20 @@ export const AuctionRoom: React.FC = () => {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5 text-amber-400 text-xs font-bold font-mono uppercase">
               <Lightbulb className="w-4 h-4" />
-              <span>Bidding</span>
+              <span>Official IPL 2026 Auction Rules</span>
             </div>
             <button
-              onClick={() => { sound.playTap(); setShowHelpBanner(false); }}
+              onClick={() => {
+                sound.playTap();
+                setShowHelpBanner(false);
+              }}
               className="px-3 py-1 rounded-xl bg-[#f5b82e] hover:bg-amber-300 text-black text-[10px] font-black uppercase tracking-wider shadow-md"
             >
               GOT IT
             </button>
           </div>
           <p className="text-[11px] text-slate-300 mt-1 leading-relaxed">
-            Tap BID to raise, or SKIP to drop out and settle the lot at once. The speed control makes bidding faster.
+            Tap BID to open at reserve price or raise, or tap PASS / HAMMER to settle the lot. Squads are capped at 25 players (max 8 overseas).
           </p>
         </div>
       )}
@@ -562,115 +883,133 @@ export const AuctionRoom: React.FC = () => {
       {/* ========================================================= */}
       <div className="px-4 py-2 flex-1 flex flex-col justify-between overflow-y-auto">
         <div className="bg-[#0f172a]/95 rounded-2xl border border-slate-800/90 p-4 shadow-xl relative">
-          {/* Top Badges: Tier & Country */}
-          <div className="flex items-center justify-between mb-2">
-            <span className="px-2.5 py-0.5 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-300 text-[10px] font-black uppercase tracking-wider">
-              {currentPlayer.tier}
-            </span>
+          {/* Top Badges: Set + Capped/Uncapped + Country */}
+          <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+            <div className="flex items-center gap-1.5">
+              <span className="px-2 py-0.5 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-300 text-[10px] font-black font-mono uppercase tracking-wider">
+                SET {currentPlayer.setNumber} · {currentPlayer.set}
+              </span>
+              <span
+                className={`px-2 py-0.5 rounded-lg text-[10px] font-bold font-mono uppercase border ${
+                  currentPlayer.cappedStatus === 'Capped'
+                    ? 'bg-emerald-950/60 border-emerald-700/50 text-emerald-300'
+                    : 'bg-sky-950/60 border-sky-700/50 text-sky-300'
+                }`}
+              >
+                {currentPlayer.cappedStatus}
+              </span>
+              {currentPlayer.isOverseas && (
+                <span className="px-2 py-0.5 rounded-lg bg-purple-950/60 border border-purple-700/50 text-purple-300 text-[10px] font-mono font-bold uppercase">
+                  OVERSEAS
+                </span>
+              )}
+            </div>
+
             <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-slate-800/80 border border-slate-700/60 text-xs font-mono font-bold text-slate-200">
               <span>{currentPlayer.countryFlag}</span>
-              <span>{currentPlayer.countryCode}</span>
+              <span>{currentPlayer.country}</span>
+              {currentPlayer.stateAssociation && (
+                <span className="text-slate-400">· {currentPlayer.stateAssociation}</span>
+              )}
             </div>
           </div>
 
-          {/* Big Circular Avatar with Initial & #Jersey Badge */}
+          {/* Big Circular Avatar with Initial & #Lot Badge */}
           <div className="flex flex-col items-center justify-center my-1 relative">
-            <div className="w-24 h-24 rounded-full bg-gradient-to-tr from-[#0284c7] to-[#38bdf8] border-2 border-sky-400/50 flex items-center justify-center text-4xl font-black font-display text-white shadow-2xl relative">
-              {currentPlayer.name.charAt(0)}
+            <div className="w-20 h-20 rounded-full bg-gradient-to-tr from-[#0284c7] to-[#38bdf8] border-2 border-sky-400/50 flex items-center justify-center text-3xl font-black font-display text-white shadow-2xl relative">
+              {currentPlayer.firstName.charAt(0)}
+              {currentPlayer.surname.charAt(0)}
 
-              {/* Jersey Badge */}
-              <div className="absolute -bottom-1 -right-1 px-1.5 py-0.5 rounded-full bg-amber-500 text-black font-mono font-black text-[11px] border-2 border-[#0f172a] shadow-md">
-                #{currentPlayer.jerseyNumber || 49}
+              {/* Lot Sr. No. Badge */}
+              <div className="absolute -bottom-1 -right-1 px-1.5 py-0.5 rounded-full bg-amber-500 text-black font-mono font-black text-[10px] border-2 border-[#0f172a] shadow-md">
+                #{currentPlayer.listSrNo}
               </div>
             </div>
 
-            <h3 className="text-xl font-black font-display uppercase tracking-wider text-white mt-3 text-center">
+            <h3 className="text-lg sm:text-xl font-black font-display uppercase tracking-wider text-white mt-2.5 text-center">
               {currentPlayer.name}
             </h3>
-            <p className="text-xs text-slate-400 font-medium mt-0.5 text-center">
-              {currentPlayer.specialism}
+            <p className="text-xs text-slate-300 font-medium mt-0.5 text-center">
+              {currentPlayer.pdfSpecialism} · {currentPlayer.battingHand}
+              {currentPlayer.bowlingStyle ? ` · ${currentPlayer.bowlingStyle}` : ''} · Age {currentPlayer.age}
             </p>
+
+            {/* Factual PDF Bio & Caps Strip */}
+            <div className="flex items-center justify-center gap-2 flex-wrap mt-1.5 text-[10px] font-mono text-slate-400">
+              {currentPlayer.dob && <span>DOB: {currentPlayer.dob}</span>}
+              {currentPlayer.previousIplTeam && (
+                <span className="px-1.5 py-0.5 rounded bg-slate-800 text-amber-300">
+                  2025: {currentPlayer.previousIplTeam}
+                  {currentPlayer.ipl2025Matches !== null ? ` (${currentPlayer.ipl2025Matches}m)` : ''}
+                </span>
+              )}
+              {currentPlayer.iplMatches !== null && (
+                <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-200">
+                  IPL: {currentPlayer.iplMatches}m
+                </span>
+              )}
+              {currentPlayer.testCaps !== null && <span>Test: {currentPlayer.testCaps}</span>}
+              {currentPlayer.odiCaps !== null && <span>ODI: {currentPlayer.odiCaps}</span>}
+              {currentPlayer.t20Caps !== null && <span>T20I: {currentPlayer.t20Caps}</span>}
+            </div>
           </div>
 
           {/* 4 Attribute Progress Bars */}
           <div className="grid grid-cols-4 gap-2 my-3">
-            <div>
-              <div className="flex items-center justify-between text-[10px] font-mono mb-1">
-                <span className="text-slate-400">{statsKey.stat1Label}</span>
-                <strong className="text-emerald-400 font-bold">{statsKey.stat1Val}</strong>
+            {[
+              { label: statsKey.stat1Label, val: statsKey.stat1Val },
+              { label: statsKey.stat2Label, val: statsKey.stat2Val },
+              { label: statsKey.stat3Label, val: statsKey.stat3Val },
+              { label: statsKey.stat4Label, val: statsKey.stat4Val }
+            ].map((st, idx) => (
+              <div key={idx}>
+                <div className="flex items-center justify-between text-[10px] font-mono mb-1">
+                  <span className="text-slate-400">{st.label}</span>
+                  <strong className={st.val >= 75 ? 'text-emerald-400 font-bold' : 'text-amber-400 font-bold'}>
+                    {st.val}
+                  </strong>
+                </div>
+                <div className="w-full h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                  <div
+                    className={`h-full rounded-full ${st.val >= 75 ? 'bg-emerald-400' : 'bg-amber-400'}`}
+                    style={{ width: `${Math.min(100, st.val)}%` }}
+                  />
+                </div>
               </div>
-              <div className="w-full h-1.5 rounded-full bg-slate-800 overflow-hidden">
-                <div
-                  className="h-full bg-emerald-400 rounded-full"
-                  style={{ width: `${Math.min(100, statsKey.stat1Val)}%` }}
-                />
-              </div>
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between text-[10px] font-mono mb-1">
-                <span className="text-slate-400">{statsKey.stat2Label}</span>
-                <strong className={statsKey.stat2Val >= 75 ? 'text-amber-400' : 'text-slate-400'}>
-                  {statsKey.stat2Val}
-                </strong>
-              </div>
-              <div className="w-full h-1.5 rounded-full bg-slate-800 overflow-hidden">
-                <div
-                  className={`h-full rounded-full ${statsKey.stat2Val >= 75 ? 'bg-amber-400' : 'bg-slate-600'}`}
-                  style={{ width: `${Math.min(100, statsKey.stat2Val)}%` }}
-                />
-              </div>
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between text-[10px] font-mono mb-1">
-                <span className="text-slate-400">{statsKey.stat3Label}</span>
-                <strong className="text-emerald-400 font-bold">{statsKey.stat3Val}</strong>
-              </div>
-              <div className="w-full h-1.5 rounded-full bg-slate-800 overflow-hidden">
-                <div
-                  className="h-full bg-emerald-400 rounded-full"
-                  style={{ width: `${Math.min(100, statsKey.stat3Val)}%` }}
-                />
-              </div>
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between text-[10px] font-mono mb-1">
-                <span className="text-slate-400">{statsKey.stat4Label}</span>
-                <strong className="text-emerald-400 font-bold">{statsKey.stat4Val}</strong>
-              </div>
-              <div className="w-full h-1.5 rounded-full bg-slate-800 overflow-hidden">
-                <div
-                  className="h-full bg-emerald-400 rounded-full"
-                  style={{ width: `${Math.min(100, statsKey.stat4Val)}%` }}
-                />
-              </div>
-            </div>
+            ))}
           </div>
 
           {/* Tap for all stats toggle */}
           <button
-            onClick={() => { sound.playTap(); setShowAllStats(!showAllStats); }}
+            onClick={() => {
+              sound.playTap();
+              setShowAllStats(!showAllStats);
+            }}
             className="w-full text-center text-[10px] font-mono text-slate-400 hover:text-slate-200 uppercase tracking-widest flex items-center justify-center gap-1 py-1"
           >
-            TAP FOR ALL STATS
+            TAP FOR SOURCE & GAMEPLAY DETAILS
             {showAllStats ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
           </button>
 
           {showAllStats && (
             <div className="mt-2 pt-2 border-t border-slate-800 grid grid-cols-3 gap-2 text-[10px] font-mono animate-in fade-in duration-150">
               <div className="bg-[#121927] p-2 rounded-lg">
-                <span className="text-slate-500 block">FIELDING</span>
-                <strong className="text-white text-xs">{currentPlayer.ratings.fld || 85}</strong>
+                <span className="text-slate-500 block">RESERVE PRICE</span>
+                <strong className="text-amber-300 text-xs">
+                  ₹{currentPlayer.reservePriceLakh}L ({currentPlayer.basePriceCr.toFixed(2)} cr)
+                </strong>
               </div>
               <div className="bg-[#121927] p-2 rounded-lg">
-                <span className="text-slate-500 block">TEMPERAMENT</span>
-                <strong className="text-white text-xs">{currentPlayer.ratings.tmp || 85}</strong>
+                <span className="text-slate-500 block">BOWLING STYLE</span>
+                <strong className="text-white text-xs">
+                  {currentPlayer.bowlingStyle || 'Not listed'}
+                </strong>
               </div>
               <div className="bg-[#121927] p-2 rounded-lg">
-                <span className="text-slate-500 block">EXPERIENCE</span>
-                <strong className="text-white text-xs">{currentPlayer.ratings.exp || 80}</strong>
+                <span className="text-slate-500 block">FIELD / TEMP / EXP</span>
+                <strong className="text-white text-xs">
+                  {currentPlayer.ratings.fld || 80} / {currentPlayer.ratings.tmp || 78} / {currentPlayer.ratings.exp || 75}
+                </strong>
               </div>
             </div>
           )}
@@ -678,12 +1017,16 @@ export const AuctionRoom: React.FC = () => {
           {/* Bid History Carousel Pills */}
           <div className="mt-3 bg-[#111827] rounded-xl border border-slate-800 p-2 overflow-x-auto flex items-center gap-2">
             <div className="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700/60 shrink-0">
-              <span className="text-[9px] font-mono text-slate-500 uppercase tracking-wider block">BASE</span>
-              <strong className="text-xs font-mono font-bold text-white">{currentPlayer.basePriceCr} cr</strong>
+              <span className="text-[9px] font-mono text-slate-500 uppercase tracking-wider block">
+                RESERVE
+              </span>
+              <strong className="text-xs font-mono font-bold text-white">
+                {formatAuctionPriceCr(currentPlayer.basePriceCr)}
+              </strong>
             </div>
 
             {bidHistory.length === 0 ? (
-              <span className="text-xs text-slate-500 italic px-2">No bids yet</span>
+              <span className="text-xs text-slate-500 italic px-2">No bids placed yet</span>
             ) : (
               bidHistory.map((bid, bIdx) => (
                 <div
@@ -691,7 +1034,7 @@ export const AuctionRoom: React.FC = () => {
                   className="px-3 py-1.5 rounded-lg bg-[#141d30] border border-cyan-500/40 shrink-0 flex items-center gap-1.5 animate-in slide-in-from-right-3 duration-150"
                 >
                   <span
-                    className="text-[10px] font-black font-display text-white px-1 py-0.2 rounded"
+                    className="text-[10px] font-black font-display text-white px-1.5 py-0.5 rounded"
                     style={{ backgroundColor: bid.teamColor }}
                   >
                     {bid.teamShort}
@@ -706,14 +1049,14 @@ export const AuctionRoom: React.FC = () => {
         </div>
 
         {/* ======================================================= */}
-        {/* 5. TEAM PURSES GRID (Exact Screenshot_20261019_234719_5c4fe90a.jpg) */}
+        {/* 5. TEAM PURSES GRID                                     */}
         {/* ======================================================= */}
         <div className="my-2">
           <div className="grid grid-cols-5 gap-1.5">
             {INITIAL_AUCTION_CLUBS.slice(0, showMoreTeams ? 10 : 5).map(c => {
-              const isUser = c.shortName === userTeam.shortName;
+              const isUser = c.shortName === userShort;
               const isCurrentLead = currentBidderShort === c.shortName;
-              const purse = teamPurses[c.shortName] || c.purseCr;
+              const purse = teamPurses[c.shortName] ?? c.purseCr;
 
               return (
                 <div
@@ -732,6 +1075,9 @@ export const AuctionRoom: React.FC = () => {
                   >
                     {c.logo}
                   </div>
+                  <span className="text-[9px] font-mono text-slate-400 font-bold">
+                    {c.shortName}
+                  </span>
                   <span className="text-[9px] font-mono font-black text-white truncate max-w-full">
                     {purse.toFixed(2)} cr
                   </span>
@@ -742,10 +1088,13 @@ export const AuctionRoom: React.FC = () => {
 
           <div className="text-center mt-1">
             <button
-              onClick={() => { sound.playTap(); setShowMoreTeams(!showMoreTeams); }}
+              onClick={() => {
+                sound.playTap();
+                setShowMoreTeams(!showMoreTeams);
+              }}
               className="text-[10px] font-mono text-slate-400 hover:text-white uppercase tracking-widest flex items-center justify-center gap-1 mx-auto"
             >
-              {showMoreTeams ? 'LESS ˄' : 'MORE ˅'}
+              {showMoreTeams ? 'LESS ˄' : 'ALL 10 TEAMS ˅'}
             </button>
           </div>
         </div>
@@ -767,7 +1116,7 @@ export const AuctionRoom: React.FC = () => {
                   {currentPlayer.name}
                 </h4>
                 <p className="text-[11px] font-medium text-white/80">
-                  TO {lastSoldInfo.buyerTeamName.toUpperCase()}
+                  TO {lastSoldInfo.buyerTeamName.toUpperCase()} ({lastSoldInfo.buyerTeamShort})
                 </p>
               </div>
             </div>
@@ -786,7 +1135,9 @@ export const AuctionRoom: React.FC = () => {
             <span className="px-2.5 py-1 rounded bg-slate-900 text-slate-400 font-bold text-xs uppercase tracking-widest">
               UNSOLD
             </span>
-            <span className="text-xs text-slate-400 italic">No bids placed</span>
+            <span className="text-xs text-slate-400 italic">
+              {currentPlayer.name} goes unsold at {formatAuctionPriceCr(currentPlayer.basePriceCr)}
+            </span>
           </div>
         ) : (
           <div className="flex flex-col gap-2">
@@ -794,35 +1145,42 @@ export const AuctionRoom: React.FC = () => {
             <div className="flex items-center justify-between px-1 text-xs">
               <div>
                 <span className="text-[9px] font-mono uppercase tracking-widest text-slate-500 block">
-                  {currentBidderShort ? 'CURRENT' : 'OPENING'}
+                  {currentBidderShort ? 'CURRENT BID' : 'RESERVE PRICE'}
                 </span>
                 <strong className="text-sm font-black font-mono text-amber-300">
-                  {currentBidCr.toFixed(2)} cr
+                  {formatAuctionPriceCr(currentBidCr)}
                 </strong>
               </div>
 
-              <div className="flex items-center gap-1 text-[11px] text-cyan-400 italic max-w-[240px] truncate">
+              <div className="flex items-center gap-1 text-[11px] text-cyan-400 italic max-w-[260px] truncate">
                 <span>📢</span>
                 <span>{announcerMessage}</span>
               </div>
             </div>
 
-            {/* BID and SKIP Buttons */}
+            {/* BID and SKIP/HAMMER Buttons */}
             <div className="grid grid-cols-3 gap-2">
               <button
                 onClick={handleUserBid}
-                className="col-span-2 py-4 bg-gradient-to-r from-[#eab308] via-[#f5b82e] to-[#eab308] hover:from-[#facc15] hover:to-[#f5b82e] text-black font-black text-xs uppercase tracking-widest rounded-2xl shadow-xl shadow-amber-500/25 active:scale-98 transition-all flex items-center justify-center gap-1.5"
+                disabled={!userBidEligibility.allowed}
+                className={`col-span-2 py-4 font-black text-xs uppercase tracking-widest rounded-2xl flex items-center justify-center gap-1.5 transition-all ${
+                  userBidEligibility.allowed
+                    ? 'bg-gradient-to-r from-[#eab308] via-[#f5b82e] to-[#eab308] hover:from-[#facc15] hover:to-[#f5b82e] text-black shadow-xl shadow-amber-500/25 active:scale-98'
+                    : 'bg-slate-800/80 text-slate-500 border border-slate-700/60 cursor-not-allowed'
+                }`}
               >
                 <Gavel className="w-4 h-4 fill-current" />
-                BID {((currentBidderShort ? currentBidCr + 0.25 : currentBidCr)).toFixed(2)} cr
+                {userBidEligibility.allowed
+                  ? `BID ${nextBidAmountCr.toFixed(2)} cr`
+                  : `${userBidEligibility.reason} (${nextBidAmountCr.toFixed(2)} cr)`}
               </button>
 
               <button
                 onClick={handleSkipOrFinalize}
-                className="py-4 bg-[#111827] hover:bg-slate-800 text-slate-300 font-bold text-xs uppercase tracking-wider rounded-2xl border border-slate-700/80 active:scale-98 transition-all flex items-center justify-center gap-1"
+                className="py-4 bg-[#111827] hover:bg-slate-800 text-slate-200 font-bold text-xs uppercase tracking-wider rounded-2xl border border-slate-700/80 active:scale-98 transition-all flex items-center justify-center gap-1"
               >
                 <FastForward className="w-3.5 h-3.5" />
-                SKIP
+                {currentBidderShort === userShort ? 'SELL / CLAIM' : 'SKIP'}
               </button>
             </div>
           </div>
@@ -830,7 +1188,7 @@ export const AuctionRoom: React.FC = () => {
       </div>
 
       {/* ========================================================= */}
-      {/* 7. STICKY BOTTOM STATS BAR & SQUAD BUTTON                */}
+      {/* 7. STICKY BOTTOM STATS BAR & SQUAD BUTTON                 */}
       {/* ========================================================= */}
       <div className="p-3 border-t border-slate-800/80 bg-[#0c121d]/95 flex items-center justify-between">
         <div className="flex items-center gap-4 text-xs font-mono">
@@ -861,26 +1219,28 @@ export const AuctionRoom: React.FC = () => {
       </div>
 
       {/* ========================================================= */}
-      {/* 8. SET PREVIEW DRAWER (Screenshot_2026_1019_234715_8649eea8.jpg & 234902_51932f0e.jpg) */}
+      {/* 8. SET PREVIEW DRAWER                                     */}
       {/* ========================================================= */}
       {isSetSheetOpen && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-[#0f172a] border border-slate-800 rounded-3xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
-            {/* Drawer Header with Voice quote */}
+            {/* Drawer Header */}
             <div className="p-4 border-b border-slate-800">
               <div className="w-12 h-1 bg-slate-700/80 rounded-full mx-auto mb-3" />
 
               <div className="flex items-start gap-2 text-amber-300 text-xs italic mb-2">
                 <span>🎤</span>
-                <span>"{currentSetMeta.quote}"</span>
+                <span>&ldquo;{currentSetMeta.quote}&rdquo;</span>
               </div>
 
               <div className="flex items-center justify-between text-xs font-mono">
                 <div className="flex items-center gap-2">
                   <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold uppercase">
-                    {soldInCurrentSetCount > 0 ? 'CURRENT' : 'UPCOMING'}
+                    {resolvedInCurrentSetCount > 0 ? 'IN PROGRESS' : 'UPCOMING'}
                   </span>
-                  <strong className="text-white font-bold">{activeSetId}</strong>
+                  <strong className="text-white font-bold">
+                    {currentSetMeta.name} · {currentSetMeta.categoryLabel}
+                  </strong>
                 </div>
                 <span className="text-slate-400 font-bold">
                   {remainingInSetCount} / {currentSetPlayers.length} REMAINING
@@ -892,27 +1252,35 @@ export const AuctionRoom: React.FC = () => {
             <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-2">
               {currentSetPlayers.map(p => {
                 const sold = salesRecord[p.id];
+                const isUnsold = unsoldIds[p.id];
                 const isCurrentLot = p.id === currentPlayer.id;
 
                 return (
                   <div
                     key={p.id}
-                    className={`p-3 rounded-2xl border flex items-center justify-between ${
+                    onClick={() => {
+                      const idx = allLots.findIndex(item => item.id === p.id);
+                      if (idx !== -1) {
+                        setCurrentLotIndex(idx);
+                        setIsSetSheetOpen(false);
+                      }
+                    }}
+                    className={`p-3 rounded-2xl border flex items-center justify-between cursor-pointer transition-all ${
                       isCurrentLot
                         ? 'bg-amber-950/20 border-amber-500/80 shadow-md'
-                        : 'bg-[#121927]/90 border-slate-800/80'
+                        : 'bg-[#121927]/90 border-slate-800/80 hover:border-slate-700'
                     }`}
                   >
                     <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-xs font-bold text-slate-200 shrink-0">
-                        {p.name.charAt(0)}
+                      <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-[11px] font-mono font-bold text-slate-200 shrink-0">
+                        #{p.listSrNo}
                       </div>
                       <div>
                         <h4 className="text-xs font-bold text-white leading-tight">
                           {p.name}
                         </h4>
                         <span className="text-[10px] text-slate-400">
-                          {p.specialism.split(' · ')[0]} · {p.countryCode} · age {p.age}
+                          {p.pdfSpecialism} · {p.countryCode} · Age {p.age} · {p.cappedStatus}
                         </span>
                       </div>
                     </div>
@@ -920,18 +1288,25 @@ export const AuctionRoom: React.FC = () => {
                     <div className="text-right">
                       <div className="text-xs font-mono font-bold text-white">
                         <span className="text-[9px] text-slate-400 mr-1 uppercase">
-                          {p.role === 'Bowler' ? 'BWL' : 'BAT'}
+                          {p.pdfSpecialism === 'BOWLER' ? 'BWL' : 'BAT'}
                         </span>
                         <span>{Math.max(p.ratings.bat, p.ratings.bowl)}</span>
                       </div>
 
                       {sold ? (
-                        <div className="text-[11px] font-mono font-bold" style={{ color: sold.buyerTeamColor }}>
-                          {sold.buyerTeamShort} {sold.finalPriceCr.toFixed(2)} cr
+                        <div
+                          className="text-[11px] font-mono font-bold"
+                          style={{ color: sold.buyerTeamColor }}
+                        >
+                          SOLD · {sold.buyerTeamShort} {sold.finalPriceCr.toFixed(2)} cr
+                        </div>
+                      ) : isUnsold ? (
+                        <div className="text-[11px] font-mono font-bold text-slate-500">
+                          UNSOLD ({p.basePriceCr.toFixed(2)} cr)
                         </div>
                       ) : (
                         <div className="text-[11px] font-mono font-bold text-amber-300">
-                          {p.basePriceCr} cr
+                          {formatAuctionPriceCr(p.basePriceCr)}
                         </div>
                       )}
                     </div>
@@ -943,31 +1318,10 @@ export const AuctionRoom: React.FC = () => {
             {/* Bottom Actions */}
             <div className="p-4 border-t border-slate-800 grid grid-cols-2 gap-3 bg-[#0c121d]">
               <button
-                onClick={() => {
-                  sound.playTap();
-                  // Skip remaining players in this set and persist sales
-                  const nextSales = { ...salesRecord };
-                  currentSetPlayers.forEach(pl => {
-                    if (!nextSales[pl.id]) {
-                      const randomFranchise = INITIAL_AUCTION_CLUBS[Math.floor(Math.random() * INITIAL_AUCTION_CLUBS.length)];
-                      const finalPrice = Number((pl.basePriceCr + Math.random() * 4).toFixed(2));
-                      nextSales[pl.id] = {
-                        playerId: pl.id,
-                        buyerTeamShort: randomFranchise.shortName,
-                        buyerTeamName: randomFranchise.teamName,
-                        buyerTeamColor: randomFranchise.primaryColor,
-                        finalPriceCr: finalPrice
-                      };
-                      commitAuctionSale(pl, randomFranchise.shortName, finalPrice);
-                    }
-                  });
-                  setSalesRecord(nextSales);
-                  setIsSetSheetOpen(false);
-                  handleNextLot();
-                }}
+                onClick={handleSkipCurrentSet}
                 className="py-3 bg-slate-800 hover:bg-slate-700 text-amber-400 font-bold text-xs uppercase rounded-xl border border-amber-500/30"
               >
-                ⏩ SKIP SET
+                ⏩ SIMULATE & SKIP {activeSetId}
               </button>
 
               <button
@@ -977,7 +1331,7 @@ export const AuctionRoom: React.FC = () => {
                 }}
                 className="py-3 bg-[#f5b82e] hover:bg-amber-300 text-black font-black text-xs uppercase rounded-xl shadow-lg"
               >
-                {soldInCurrentSetCount > 0 ? 'CLOSE' : 'BEGIN SET'}
+                {resolvedInCurrentSetCount > 0 ? 'CLOSE' : `BEGIN ${activeSetId}`}
               </button>
             </div>
           </div>
@@ -985,7 +1339,7 @@ export const AuctionRoom: React.FC = () => {
       )}
 
       {/* ========================================================= */}
-      {/* 9. SQUAD PLANNER MODAL (Screenshot_2026_1019_234740_51bc6d21.jpg) */}
+      {/* 9. SQUAD PLANNER MODAL                                    */}
       {/* ========================================================= */}
       {isSquadPlannerOpen && (
         <div className="fixed inset-0 z-50 bg-[#070b12]/95 backdrop-blur-md text-slate-100 flex flex-col justify-between max-w-5xl mx-auto w-full overflow-hidden animate-in fade-in duration-200 border-x border-slate-800">
@@ -998,15 +1352,18 @@ export const AuctionRoom: React.FC = () => {
               <ArrowLeft className="w-5 h-5" />
             </button>
             <div className="flex items-center gap-2">
-              <div className="w-6 h-6 rounded-md bg-[#3a225d] text-white text-xs font-bold flex items-center justify-center">
-                {userTeam.shortName}
+              <div
+                className="w-6 h-6 rounded-md text-white text-xs font-bold flex items-center justify-center"
+                style={{ backgroundColor: userFranchise?.primaryColor || '#3a225d' }}
+              >
+                {userShort}
               </div>
               <div>
                 <h3 className="text-xs font-black font-display uppercase text-white tracking-wider">
                   {userTeam.name}
                 </h3>
                 <span className="text-[10px] font-mono text-amber-400">
-                  PLANNER · AUCTION PAUSED
+                  SQUAD PLANNER · {currentSetMeta.name} ({currentSetMeta.categoryLabel})
                 </span>
               </div>
             </div>
@@ -1055,9 +1412,12 @@ export const AuctionRoom: React.FC = () => {
                   {group.items.map(p => {
                     const rtg = group.statLabel === 'BWL' ? p.ratings.bowl : p.ratings.bat;
                     const priceVal = p.salaryCr || p.basePriceCr || 2.0;
-                    const priceStr = priceVal >= 1 ? `${priceVal.toFixed(priceVal % 1 === 0 ? 0 : 2)} cr` : `${Math.round(priceVal * 100)}L`;
+                    const priceStr = formatAuctionPriceCr(priceVal);
                     return (
-                      <div key={p.id} className="p-2.5 rounded-xl bg-[#0f172a] border border-slate-800 flex items-center justify-between">
+                      <div
+                        key={p.id}
+                        className="p-2.5 rounded-xl bg-[#0f172a] border border-slate-800 flex items-center justify-between"
+                      >
                         <div className="flex items-center gap-2.5">
                           <div className="w-7 h-7 rounded-full bg-slate-800 text-xs font-bold flex items-center justify-center text-slate-300">
                             {p.jerseyNumber || 18}
@@ -1071,12 +1431,18 @@ export const AuctionRoom: React.FC = () => {
                                 </span>
                               )}
                             </div>
-                            <span className="text-[10px] text-slate-400">{p.role} · age {p.age}</span>
+                            <span className="text-[10px] text-slate-400">
+                              {p.role} · age {p.age}
+                            </span>
                           </div>
                         </div>
                         <div className="text-right">
-                          <span className="text-xs font-mono font-bold text-emerald-400">{group.statLabel} {rtg}</span>
-                          <span className="text-[10px] font-mono text-amber-300 block">{priceStr}</span>
+                          <span className="text-xs font-mono font-bold text-emerald-400">
+                            {group.statLabel} {rtg}
+                          </span>
+                          <span className="text-[10px] font-mono text-amber-300 block">
+                            {priceStr}
+                          </span>
                         </div>
                       </div>
                     );
@@ -1096,7 +1462,7 @@ export const AuctionRoom: React.FC = () => {
               className="w-full py-4 bg-gradient-to-r from-[#eab308] via-[#f5b82e] to-[#eab308] hover:from-[#facc15] hover:to-[#f5b82e] text-black font-black text-xs uppercase tracking-widest rounded-2xl flex items-center justify-center gap-2 shadow-xl shadow-amber-500/25 active:scale-98 transition-all"
             >
               <Gavel className="w-4 h-4 fill-current" />
-              RESUME AUCTION
+              RESUME AUCTION ({currentSetMeta.name})
             </button>
           </div>
         </div>

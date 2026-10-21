@@ -33,6 +33,19 @@ import {
 } from '../utils/cricketAnimationTimeline';
 import { InningsData, BallOutcome, Player, MatchLiveState } from '../types/cricket';
 import {
+  AUCTION_PLAYERS_2026,
+  AUCTION_SETS_META,
+  AUCTION_SET_SEQUENCE,
+  INITIAL_AUCTION_CLUBS,
+  resolveAuctionFranchise,
+  convertLakhToCrore,
+  getAuctionBidIncrementCr,
+  getNextAuctionBidCr,
+  canFranchiseBidOnLot,
+  evaluateAiCounterBid,
+  settleAuctionLotAmongAi
+} from '../data/auctionSets2026';
+import {
   FIELD_TEMPLATES,
   validateFieldRestrictions,
   analyzeBatterBowlerMatchup,
@@ -1241,6 +1254,175 @@ runTest('REGRESSION', 'Step 5.8: End-to-End Multi-Feature Integration (Director,
   // Feature 8: Manager Career & Job Market
   assert.ok(INITIAL_JOB_OFFERS.length >= 5);
   assert.ok(INITIAL_COACH_PROFILE.boardTargets.length >= 3);
+});
+
+runTest('REGRESSION', 'Phase 21: TATA IPL 2026 Auction Audit — 350 PDF Players, 42 Official Sets, Reserve Prices & Bidding Rules', () => {
+  // 1. Exact 350 players in listSrNo order 1..350 with unique IDs and full names
+  assert.equal(AUCTION_PLAYERS_2026.length, 350, 'AUCTION_PLAYERS_2026 must contain all 350 PDF players');
+  const uniqueIds = new Set(AUCTION_PLAYERS_2026.map(p => p.id));
+  assert.equal(uniqueIds.size, 350, 'All 350 auction players must have unique IDs');
+  AUCTION_PLAYERS_2026.forEach((p, idx) => {
+    assert.equal(p.listSrNo, idx + 1, `Player at index ${idx} must have listSrNo=${idx + 1}`);
+    assert.equal(p.name, `${p.firstName} ${p.surname}`, `Player #${p.listSrNo} must preserve full name`);
+    assert.ok(p.name.includes(' '), `Player #${p.listSrNo} (${p.name}) must not be surname-only`);
+    assert.equal(p.isOverseas, p.country !== 'India', `Player #${p.listSrNo} overseas flag must match country`);
+    assert.equal(p.basePriceCr, convertLakhToCrore(p.reservePriceLakh), `Player #${p.listSrNo} basePriceCr must equal reservePriceLakh / 100`);
+  });
+
+  // Spot-check factual PDF records across pages 1 to 7
+  const p1 = AUCTION_PLAYERS_2026[0];
+  assert.equal(p1.name, 'Devon Conway');
+  assert.equal(p1.set, 'BA1');
+  assert.equal(p1.setNumber, 1);
+  assert.equal(p1.reservePriceLakh, 200);
+  assert.equal(p1.basePriceCr, 2.0);
+  assert.equal(p1.bowlingStyle, null, 'Devon Conway has no bowling style in PDF and must retain null');
+  assert.equal(p1.previousIplTeam, 'CSK');
+  assert.equal(p1.iplMatches, 29);
+
+  const p2 = AUCTION_PLAYERS_2026[1];
+  assert.equal(p2.name, 'Jake Fraser-McGurk');
+  assert.equal(p2.testCaps, null, 'Jake Fraser-McGurk has blank Test caps in PDF and must retain null');
+  assert.equal(p2.odiCaps, 7);
+  assert.equal(p2.t20Caps, 8);
+  assert.equal(p2.iplMatches, 15);
+
+  const p16 = AUCTION_PLAYERS_2026[15];
+  assert.equal(p16.name, 'K.S. Bharat');
+  assert.equal(p16.set, 'WK1');
+  assert.equal(p16.reservePriceLakh, 75);
+  assert.equal(p16.basePriceCr, 0.75);
+
+  const p161 = AUCTION_PLAYERS_2026[160];
+  assert.equal(p161.name, 'Beau Webster');
+  assert.equal(p161.set, 'AL3');
+  assert.equal(p161.reservePriceLakh, 125);
+  assert.equal(p161.basePriceCr, 1.25);
+
+  const p350 = AUCTION_PLAYERS_2026[349];
+  assert.equal(p350.name, 'Parikshit Valsangkar');
+  assert.equal(p350.set, 'UAL10');
+  assert.equal(p350.setNumber, 42);
+  assert.equal(p350.reservePriceLakh, 30);
+  assert.equal(p350.basePriceCr, 0.30);
+
+  // 2. Exact 42 official set identifiers in sequence, with lotsCount summing to 350
+  const expectedSetOrder = [
+    'BA1', 'AL1', 'WK1', 'FA1', 'SP1',
+    'UBA1', 'UAL1', 'UWK1', 'UFA1', 'USP1',
+    'BA2', 'AL2', 'WK2', 'FA2', 'SP2',
+    'UBA2', 'UAL2', 'UWK2', 'UFA2', 'USP2',
+    'AL3', 'FA3', 'UBA3', 'UAL3', 'UWK3', 'UFA3', 'USP3',
+    'AL4', 'FA4', 'UBA4', 'UAL4', 'UFA4', 'USP4',
+    'FA5', 'UAL5', 'UFA5',
+    'UAL6', 'UFA6',
+    'UAL7', 'UAL8', 'UAL9', 'UAL10'
+  ];
+  assert.deepEqual([...AUCTION_SET_SEQUENCE], expectedSetOrder, 'AUCTION_SET_SEQUENCE must match exact 42-set PDF sequence');
+  assert.equal(AUCTION_SETS_META.length, 42, 'AUCTION_SETS_META must have 42 sets');
+  const totalLotsFromMeta = AUCTION_SETS_META.reduce((acc, s) => acc + s.lotsCount, 0);
+  assert.equal(totalLotsFromMeta, 350, 'Sum of lotsCount across all 42 sets must equal 350');
+  AUCTION_SETS_META.forEach((s, idx) => {
+    assert.equal(s.id, expectedSetOrder[idx]);
+    assert.equal(s.setNumber, idx + 1);
+    assert.equal(s.name, `SET ${idx + 1} · ${s.id}`);
+    const actualCount = AUCTION_PLAYERS_2026.filter(p => p.set === s.id).length;
+    assert.equal(s.lotsCount, actualCount, `lotsCount for ${s.id} must match imported dataset count`);
+  });
+
+  // 3. Canonical franchise resolution across all 10 IPL teams
+  INITIAL_TEAMS.forEach(team => {
+    const resolvedById = resolveAuctionFranchise(team.id);
+    const resolvedByShort = resolveAuctionFranchise(team.shortName);
+    assert.ok(resolvedById, `Must resolve franchise by team.id=${team.id}`);
+    assert.ok(resolvedByShort, `Must resolve franchise by team.shortName=${team.shortName}`);
+    assert.equal(resolvedById?.teamId, team.id);
+  });
+  assert.equal(INITIAL_AUCTION_CLUBS.length, 10);
+
+  // 4. Official bid increments and eligibility enforcement (self-bid, purse, 25 squad, 8 overseas)
+  assert.equal(getNextAuctionBidCr(0.30, false), 0.30, 'Opening bid must equal exact reserve price');
+  assert.equal(getNextAuctionBidCr(0.30, true), 0.35, 'Sub-1Cr raise must increment by 0.05 Cr (5L)');
+  assert.equal(getAuctionBidIncrementCr(1.00), 0.10, '1Cr-2Cr raise must increment by 0.10 Cr (10L)');
+  assert.equal(getAuctionBidIncrementCr(2.00), 0.20, '2Cr-5Cr raise must increment by 0.20 Cr (20L)');
+  assert.equal(getAuctionBidIncrementCr(5.00), 0.25, '5Cr+ raise must increment by 0.25 Cr (25L)');
+
+  // Self-bid guard
+  assert.equal(
+    canFranchiseBidOnLot({
+      franchiseShort: 'CSK',
+      currentBidderShort: 'CSK',
+      lotStatus: 'bidding',
+      nextBidCr: 2.20,
+      purseCr: 30,
+      squadCount: 18,
+      overseasCount: 5,
+      isOverseasLot: true
+    }).allowed,
+    false,
+    'Franchise must not be allowed to outbid itself'
+  );
+
+  // 25-player squad cap guard
+  assert.equal(
+    canFranchiseBidOnLot({
+      franchiseShort: 'CSK',
+      currentBidderShort: null,
+      lotStatus: 'bidding',
+      nextBidCr: 2.00,
+      purseCr: 30,
+      squadCount: 25,
+      overseasCount: 5,
+      isOverseasLot: false
+    }).allowed,
+    false,
+    'Franchise at 25/25 players must not be allowed to bid'
+  );
+
+  // 8-overseas player cap guard
+  assert.equal(
+    canFranchiseBidOnLot({
+      franchiseShort: 'CSK',
+      currentBidderShort: null,
+      lotStatus: 'bidding',
+      nextBidCr: 2.00,
+      purseCr: 30,
+      squadCount: 20,
+      overseasCount: 8,
+      isOverseasLot: true
+    }).allowed,
+    false,
+    'Franchise at 8/8 overseas players must not be allowed to bid on an overseas lot'
+  );
+
+  // AI counter-bid and lot settlement respect purse & quota limits
+  const brokeAiSnapshots = INITIAL_AUCTION_CLUBS.map(c => ({
+    shortName: c.shortName,
+    teamName: c.teamName,
+    primaryColor: c.primaryColor,
+    purseCr: 0.10, // Below 0.30 Cr minimum reserve price
+    squadCount: 18,
+    overseasCount: 4
+  }));
+  assert.equal(
+    evaluateAiCounterBid({
+      lot: p1,
+      currentBidCr: 2.0,
+      currentBidderShort: 'KOL',
+      userTeamShort: 'KOL',
+      aiTeams: brokeAiSnapshots
+    }),
+    null,
+    'AI teams without sufficient purse must never place a counter-bid'
+  );
+  const unsoldSettlement = settleAuctionLotAmongAi({
+    lot: p1,
+    startingBidCr: p1.basePriceCr,
+    startingBidderShort: null,
+    userTeamShort: 'KOL',
+    aiTeams: brokeAiSnapshots
+  });
+  assert.equal(unsoldSettlement.status, 'unsold', 'Lot must go unsold when no AI team can afford the reserve price');
 });
 
 const failed = results.filter(r => !r.passed);

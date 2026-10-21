@@ -134,7 +134,7 @@ export const MiniAuctionReleasesModal: React.FC<MiniAuctionReleasesModalProps> =
                 <div>
                   <div className="flex items-center gap-1.5">
                     <h4 className={`text-xs font-bold leading-tight ${isReleased ? 'text-rose-300 line-through' : 'text-white'}`}>
-                      {player.name.split(' ').pop()}
+                      {player.name}
                     </h4>
                     {player.isOverseas && (
                       <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-sky-950 text-sky-400 border border-sky-800/60 font-semibold">

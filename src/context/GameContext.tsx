@@ -5481,8 +5481,26 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const placeUserBid = useCallback(() => {
     if (!auctionLot || auctionLot.status !== 'active') return;
+    if (auctionLot.currentBidderTeamId === userTeam.id) return; // Cannot outbid self
 
-    const nextAmount = Number((auctionLot.currentBidCr + 0.2).toFixed(2));
+    const hasOpeningBid = auctionLot.currentBidderTeamId !== null;
+    const increment =
+      auctionLot.currentBidCr < 1.0
+        ? 0.05
+        : auctionLot.currentBidCr < 2.0
+        ? 0.1
+        : auctionLot.currentBidCr < 5.0
+        ? 0.2
+        : 0.25;
+    const nextAmount = hasOpeningBid
+      ? Number((auctionLot.currentBidCr + increment).toFixed(2))
+      : Number(auctionLot.currentBidCr.toFixed(2));
+
+    const userSquadPlayers = players.filter(p => p.clubId === userTeam.id);
+    const userOverseasCount = userSquadPlayers.filter(p => p.isOverseas).length;
+
+    if (userSquadPlayers.length >= 25) return; // Max 25 squad limit
+    if (auctionLot.player.isOverseas && userOverseasCount >= 8) return; // Max 8 overseas limit
     if (userTeam.purseCr < nextAmount) {
       return; // Not enough purse
     }
@@ -5509,15 +5527,24 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsAiBidding(true);
     const delayMs = aiBiddingSpeed === 'instant' ? 120 : aiBiddingSpeed === 'fast' ? 450 : 1000;
     setTimeout(() => {
-      const shouldAiBid = Math.random() < 0.65;
+      const aiInc =
+        nextAmount < 1.0 ? 0.05 : nextAmount < 2.0 ? 0.1 : nextAmount < 5.0 ? 0.2 : 0.25;
+      const aiAmount = Number((nextAmount + aiInc).toFixed(2));
+      const shouldAiBid = Math.random() < 0.65 && aiAmount <= 18.5;
       if (shouldAiBid) {
-        const otherTeams = teams.filter(t => t.id !== userTeam.id && t.purseCr > nextAmount + 0.2);
+        const otherTeams = teams.filter(t => {
+          if (t.id === userTeam.id) return false;
+          const tSquad = players.filter(p => p.clubId === t.id);
+          const tOverseas = tSquad.filter(p => p.isOverseas).length;
+          if (tSquad.length >= 25) return false;
+          if (auctionLot.player.isOverseas && tOverseas >= 8) return false;
+          return t.purseCr >= aiAmount;
+        });
         const aiTeam = otherTeams[Math.floor(Math.random() * otherTeams.length)];
         if (aiTeam) {
-          const aiAmount = Number((nextAmount + 0.2).toFixed(2));
           sound.playGavel();
           setAuctionLot(lot => {
-            if (!lot) return null;
+            if (!lot || lot.status !== 'active') return lot;
             return {
               ...lot,
               currentBidCr: aiAmount,
@@ -5534,7 +5561,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       setIsAiBidding(false);
     }, delayMs);
-  }, [auctionLot, userTeam, teams, aiBiddingSpeed]);
+  }, [auctionLot, userTeam, teams, players, aiBiddingSpeed]);
 
   const skipAuctionLot = useCallback(() => {
     if (!auctionLot) return;
@@ -5550,8 +5577,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (t.id === winnerId) {
           return {
             ...t,
-            purseCr: Number((t.purseCr - winningPrice).toFixed(2)),
-            squad: [...t.squad, auctionLot.player]
+            purseCr: Math.max(0, Number((t.purseCr - winningPrice).toFixed(2))),
+            squad: [...t.squad.filter(sp => sp.id !== auctionLot.player.id), { ...auctionLot.player, clubId: winnerId, salaryCr: winningPrice }]
           };
         }
         return t;
@@ -5582,6 +5609,10 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const useRtmCard = useCallback(() => {
     if (!auctionLot || userTeam.rtmCards <= 0) return;
+    if (userTeam.purseCr < auctionLot.currentBidCr) return;
+    const userSquadPlayers = players.filter(p => p.clubId === userTeam.id);
+    if (userSquadPlayers.length >= 25) return;
+    if (auctionLot.player.isOverseas && userSquadPlayers.filter(p => p.isOverseas).length >= 8) return;
 
     sound.playGavel();
     sound.playCrowdCheer(1.0);
@@ -5602,8 +5633,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return {
           ...t,
           rtmCards: t.rtmCards - 1,
-          purseCr: Number((t.purseCr - auctionLot.currentBidCr).toFixed(2)),
-          squad: [...t.squad, auctionLot.player]
+          purseCr: Math.max(0, Number((t.purseCr - auctionLot.currentBidCr).toFixed(2))),
+          squad: [...t.squad.filter(sp => sp.id !== auctionLot.player.id), { ...auctionLot.player, clubId: userTeam.id, salaryCr: winningPrice }]
         };
       }
       return t;
@@ -5615,7 +5646,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       soldToTeamId: userTeam.id,
       soldPriceCr: prev.currentBidCr
     } : null);
-  }, [auctionLot, userTeam, unlockAchievement]);
+  }, [auctionLot, userTeam, players, unlockAchievement]);
 
   const nextAuctionLot = useCallback(() => {
     const nextIdx = currentAuctionIndex + 1;
