@@ -288,8 +288,8 @@ export const LiveMatchEngine: React.FC = () => {
   const impactIdsSet = new Set(activeUserMatchTeam.impactPlayerIds || []);
   const nominatedImpacts = rawBenchPlayers.filter(p => impactIdsSet.has(p.id));
   const benchPlayers = nominatedImpacts.length > 0
-    ? [...nominatedImpacts, ...rawBenchPlayers.filter(p => !impactIdsSet.has(p.id))]
-    : rawBenchPlayers;
+    ? nominatedImpacts.slice(0, 5)
+    : rawBenchPlayers.slice(0, 5);
   const bowlingXIPlayers = bowlingTeam.playingXIIds
     .map(id => players.find(p => p.id === id))
     .filter((p): p is Player => Boolean(p))
