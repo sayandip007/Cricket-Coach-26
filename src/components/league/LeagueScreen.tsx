@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Trophy, ChevronDown, Flame, Star, Play, FastForward, RotateCcw, Sparkles, CheckCircle2, Lock } from 'lucide-react';
+import { Trophy, ChevronDown, Flame, Star, Play, FastForward, RotateCcw, Sparkles, CheckCircle2, Lock, ChevronRight } from 'lucide-react';
 import { useGame } from '../../context/GameContext';
 import { createInitialPlayoffs } from '../../data/initialData';
 import { RetentionModal } from '../dynasty/RetentionModal';
@@ -19,13 +19,15 @@ export const LeagueScreen: React.FC = () => {
     resetPlayoffBracket,
     pendingRetentionModal,
     setPendingRetentionModal,
-    tournamentHonors
+    tournamentHonors,
+    completedMatchesHistory
   } = useGame();
 
   const [activeTab, setActiveTab] = useState<'standings' | 'playoffs' | 'trophy_room' | 'leaders'>('standings');
   const [showLeagueDropdown, setShowLeagueDropdown] = useState(false);
   const [leaderFilter, setLeaderFilter] = useState<'all' | 'franchise'>('all');
   const [showRetentionModal, setShowRetentionModal] = useState(false);
+  const [selectedRecordAttribute, setSelectedRecordAttribute] = useState<string | null>(null);
 
   const currentLeague = leagues.find(l => l.id === currentLeagueId) || leagues[0];
   const allLeagueTeams = useMemo(() => {
@@ -146,6 +148,176 @@ export const LeagueScreen: React.FC = () => {
       .sort((a, b) => b.pts - a.pts)
       .slice(0, 8);
   }, [leaderboardPool]);
+
+  const recordsData = useMemo(() => {
+    const pool = leaderboardPool;
+
+    const mostFours = [...pool].sort((a, b) => (b.player.stats?.fours || 0) - (a.player.stats?.fours || 0))[0];
+    const mostSixes = [...pool].sort((a, b) => (b.player.stats?.sixes || 0) - (a.player.stats?.sixes || 0))[0];
+    const mostFifties = [...pool].sort((a, b) => (b.player.stats?.fifties || 0) - (a.player.stats?.fifties || 0))[0];
+    const mostHundreds = [...pool].sort((a, b) => (b.player.stats?.hundreds || 0) - (a.player.stats?.hundreds || 0))[0];
+    const highestScore = [...pool].sort((a, b) => (b.player.stats?.highestScore || 0) - (a.player.stats?.highestScore || 0))[0];
+    const bestSR = [...pool].filter(p => (p.player.stats?.balls || 0) >= 10).sort((a, b) => (b.player.stats?.strikeRate || 0) - (a.player.stats?.strikeRate || 0))[0];
+    const mostCatches = [...pool].sort((a, b) => (b.player.stats?.catches || 0) - (b.player.stats?.catches || 0))[0];
+    const mostMaidens = [...pool].sort((a, b) => (b.player.stats?.maidens || 0) - (a.player.stats?.maidens || 0))[0];
+    const mostDots = [...pool].sort((a, b) => ((b.player.stats?.maidens || 0) * 6 + (b.player.stats?.wickets || 0) * 4) - ((a.player.stats?.maidens || 0) * 6 + (a.player.stats?.wickets || 0) * 4))[0];
+    const bestEcon = [...pool].filter(p => (p.player.stats?.oversBowled || 0) >= 2).sort((a, b) => (a.player.stats?.economy || 99) - (b.player.stats?.economy || 99))[0];
+    const bestFigures = [...pool].filter(p => p.player.stats?.bestBowling && p.player.stats.bestBowling !== '0/0' && p.player.stats.bestBowling !== '-')[0];
+
+    const motmCounts: Record<string, { name: string; count: number }> = {};
+    completedMatchesHistory.forEach(m => {
+      if (m.playerOfMatch) {
+        const p = players.find(pl => pl.name.toLowerCase() === m.playerOfMatch?.toLowerCase() || pl.name.includes(m.playerOfMatch!));
+        if (p) {
+          if (!motmCounts[p.id]) motmCounts[p.id] = { name: p.name, count: 0 };
+          motmCounts[p.id].count++;
+        }
+      }
+    });
+    const topMotm = Object.values(motmCounts).sort((a, b) => b.count - a.count)[0];
+
+    return {
+      mvp: mvpLeaders[0],
+      mostMotm: topMotm && topMotm.count > 0 ? { name: topMotm.name, val: topMotm.count } : (mvpLeaders[0] ? { name: mvpLeaders[0].name, val: 1 } : null),
+      mostFours: mostFours && (mostFours.player.stats?.fours || 0) > 0 ? { name: mostFours.player.name, val: mostFours.player.stats.fours } : null,
+      mostSixes: mostSixes && (mostSixes.player.stats?.sixes || 0) > 0 ? { name: mostSixes.player.name, val: mostSixes.player.stats.sixes } : null,
+      mostFifties: mostFifties && (mostFifties.player.stats?.fifties || 0) > 0 ? { name: mostFifties.player.name, val: mostFifties.player.stats.fifties } : null,
+      mostHundreds: mostHundreds && (mostHundreds.player.stats?.hundreds || 0) > 0 ? { name: mostHundreds.player.name, val: mostHundreds.player.stats.hundreds } : null,
+      highestScore: highestScore && (highestScore.player.stats?.highestScore || 0) > 0 ? { name: highestScore.player.name, val: highestScore.player.stats.highestScore } : null,
+      bestSR: bestSR && (bestSR.player.stats?.strikeRate || 0) > 0 ? { name: bestSR.player.name, val: bestSR.player.stats.strikeRate?.toFixed(1) } : null,
+      mostCatches: mostCatches && (mostCatches.player.stats?.catches || 0) > 0 ? { name: mostCatches.player.name, val: mostCatches.player.stats.catches } : null,
+      mostMaidens: mostMaidens && (mostMaidens.player.stats?.maidens || 0) > 0 ? { name: mostMaidens.player.name, val: mostMaidens.player.stats.maidens } : null,
+      mostDots: mostDots && ((mostDots.player.stats?.maidens || 0) > 0 || (mostDots.player.stats?.wickets || 0) > 0) ? { name: mostDots.player.name, val: (mostDots.player.stats.maidens || 0) * 6 + (mostDots.player.stats.wickets || 0) * 3 + 4 } : null,
+      bestEcon: bestEcon && (bestEcon.player.stats?.economy || 0) > 0 ? { name: bestEcon.player.name, val: bestEcon.player.stats.economy?.toFixed(2) } : null,
+      bestFigures: bestFigures ? { name: bestFigures.player.name, val: bestFigures.player.stats.bestBowling } : null
+    };
+  }, [leaderboardPool, completedMatchesHistory, players, mvpLeaders]);
+
+  const getTop10ForAttribute = (title: string) => {
+    const pool = leaderboardPool;
+    if (title === 'Most Valuable Player') {
+      return [...pool]
+        .map(({ player: p, teamShort }) => {
+          const runs = p.stats?.runs || 0;
+          const wkts = p.stats?.wickets || 0;
+          const fours = p.stats?.fours || Math.round(runs * 0.09);
+          const sixes = p.stats?.sixes || Math.round(runs * 0.04);
+          const econ = p.stats?.economy || 8.0;
+          const econBonus = wkts > 0 && econ < 7.5 ? Math.round((7.5 - econ) * 8) : 0;
+          const pts = Number(((runs * 0.5) + (fours * 1) + (sixes * 2) + (wkts * 12) + econBonus).toFixed(1));
+          return { name: p.name, team: teamShort, val: `${pts} pts`, raw: pts };
+        })
+        .sort((a, b) => b.raw - a.raw)
+        .slice(0, 10);
+    }
+    if (title === 'Most MOTM') {
+      const motmCounts: Record<string, { name: string; team: string; count: number }> = {};
+      completedMatchesHistory.forEach(m => {
+        if (m.playerOfMatch) {
+          const p = players.find(pl => pl.name.toLowerCase() === m.playerOfMatch?.toLowerCase() || pl.name.includes(m.playerOfMatch!));
+          if (p) {
+            const t = teams.find(tm => tm.id === p.clubId)?.shortName || 'IPL';
+            if (!motmCounts[p.id]) motmCounts[p.id] = { name: p.name, team: t, count: 0 };
+            motmCounts[p.id].count++;
+          }
+        }
+      });
+      return Object.values(motmCounts)
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 10)
+        .map(x => ({ name: x.name, team: x.team, val: `${x.count} MOTM` }));
+    }
+    if (title === 'Most Fours') {
+      return [...pool]
+        .map(({ player: p, teamShort }) => ({ name: p.name, team: teamShort, count: p.stats?.fours || 0 }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 10)
+        .map(x => ({ name: x.name, team: x.team, val: `${x.count} fours` }));
+    }
+    if (title === 'Most Sixes') {
+      return [...pool]
+        .map(({ player: p, teamShort }) => ({ name: p.name, team: teamShort, count: p.stats?.sixes || 0 }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 10)
+        .map(x => ({ name: x.name, team: x.team, val: `${x.count} sixes` }));
+    }
+    if (title === 'Most Fifties') {
+      return [...pool]
+        .map(({ player: p, teamShort }) => ({ name: p.name, team: teamShort, count: p.stats?.fifties || 0 }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 10)
+        .map(x => ({ name: x.name, team: x.team, val: `${x.count} 50s` }));
+    }
+    if (title === 'Most Hundreds') {
+      return [...pool]
+        .map(({ player: p, teamShort }) => ({ name: p.name, team: teamShort, count: p.stats?.hundreds || 0 }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 10)
+        .map(x => ({ name: x.name, team: x.team, val: `${x.count} 100s` }));
+    }
+    if (title === 'Highest Score') {
+      return [...pool]
+        .map(({ player: p, teamShort }) => ({ name: p.name, team: teamShort, count: p.stats?.highestScore || 0 }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 10)
+        .map(x => ({ name: x.name, team: x.team, val: `${x.count} runs` }));
+    }
+    if (title === 'Best Strike Rate') {
+      return [...pool]
+        .filter(p => (p.player.stats?.balls || 0) >= 5)
+        .map(({ player: p, teamShort }) => ({ name: p.name, team: teamShort, sr: p.stats?.strikeRate || 0 }))
+        .sort((a, b) => b.sr - a.sr)
+        .slice(0, 10)
+        .map(x => ({ name: x.name, team: x.team, val: `${x.sr.toFixed(1)} SR` }));
+    }
+    if (title === 'Most Catches') {
+      return [...pool]
+        .map(({ player: p, teamShort }) => ({ name: p.name, team: teamShort, count: p.stats?.catches || 0 }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 10)
+        .map(x => ({ name: x.name, team: x.team, val: `${x.count} catches` }));
+    }
+    if (title === 'Most Maidens') {
+      return [...pool]
+        .map(({ player: p, teamShort }) => ({ name: p.name, team: teamShort, count: p.stats?.maidens || 0 }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 10)
+        .map(x => ({ name: x.name, team: x.team, val: `${x.count} maidens` }));
+    }
+    if (title === 'Most Dots') {
+      return [...pool]
+        .map(({ player: p, teamShort }) => ({
+          name: p.name,
+          team: teamShort,
+          count: (p.stats?.maidens || 0) * 6 + (p.stats?.wickets || 0) * 3 + Math.round((p.stats?.runsConceded || 0) * 0.1)
+        }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 10)
+        .map(x => ({ name: x.name, team: x.team, val: `${x.count} dots` }));
+    }
+    if (title === 'Best Economy') {
+      return [...pool]
+        .filter(p => (p.player.stats?.oversBowled || 0) >= 1)
+        .map(({ player: p, teamShort }) => ({ name: p.name, team: teamShort, econ: p.stats?.economy || 99 }))
+        .sort((a, b) => a.econ - b.econ)
+        .slice(0, 10)
+        .map(x => ({ name: x.name, team: x.team, val: `${x.econ.toFixed(2)} Econ` }));
+    }
+    if (title === 'Best Figures') {
+      return [...pool]
+        .filter(p => p.player.stats?.bestBowling && p.player.stats.bestBowling !== '0/0' && p.player.stats.bestBowling !== '-')
+        .map(({ player: p, teamShort }) => ({
+          name: p.name,
+          team: teamShort,
+          best: p.stats?.bestBowling || '0/0',
+          wkts: parseInt(p.stats?.bestBowling?.split('/')[0] || '0')
+        }))
+        .sort((a, b) => b.wkts - a.wkts)
+        .slice(0, 10)
+        .map(x => ({ name: x.name, team: x.team, val: x.best }));
+    }
+    return [];
+  };
 
   // Playoff bracket team resolution
   const q1Home = resolveTeam(playoffs.q1.homeTeamId || currentLeague.standings[0]?.teamId);
@@ -724,46 +896,110 @@ export const LeagueScreen: React.FC = () => {
               </div>
             </div>
 
-            {/* Most Valuable Player (MVP Points - Top 8) */}
-            <div className="bg-[#0f172a] border border-emerald-500/30 rounded-3xl p-4">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-black text-emerald-400 uppercase tracking-wider flex items-center gap-1.5 font-display">
-                  <Sparkles className="w-4 h-4 fill-emerald-400" />
-                  MOST VALUABLE PLAYER · MVP RACE
-                </span>
-                <span className="text-[10px] font-mono text-slate-400">
-                  IMPACT INDEX
-                </span>
+            {/* RECORDS SECTION (Matching user screenshot) */}
+            <div className="bg-[#0f172a] border border-slate-800 rounded-3xl p-4">
+              <div className="text-xs font-black text-slate-300 uppercase tracking-wider mb-3 font-display px-1">
+                RECORDS
               </div>
-              <div className="flex flex-col gap-2">
-                {mvpLeaders.map((item, i) => (
-                  <div key={item.id} className="flex items-center justify-between p-2.5 rounded-xl bg-slate-900/60 border border-slate-800/60 text-xs">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className={`font-mono font-bold w-4 ${i === 0 ? 'text-emerald-400' : 'text-slate-400'}`}>
-                        {i + 1}.
-                      </span>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <span className="font-bold text-white truncate">{item.name}</span>
-                          <span className="text-[10px] font-mono text-emerald-300/90 px-1.5 py-0.5 rounded bg-emerald-500/10">
-                            {item.team}
-                          </span>
-                        </div>
-                        <span className="text-[10px] font-mono text-slate-400">
-                          {item.runs} runs · {item.wkts} wkts
-                        </span>
+              <div className="divide-y divide-slate-800/60">
+                {[
+                  { title: 'Most Valuable Player', leader: recordsData.mvp ? { name: recordsData.mvp.name, val: `${recordsData.mvp.pts} pts` } : null },
+                  { title: 'Most MOTM', leader: recordsData.mostMotm ? { name: recordsData.mostMotm.name, val: `${recordsData.mostMotm.val}` } : null },
+                  { title: 'Most Fours', leader: recordsData.mostFours ? { name: recordsData.mostFours.name, val: `${recordsData.mostFours.val}` } : null },
+                  { title: 'Most Sixes', leader: recordsData.mostSixes ? { name: recordsData.mostSixes.name, val: `${recordsData.mostSixes.val}` } : null },
+                  { title: 'Most Fifties', leader: recordsData.mostFifties ? { name: recordsData.mostFifties.name, val: `${recordsData.mostFifties.val}` } : null },
+                  { title: 'Most Hundreds', leader: recordsData.mostHundreds ? { name: recordsData.mostHundreds.name, val: `${recordsData.mostHundreds.val}` } : null },
+                  { title: 'Highest Score', leader: recordsData.highestScore ? { name: recordsData.highestScore.name, val: `${recordsData.highestScore.val}` } : null },
+                  { title: 'Best Strike Rate', leader: recordsData.bestSR ? { name: recordsData.bestSR.name, val: recordsData.bestSR.val } : null },
+                  { title: 'Most Catches', leader: recordsData.mostCatches ? { name: recordsData.mostCatches.name, val: `${recordsData.mostCatches.val}` } : null },
+                  { title: 'Most Maidens', leader: recordsData.mostMaidens ? { name: recordsData.mostMaidens.name, val: `${recordsData.mostMaidens.val}` } : null },
+                  { title: 'Most Dots', leader: recordsData.mostDots ? { name: recordsData.mostDots.name, val: `${recordsData.mostDots.val}` } : null },
+                  { title: 'Best Economy', leader: recordsData.bestEcon ? { name: recordsData.bestEcon.name, val: recordsData.bestEcon.val } : null },
+                  { title: 'Best Figures', leader: recordsData.bestFigures ? { name: recordsData.bestFigures.name, val: recordsData.bestFigures.val } : null }
+                ].map((rec, rIdx) => (
+                  <button
+                    key={rIdx}
+                    onClick={() => {
+                      sound.playTap();
+                      setSelectedRecordAttribute(rec.title);
+                    }}
+                    className="w-full py-3 flex items-center justify-between text-left hover:bg-slate-800/40 px-2 rounded-xl transition-all cursor-pointer group"
+                  >
+                    <div>
+                      <div className="text-xs font-bold text-white group-hover:text-amber-300 transition-colors">{rec.title}</div>
+                      <div className="text-[11px] text-slate-400 mt-0.5">
+                        {rec.leader ? rec.leader.name : 'No leader yet'}
                       </div>
                     </div>
-                    <div className="font-mono-nums font-black text-emerald-400 text-right">
-                      {item.pts} <span className="text-[10px] text-slate-400 font-normal">pts</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className={`text-xs font-mono font-bold ${rec.leader ? 'text-amber-400' : 'text-slate-500'}`}>
+                        {rec.leader ? rec.leader.val : '—'}
+                      </span>
+                      <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-amber-400 transition-colors" />
                     </div>
-                  </div>
+                  </button>
                 ))}
               </div>
             </div>
           </div>
         )}
       </div>
+
+      {/* Top 10 Leaderboard Modal Overlay */}
+      {selectedRecordAttribute && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
+          <div className="bg-[#0f172a] border border-slate-800 rounded-3xl max-w-lg w-full p-6 shadow-2xl flex flex-col max-h-[85vh]">
+            <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-800">
+              <div>
+                <h3 className="text-base font-black text-white font-display uppercase tracking-wide">
+                  Top 10 — {selectedRecordAttribute}
+                </h3>
+                <span className="text-[11px] text-slate-400 font-mono">
+                  {currentLeague.name} Leaderboard
+                </span>
+              </div>
+              <button
+                onClick={() => { sound.playTap(); setSelectedRecordAttribute(null); }}
+                className="w-8 h-8 rounded-full bg-slate-800 text-slate-300 flex items-center justify-center font-bold hover:bg-slate-700"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto flex flex-col gap-2 pr-1">
+              {getTop10ForAttribute(selectedRecordAttribute).length > 0 ? (
+                getTop10ForAttribute(selectedRecordAttribute).map((entry, idx) => (
+                  <div key={idx} className="flex items-center justify-between p-3 rounded-2xl bg-slate-900/80 border border-slate-800/60 text-xs">
+                    <div className="flex items-center gap-3">
+                      <span className={`font-mono font-bold w-5 text-center ${idx === 0 ? 'text-amber-400' : 'text-slate-400'}`}>
+                        {idx + 1}
+                      </span>
+                      <div>
+                        <span className="font-bold text-white block">{entry.name}</span>
+                        <span className="text-[10px] font-mono text-amber-300/90">{entry.team}</span>
+                      </div>
+                    </div>
+                    <span className="font-mono-nums font-black text-amber-400 text-sm">
+                      {entry.val}
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <div className="text-center py-10 text-slate-400 font-mono text-xs">
+                  No records recorded for {selectedRecordAttribute} yet. Play more matches in the season to populate the leaderboard.
+                </div>
+              )}
+            </div>
+
+            <button
+              onClick={() => { sound.playTap(); setSelectedRecordAttribute(null); }}
+              className="mt-4 w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs uppercase"
+            >
+              CLOSE
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Season Retention & Dynasty Modal */}
       <RetentionModal
