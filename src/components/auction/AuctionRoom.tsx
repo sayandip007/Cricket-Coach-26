@@ -234,13 +234,14 @@ export const AuctionRoom: React.FC = () => {
         p => p.id === lot.id || p.name.toLowerCase() === lot.name.toLowerCase()
       );
 
+      const isOverseas = isOverseasPlayer(lot) || isOverseasPlayer(existingPlayer || {});
       const mappedPlayer: Player = existingPlayer
         ? {
             ...existingPlayer,
             name: lot.name,
             age: lot.age,
             country: lot.country,
-            isOverseas: lot.isOverseas,
+            isOverseas,
             battingHand: lot.battingHand,
             bowlingArm: lot.bowlingArm || existingPlayer.bowlingArm || 'RAM',
             bowlingStyle: lot.bowlingStyle || existingPlayer.bowlingStyle,
@@ -259,7 +260,7 @@ export const AuctionRoom: React.FC = () => {
             age: lot.age,
             country: lot.country,
             clubId: winnerTeam.id,
-            isOverseas: lot.isOverseas,
+            isOverseas,
             tier: lot.tier,
             basePriceCr: lot.basePriceCr,
             salaryCr: priceCr,
@@ -1092,8 +1093,9 @@ export const AuctionRoom: React.FC = () => {
               </div>
             </div>
 
-            <h3 className="text-lg sm:text-xl font-black font-display uppercase tracking-wider text-white mt-2.5 text-center">
-              {currentPlayer.name}
+            <h3 className="text-lg sm:text-xl font-black font-display uppercase tracking-wider text-white mt-2.5 text-center flex items-center justify-center gap-2">
+              <span>{currentPlayer.name}</span>
+              {isOverseasPlayer(currentPlayer) && <span title="Overseas Player">✈️</span>}
             </h3>
             <p className="text-xs text-slate-300 font-medium mt-0.5 text-center">
               {currentPlayer.pdfSpecialism} · {currentPlayer.battingHand}
@@ -1514,8 +1516,9 @@ export const AuctionRoom: React.FC = () => {
                         </div>
                         <div>
                           <div className="flex items-center gap-1.5">
-                            <h4 className="text-xs font-bold text-white leading-tight">
-                              {p.name}
+                            <h4 className="text-xs font-bold text-white leading-tight flex items-center gap-1">
+                              <span>{p.name}</span>
+                              {isOverseasPlayer(p) && <span title="Overseas Player">✈️</span>}
                             </h4>
                             {isCurrentLot && (
                               <span className="px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-400 border border-emerald-700 text-[9px] font-mono font-bold">
@@ -1768,10 +1771,13 @@ export const AuctionRoom: React.FC = () => {
                             </div>
                             <div>
                               <div className="flex items-center gap-1.5">
-                                <h4 className="text-xs font-bold text-white">{p.name}</h4>
-                                {p.isOverseas && (
+                                <h4 className="text-xs font-bold text-white flex items-center gap-1">
+                                  <span>{p.name}</span>
+                                  {isOverseasPlayer(p) && <span title="Overseas Player">✈️</span>}
+                                </h4>
+                                {isOverseasPlayer(p) && (
                                   <span className="text-[9px] px-1 rounded bg-sky-950 text-sky-400 border border-sky-800 font-bold">
-                                    {p.country?.slice(0, 3).toUpperCase() || 'OS'}
+                                    {p.country?.slice(0, 3).toUpperCase() || 'OS'} ✈️
                                   </span>
                                 )}
                                 {isAuctionBuy ? (

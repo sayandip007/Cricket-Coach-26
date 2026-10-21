@@ -343,6 +343,17 @@ export interface AiTeamSnapshot {
   overseasCount: number;
 }
 
+export function isOverseasPlayer(player: { isOverseas?: boolean; country?: string }): boolean {
+  if (!player) return false;
+  if (player.isOverseas === true) return true;
+  if (player.country) {
+    const c = player.country.trim().toLowerCase();
+    if (c === 'india' || c === 'ind') return false;
+    return true;
+  }
+  return false;
+}
+
 export function evaluateAiCounterBid(params: {
   lot: AuctionPlayerItem;
   currentBidCr: number;
@@ -369,7 +380,7 @@ export function evaluateAiCounterBid(params: {
       purseCr: t.purseCr,
       squadCount: t.squadCount,
       overseasCount: t.overseasCount,
-      isOverseasLot: lot.isOverseas
+      isOverseasLot: isOverseasPlayer(lot)
     }).allowed;
   });
 

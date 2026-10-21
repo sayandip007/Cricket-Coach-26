@@ -5747,10 +5747,13 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const existingPlayer = prev.sandboxPlayers.find(
         p => p.id === lot.id || p.name.toLowerCase() === lot.name.toLowerCase()
       );
+      const isOverseas = isOverseasPlayer(lot) || isOverseasPlayer(existingPlayer || {});
       const mappedPlayer: Player = existingPlayer
         ? {
             ...existingPlayer,
             name: lot.name,
+            country: lot.country || existingPlayer.country || 'India',
+            isOverseas,
             clubId: buyerTeam.id,
             salaryCr: priceCr
           }
@@ -5759,8 +5762,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             name: lot.name,
             jerseyNumber: lot.jerseyNumber || 45,
             age: lot.age,
-            country: lot.country,
-            isOverseas: lot.isOverseas,
+            country: lot.country || 'India',
+            isOverseas,
             role: lot.role,
             battingHand: lot.battingHand,
             bowlingArm: lot.bowlingArm || 'RAM',

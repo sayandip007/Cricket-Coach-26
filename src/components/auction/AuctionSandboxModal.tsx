@@ -567,12 +567,13 @@ export const AuctionSandboxModal: React.FC<AuctionSandboxModalProps> = ({
                         </div>
                         <div className="min-w-0">
                           <div className="flex items-center gap-1.5">
-                            <span className="font-bold text-xs text-white truncate">
-                              {player.name}
+                            <span className="font-bold text-xs text-white truncate flex items-center gap-1">
+                              <span>{player.name}</span>
+                              {isOverseasPlayer(player) && <span title="Overseas Player">✈️</span>}
                             </span>
-                            {player.isOverseas && (
-                              <span className="px-1.5 py-0.2 rounded text-[9px] bg-blue-500/20 text-blue-300 border border-blue-500/30">
-                                OS
+                            {isOverseasPlayer(player) && (
+                              <span className="px-1.5 py-0.2 rounded text-[9px] bg-blue-500/20 text-blue-300 border border-blue-500/30 font-bold">
+                                OS ✈️
                               </span>
                             )}
                             {isUncapped && (
