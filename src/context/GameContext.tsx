@@ -25,7 +25,8 @@ import {
 } from '../utils/bowlingStats';
 import {
   AuctionSandboxMode,
-  buildAuctionSandboxState
+  buildAuctionSandboxState,
+  isOverseasPlayer
 } from '../utils/auctionSandboxEngine';
 import { AuctionPlayerItem } from '../data/auctionSets2026';
 import { sound } from '../utils/soundEffects';
@@ -5523,10 +5524,10 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       : Number(auctionLot.currentBidCr.toFixed(2));
 
     const userSquadPlayers = players.filter(p => p.clubId === userTeam.id);
-    const userOverseasCount = userSquadPlayers.filter(p => p.isOverseas).length;
+    const userOverseasCount = userSquadPlayers.filter(p => isOverseasPlayer(p)).length;
 
     if (userSquadPlayers.length >= 25) return; // Max 25 squad limit
-    if (auctionLot.player.isOverseas && userOverseasCount >= 8) return; // Max 8 overseas limit
+    if (isOverseasPlayer(auctionLot.player) && userOverseasCount >= 8) return; // Max 8 overseas limit
     if (userTeam.purseCr < nextAmount) {
       return; // Not enough purse
     }

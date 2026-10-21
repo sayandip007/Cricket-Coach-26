@@ -15,6 +15,8 @@ export const MEGA_UNCAPPED_RETENTION_SLAB_CR = 4.0;
 export const MAX_MEGA_RETENTIONS = 6;
 export const MAX_MEGA_CAPPED_RETENTIONS = 5;
 export const MAX_MEGA_UNCAPPED_RETENTIONS = 2;
+export const MAX_MEGA_OVERSEAS_RETENTIONS = 2;
+export const MAX_OVERSEAS_SQUAD_LIMIT = 8;
 
 export interface RetentionSlabDetail {
   playerId: string;
@@ -47,10 +49,25 @@ export interface MiniRetentionSummary {
 }
 
 /**
+ * Robustly checks if a player is an overseas player.
+ */
+export function isOverseasPlayer(player: { isOverseas?: boolean; country?: string }): boolean {
+  if (player.isOverseas !== undefined) {
+    if (player.isOverseas === true) return true;
+    if (player.country && (player.country.trim().toLowerCase() === 'india' || player.country.trim().toLowerCase() === 'ind')) {
+      return false;
+    }
+  }
+  if (!player.country) return false;
+  const c = player.country.trim().toLowerCase();
+  return c !== 'india' && c !== 'ind';
+}
+
+/**
  * Determines if a squad player qualifies as an Uncapped Indian player for retention rules.
  */
 export function isPlayerUncappedDomestic(player: Player): boolean {
-  if (player.isOverseas || player.country.trim().toLowerCase() !== 'india') {
+  if (isOverseasPlayer(player)) {
     return false;
   }
   if (player.tier === 'Bronze') return true;
@@ -71,6 +88,15 @@ export function canRetainPlayerInMega(
   }
   if (currentRetainedPlayers.length >= MAX_MEGA_RETENTIONS) {
     return { allowed: false, reason: `Maximum ${MAX_MEGA_RETENTIONS} retentions allowed in a Mega Auction.` };
+  }
+  if (isOverseasPlayer(candidate)) {
+    const overseasCount = currentRetainedPlayers.filter(p => isOverseasPlayer(p)).length;
+    if (overseasCount >= MAX_MEGA_OVERSEAS_RETENTIONS) {
+      return {
+        allowed: false,
+        reason: `Maximum ${MAX_MEGA_OVERSEAS_RETENTIONS} Overseas players can be retained in a Mega Auction.`
+      };
+    }
   }
   const isUncapped = isPlayerUncappedDomestic(candidate);
   const cappedCount = currentRetainedPlayers.filter(p => !isPlayerUncappedDomestic(p)).length;
@@ -146,7 +172,7 @@ export function calculateMegaRetentionSummary(
     rtmCardsRemaining,
     cappedRetainedCount: cappedIdx,
     uncappedRetainedCount: uncappedIdx,
-    overseasRetainedCount: retainedPlayers.filter(p => p.isOverseas).length,
+    overseasRetainedCount: retainedPlayers.filter(p => isOverseasPlayer(p)).length,
     slabBreakdown
   };
 }
@@ -183,7 +209,7 @@ export function calculateMiniRetentionSummary(
     basePurseCr: cleanBase,
     freedSalaryCr,
     totalAvailablePurseCr,
-    overseasRetainedCount: retainedPlayers.filter(p => p.isOverseas).length
+    overseasRetainedCount: retainedPlayers.filter(p => isOverseasPlayer(p)).length
   };
 }
 
@@ -339,7 +365,16 @@ export function getRecommendedMegaRetentionIds(team: Team, teamPlayers: Player[]
  */
 export function getRecommendedMiniRetentionIds(team: Team, teamPlayers: Player[]): string[] {
   if (teamPlayers.length <= 13) {
-    return teamPlayers.map(p => p.id);
+    let osCount = 0;
+    const kept: string[] = [];
+    for (const p of teamPlayers) {
+      if (isOverseasPlayer(p)) {
+        if (osCount >= 8) continue;
+        osCount++;
+      }
+      kept.push(p.id);
+    }
+    return kept;
   }
   const xiSet = new Set(team.playingXIIds);
   const sorted = [...teamPlayers].sort((a, b) => {
@@ -349,8 +384,18 @@ export function getRecommendedMiniRetentionIds(team: Team, teamPlayers: Player[]
     const bOvr = Math.max(b.ratings.bat, b.ratings.bowl) + bInXI;
     return bOvr - aOvr;
   });
-  const keepCount = Math.max(12, teamPlayers.length - 4);
-  return sorted.slice(0, keepCount).map(p => p.id);
+
+  const chosen: Player[] = [];
+  let overseasCount = 0;
+  for (const p of sorted) {
+    if (isOverseasPlayer(p)) {
+      if (overseasCount >= 8) continue;
+      overseasCount++;
+    }
+    chosen.push(p);
+    if (chosen.length >= Math.max(12, teamPlayers.length - 4)) break;
+  }
+  return chosen.map(p => p.id);
 }
 
 /**

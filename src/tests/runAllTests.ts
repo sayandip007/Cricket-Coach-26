@@ -10,6 +10,7 @@ import {
   INITIAL_COACH_PROFILE,
   INITIAL_JOB_OFFERS,
   INITIAL_DEFAULT_FIELD,
+  ZERO_PLAYER_STATS,
   createInitialPlayoffs
 } from '../data/initialData';
 import { simulateBall } from '../engine/cricketEngine';
@@ -45,6 +46,7 @@ import {
   evaluateAiCounterBid,
   settleAuctionLotAmongAi
 } from '../data/auctionSets2026';
+import { canRetainPlayerInMega, isOverseasPlayer } from '../utils/auctionSandboxEngine';
 import { runBowlingAndSandboxTests } from './bowlingAndSandbox.test';
 import {
   FIELD_TEMPLATES,
@@ -1394,6 +1396,22 @@ runTest('REGRESSION', 'Phase 21: TATA IPL 2026 Auction Audit — 350 PDF Players
     }).allowed,
     false,
     'Franchise at 8/8 overseas players must not be allowed to bid on an overseas lot'
+  );
+
+  // Mega Auction Max 2 Overseas Retention Limit Guard
+  const dummyOs1: Player = { id: 'os1', name: 'Travis Head', isOverseas: true, country: 'Australia', clubId: 'team_hyd', basePriceCr: 2.0, salaryCr: 14.0, form: 90, morale: 90, fitness: 100, isInjured: false, injuryDays: 0, age: 30, role: 'Top-order', battingHand: 'LHB', bowlingArm: 'ROB', tier: 'Platinum', ratings: { bat: 88, pow: 88, tec: 80, tmp: 80, agg: 90, sty: 85, run: 85, vp: 85, vs: 85, bowl: 30, pace: 30, ctrl: 30, var: 30, dth: 30, comp: 80, cat: 80, fld: 80, fit: 90 }, stats: ZERO_PLAYER_STATS };
+  const dummyOs2: Player = { id: 'os2', name: 'Pat Cummins', isOverseas: true, country: 'Australia', clubId: 'team_hyd', basePriceCr: 2.0, salaryCr: 18.0, form: 90, morale: 90, fitness: 100, isInjured: false, injuryDays: 0, age: 31, role: 'Pace', battingHand: 'RHB', bowlingArm: 'RAF', tier: 'Platinum', ratings: { bat: 75, pow: 80, tec: 70, tmp: 85, agg: 85, sty: 80, run: 80, vp: 80, vs: 80, bowl: 88, pace: 90, ctrl: 88, var: 85, dth: 88, comp: 90, cat: 85, fld: 85, fit: 92 }, stats: ZERO_PLAYER_STATS };
+  const dummyOs3: Player = { id: 'os3', name: 'Heinrich Klaasen', isOverseas: true, country: 'South Africa', clubId: 'team_hyd', basePriceCr: 2.0, salaryCr: 23.0, form: 90, morale: 90, fitness: 100, isInjured: false, injuryDays: 0, age: 33, role: 'Wk-bat', battingHand: 'RHB', bowlingArm: 'ROB', tier: 'Platinum', ratings: { bat: 90, pow: 95, tec: 82, tmp: 82, agg: 95, sty: 88, run: 80, vp: 85, vs: 85, bowl: 10, pace: 10, ctrl: 10, var: 10, dth: 10, comp: 85, cat: 88, fld: 88, fit: 90 }, stats: ZERO_PLAYER_STATS };
+
+  assert.equal(
+    canRetainPlayerInMega([dummyOs1, dummyOs2], dummyOs3).allowed,
+    false,
+    'Mega Auction retention must block retaining a 3rd Overseas player (Max 2 Overseas limit)'
+  );
+  assert.equal(
+    isOverseasPlayer(dummyOs1),
+    true,
+    'isOverseasPlayer must identify overseas players correctly'
   );
 
   // AI counter-bid and lot settlement respect purse & quota limits

@@ -31,6 +31,7 @@ import {
 } from '../../data/auctionSets2026';
 import { Player } from '../../types/cricket';
 import { AuctionSandboxModal } from './AuctionSandboxModal';
+import { isOverseasPlayer } from '../../utils/auctionSandboxEngine';
 
 interface BidRecord {
   teamShort: string;
@@ -201,9 +202,9 @@ export const AuctionRoom: React.FC = () => {
       );
       const tId = liveTeam?.id || c.teamId;
       const clubPlayers = effectivePlayers.filter(p => p.clubId === tId);
-      // In sandbox mode, squad count is exactly clubPlayers.length (the retained players + bought players)
+      const squadList = clubPlayers.length > 0 ? clubPlayers : (liveTeam?.squad || []);
       const squadCount = isSandbox ? clubPlayers.length : (clubPlayers.length > 0 ? clubPlayers.length : c.keptCount);
-      const overseasCount = clubPlayers.filter(p => p.isOverseas).length;
+      const overseasCount = squadList.filter(p => isOverseasPlayer(p)).length;
       metrics[c.shortName] = {
         squadCount,
         overseasCount,
@@ -432,7 +433,7 @@ export const AuctionRoom: React.FC = () => {
     teamPurses[userShort] ??
     (activeFranchiseTeam.purseCr <= 120 ? activeFranchiseTeam.purseCr : userFranchise?.purseCr ?? 28.65);
   const userSquadCount = liveUserSquad.length;
-  const userOverseasCount = liveUserSquad.filter(p => p.isOverseas).length;
+  const userOverseasCount = liveUserSquad.filter(p => isOverseasPlayer(p)).length;
 
   // Next bid amount calculation using official IPL increments
   const nextBidAmountCr = useMemo(
@@ -451,7 +452,7 @@ export const AuctionRoom: React.FC = () => {
         purseCr: userPurseRemaining,
         squadCount: userSquadCount,
         overseasCount: userOverseasCount,
-        isOverseasLot: currentPlayer.isOverseas
+        isOverseasLot: isOverseasPlayer(currentPlayer)
       }),
     [
       userShort,
@@ -461,7 +462,7 @@ export const AuctionRoom: React.FC = () => {
       userPurseRemaining,
       userSquadCount,
       userOverseasCount,
-      currentPlayer.isOverseas
+      currentPlayer
     ]
   );
 
@@ -690,7 +691,7 @@ export const AuctionRoom: React.FC = () => {
         );
         if (runningMetrics[winnerShort]) {
           runningMetrics[winnerShort].squadCount += 1;
-          if (pl.isOverseas) {
+          if (isOverseasPlayer(pl)) {
             runningMetrics[winnerShort].overseasCount += 1;
           }
         }

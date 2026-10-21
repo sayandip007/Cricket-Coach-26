@@ -23,12 +23,15 @@ import {
   calculateMegaRetentionSummary,
   calculateMiniRetentionSummary,
   isPlayerUncappedDomestic,
+  isOverseasPlayer,
   getRecommendedMegaRetentionIds,
   getRecommendedMiniRetentionIds,
   MEGA_AUCTION_PURSE_CR,
   MAX_MEGA_RETENTIONS,
   MAX_MEGA_CAPPED_RETENTIONS,
   MAX_MEGA_UNCAPPED_RETENTIONS,
+  MAX_MEGA_OVERSEAS_RETENTIONS,
+  MAX_OVERSEAS_SQUAD_LIMIT,
   MEGA_CAPPED_RETENTION_SLABS_CR,
   MEGA_UNCAPPED_RETENTION_SLAB_CR
 } from '../../utils/auctionSandboxEngine';
@@ -122,10 +125,16 @@ export const AuctionSandboxModal: React.FC<AuctionSandboxModalProps> = ({
       setRetainedPlayerIds(prev => prev.filter(id => id !== candidate.id));
     } else {
       // Retain the player
+      const currentRetained = franchiseSquad.filter(p => retainedPlayerIds.includes(p.id));
       if (mode === 'mega') {
-        const currentRetained = franchiseSquad.filter(p => retainedPlayerIds.includes(p.id));
         const validation = canRetainPlayerInMega(currentRetained, candidate);
         if (!validation.allowed) {
+          sound.playBatHit(false, false);
+          return;
+        }
+      } else {
+        const currentOverseas = currentRetained.filter(p => isOverseasPlayer(p)).length;
+        if (isOverseasPlayer(candidate) && currentOverseas >= 8) {
           sound.playBatHit(false, false);
           return;
         }
