@@ -261,7 +261,7 @@ export const INITIAL_LEAGUES: League[] = [
     id: 'pt20',
     name: 'Indian Premier League (IPL)',
     country: 'India',
-    seasonName: 'Season 2025/26',
+    seasonName: '2026',
     rules: {
       overs: 20,
       impactSub: true,

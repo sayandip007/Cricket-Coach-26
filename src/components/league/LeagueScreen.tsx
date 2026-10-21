@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Trophy, ChevronDown, Flame, Star, Play, FastForward, RotateCcw, Sparkles, CheckCircle2, Lock, ChevronRight } from 'lucide-react';
+import { Trophy, ChevronDown, Flame, Star, Play, FastForward, RotateCcw, Sparkles, CheckCircle2, Lock, ChevronRight, Clock } from 'lucide-react';
 import { useGame } from '../../context/GameContext';
 import { createInitialPlayoffs } from '../../data/initialData';
 import { RetentionModal } from '../dynasty/RetentionModal';
@@ -28,6 +28,8 @@ export const LeagueScreen: React.FC = () => {
   const [leaderFilter, setLeaderFilter] = useState<'all' | 'franchise'>('all');
   const [showRetentionModal, setShowRetentionModal] = useState(false);
   const [selectedRecordAttribute, setSelectedRecordAttribute] = useState<string | null>(null);
+  const [selectedTeamModalTeamId, setSelectedTeamModalTeamId] = useState<string | null>(null);
+  const [teamModalView, setTeamModalView] = useState<'squad' | 'history'>('squad');
 
   const currentLeague = leagues.find(l => l.id === currentLeagueId) || leagues[0];
   const allLeagueTeams = useMemo(() => {
@@ -502,7 +504,12 @@ export const LeagueScreen: React.FC = () => {
                 return (
                   <div
                     key={row.teamId}
-                    className={`grid grid-cols-12 px-3 py-2.5 items-center border-b border-slate-800/50 ${
+                    onClick={() => {
+                      sound.playTap();
+                      setSelectedTeamModalTeamId(row.teamId);
+                      setTeamModalView('squad');
+                    }}
+                    className={`grid grid-cols-12 px-3 py-2.5 items-center border-b border-slate-800/50 cursor-pointer hover:bg-slate-800/60 transition-all ${
                       isUser ? 'bg-amber-500/15' : isPlayoffSpot ? 'bg-slate-900/40' : ''
                     }`}
                   >
@@ -1000,6 +1007,203 @@ export const LeagueScreen: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Team Squad & History Modal */}
+      {selectedTeamModalTeamId && (() => {
+        const modalTeam = resolveTeam(selectedTeamModalTeamId);
+        if (!modalTeam) return null;
+        const modalTeamPlayers = players.filter(p => p.clubId === selectedTeamModalTeamId || (modalTeam.playingXIIds && modalTeam.playingXIIds.includes(p.id)));
+        const overseasCount = modalTeamPlayers.filter(p => p.isOverseas).length;
+        const squadSize = modalTeamPlayers.length;
+
+        const avgBat = squadSize > 0 ? (modalTeamPlayers.reduce((acc, p) => acc + (p.ratings?.bat || 65), 0) / squadSize).toFixed(1) : '0.0';
+        const avgBwl = squadSize > 0 ? (modalTeamPlayers.reduce((acc, p) => acc + (p.ratings?.bowl || 65), 0) / squadSize).toFixed(1) : '0.0';
+        const avgDpt = squadSize > 0 ? (modalTeamPlayers.reduce((acc, p) => acc + (p.ratings?.cat || p.ratings?.fld || 65), 0) / squadSize).toFixed(1) : '0.0';
+        const starRating = modalTeam.id === userTeam.id ? 5 : Math.max(3, Math.min(5, Math.round(parseFloat(avgBat) / 18)));
+
+        const topOrderPlayers = modalTeamPlayers.filter(p => ['Top-order', 'Batsman', 'Wicketkeeper', 'Wk-bat'].includes(p.role));
+        const middleFinishers = modalTeamPlayers.filter(p => ['Middle-order'].includes(p.role));
+        const allRounders = modalTeamPlayers.filter(p => ['All-rounder', 'All-Rounder'].includes(p.role));
+        const bowlers = modalTeamPlayers.filter(p => ['Pace', 'Spin', 'Bowler'].includes(p.role));
+
+        // Dynamic history calculations
+        const teamTitles = tournamentHonors.filter(h => h.championTeamName.toLowerCase().includes(modalTeam.name.toLowerCase()) || h.championTeamName === modalTeam.shortName || h.championTeamId === selectedTeamModalTeamId).length;
+        const standingRow = currentLeague.standings.find(s => s.teamId === selectedTeamModalTeamId);
+        const currentRank = currentLeague.standings.findIndex(s => s.teamId === selectedTeamModalTeamId) + 1;
+        const bestFinishStr = teamTitles > 0 ? '1st' : (currentRank > 0 && currentRank <= 10 ? `${currentRank}${currentRank === 1 ? 'st' : currentRank === 2 ? 'nd' : currentRank === 3 ? 'rd' : 'th'}` : '4th');
+
+        const sortedByRuns = [...modalTeamPlayers].sort((a, b) => (b.stats?.runs || 0) - (a.stats?.runs || 0));
+        const topRunScorer = sortedByRuns[0];
+        const sortedByWkts = [...modalTeamPlayers].sort((a, b) => (b.stats?.wickets || 0) - (a.stats?.wickets || 0));
+        const topWicketTaker = sortedByWkts[0];
+
+        const seasonName = currentLeague.seasonName || '2027';
+        const isPlayoffsCompleted = currentLeague.playoffs?.final?.completed;
+        const totalSeasonsCount = Math.max(1, tournamentHonors.length + 1);
+
+        return (
+          <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
+            <div className="bg-[#0f172a] border border-slate-800 rounded-3xl max-w-xl w-full p-6 shadow-2xl flex flex-col max-h-[90vh]">
+              {/* Modal Header */}
+              <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-800">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-xl shrink-0">
+                    {modalTeam.logoEmoji || '🛡️'}
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black text-white font-display uppercase tracking-wide">
+                      {modalTeam.name}
+                    </h3>
+                    <span className="text-[11px] text-slate-400 font-mono">
+                      {squadSize} players · {overseasCount} overseas
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => { sound.playTap(); setTeamModalView(teamModalView === 'squad' ? 'history' : 'squad'); }}
+                    className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-400 font-mono text-xs font-bold flex items-center gap-1.5 border border-amber-500/30"
+                  >
+                    <Clock className="w-3.5 h-3.5" />
+                    {teamModalView === 'squad' ? 'HISTORY' : 'SQUAD'}
+                  </button>
+                  <button
+                    onClick={() => { sound.playTap(); setSelectedTeamModalTeamId(null); }}
+                    className="w-8 h-8 rounded-full bg-slate-800 text-slate-300 flex items-center justify-center font-bold hover:bg-slate-700"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+
+              {teamModalView === 'squad' ? (
+                <div className="flex-1 overflow-y-auto flex flex-col gap-4 pr-1">
+                  {/* Rating Badges Row */}
+                  <div className="grid grid-cols-4 gap-2 bg-slate-900/80 p-3 rounded-2xl border border-slate-800 text-center font-mono">
+                    <div className="bg-slate-800/60 p-2 rounded-xl">
+                      <span className="text-[10px] text-slate-400 block">BAT</span>
+                      <span className="text-xs font-black text-emerald-400">{avgBat}</span>
+                    </div>
+                    <div className="bg-slate-800/60 p-2 rounded-xl">
+                      <span className="text-[10px] text-slate-400 block">BWL</span>
+                      <span className="text-xs font-black text-purple-400">{avgBwl}</span>
+                    </div>
+                    <div className="bg-slate-800/60 p-2 rounded-xl">
+                      <span className="text-[10px] text-slate-400 block">DPT</span>
+                      <span className="text-xs font-black text-cyan-400">{avgDpt}</span>
+                    </div>
+                    <div className="bg-slate-800/60 p-2 rounded-xl">
+                      <span className="text-[10px] text-slate-400 block">STAR</span>
+                      <span className="text-xs font-black text-amber-400">★ {starRating}</span>
+                    </div>
+                  </div>
+
+                  {/* Player Groups */}
+                  {[
+                    { title: 'TOP ORDER', players: topOrderPlayers },
+                    { title: 'MIDDLE / FINISHERS', players: [...middleFinishers, ...allRounders] },
+                    { title: 'BOWLERS', players: bowlers }
+                  ].map((group, gIdx) => group.players.length > 0 && (
+                    <div key={gIdx} className="flex flex-col gap-2">
+                      <div className="text-[10px] font-mono uppercase tracking-widest text-slate-400 font-bold px-1">
+                        {group.title} · {group.players.length}
+                      </div>
+                      {group.players.map(p => {
+                        const ovr = Math.round(((p.ratings?.bat || 65) + (p.ratings?.bowl || 65)) / 2);
+                        return (
+                          <div key={p.id} className="flex items-center justify-between p-3 rounded-2xl bg-slate-900/70 border border-slate-800/60 text-xs">
+                            <div className="flex items-center gap-3">
+                              <span className="font-mono text-slate-500 font-bold text-[11px] w-6">
+                                #{p.jerseyNumber || Math.floor(Math.random() * 80 + 10)}
+                              </span>
+                              <div>
+                                <span className="font-bold text-white">{p.name} {p.isOverseas && '✈️'}</span>
+                                <span className="text-[10px] text-slate-400 font-mono block">Age {p.age}</span>
+                              </div>
+                            </div>
+                            <span className="px-2.5 py-1 rounded-xl bg-slate-800 border border-slate-700 text-amber-400 font-mono font-bold text-xs">
+                              FORM {p.form ?? 75}%
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="flex-1 overflow-y-auto flex flex-col gap-4 pr-1">
+                  {/* Summary Stat Cards */}
+                  <div className="grid grid-cols-3 gap-2 text-center font-mono">
+                    <div className="bg-slate-900/90 border border-slate-800 p-3 rounded-2xl">
+                      <span className="text-base font-black text-amber-400 font-display block">{teamTitles}</span>
+                      <span className="text-[10px] text-slate-400 uppercase tracking-wider">TITLES</span>
+                    </div>
+                    <div className="bg-slate-900/90 border border-slate-800 p-3 rounded-2xl">
+                      <span className="text-base font-black text-cyan-400 font-display block">{bestFinishStr}</span>
+                      <span className="text-[10px] text-slate-400 uppercase tracking-wider">BEST FINISH</span>
+                    </div>
+                    <div className="bg-slate-900/90 border border-slate-800 p-3 rounded-2xl">
+                      <span className="text-base font-black text-purple-400 font-display block">{totalSeasonsCount}</span>
+                      <span className="text-[10px] text-slate-400 uppercase tracking-wider">SEASONS</span>
+                    </div>
+                  </div>
+
+                  <div className="text-xs font-black text-slate-300 uppercase tracking-wider font-display px-1">
+                    SEASON BY SEASON
+                  </div>
+
+                  {/* Current Season Card */}
+                  <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 flex flex-col gap-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-black text-white font-display">{seasonName}</span>
+                        <span className={`px-2 py-0.5 rounded text-[9px] font-mono font-bold ${isPlayoffsCompleted ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'}`}>
+                          {isPlayoffsCompleted ? 'COMPLETED' : 'IN PROGRESS'}
+                        </span>
+                      </div>
+                      <span className="text-xs font-mono font-bold text-slate-300">
+                        {standingRow ? `${currentRank}${currentRank === 1 ? 'st' : currentRank === 2 ? 'nd' : currentRank === 3 ? 'rd' : 'th'}` : bestFinishStr}
+                      </span>
+                    </div>
+                    <span className="text-[10px] font-mono text-slate-400 uppercase tracking-wider">
+                      {currentLeague.name} ({currentLeague.country})
+                    </span>
+                    <div className="flex items-center justify-between text-xs font-mono text-slate-300 pt-1 border-t border-slate-800/80">
+                      <span>{standingRow ? `${standingRow.played} P · ${standingRow.won} W · ${standingRow.lost} L` : '0 P · 0 W · 0 L'}</span>
+                      <span className="text-emerald-400">
+                        {standingRow ? `NRR ${standingRow.nrr >= 0 ? `+${standingRow.nrr.toFixed(2)}` : standingRow.nrr.toFixed(2)}` : 'NRR +0.00'}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 mt-1 pt-2 border-t border-slate-800/60 text-[11px] font-mono text-slate-400">
+                      <div>🏏 Most runs: <span className="text-amber-300 font-bold">{topRunScorer && (topRunScorer.stats?.runs || 0) > 0 ? `${topRunScorer.name} (${topRunScorer.stats.runs})` : '—'}</span></div>
+                      <div className="text-right">🎯 Most wickets: <span className="text-purple-300 font-bold">{topWicketTaker && (topWicketTaker.stats?.wickets || 0) > 0 ? `${topWicketTaker.name} (${topWicketTaker.stats.wickets})` : '—'}</span></div>
+                    </div>
+                  </div>
+
+                  {/* Past Seasons from tournamentHonors */}
+                  {tournamentHonors.map((honor, hIdx) => (
+                    <div key={hIdx} className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 flex flex-col gap-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-black text-white font-display">{honor.year}</span>
+                        <span className="text-xs font-mono font-bold text-amber-400">
+                          {honor.championTeamName.toLowerCase().includes(modalTeam.name.toLowerCase()) || honor.championTeamName === modalTeam.shortName || honor.championTeamId === selectedTeamModalTeamId ? '1st (Champions)' : 'Playoffs'}
+                        </span>
+                      </div>
+                      <span className="text-[10px] font-mono text-slate-400 uppercase tracking-wider">
+                        {honor.tournamentName}
+                      </span>
+                      <div className="text-xs font-mono text-slate-300 pt-1 border-t border-slate-800/80">
+                        Winner: <span className="text-amber-300 font-bold">{honor.championTeamName}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Season Retention & Dynasty Modal */}
       <RetentionModal
