@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useMemo, useCall
 import {
   Player, Team, League, Nation, Achievement, JobOffer, CoachProfile,
   MatchLiveState, InningsData, AuctionLot, BatterInningsScorecard, BowlerInningsScorecard, FielderPosition, BallOutcome,
-  CompletedMatchRecord, InboxMessage
+  CompletedMatchRecord, InboxMessage, TournamentHonor
 } from '../types/cricket';
 import {
   INITIAL_PLAYERS, INITIAL_TEAMS, INITIAL_LEAGUES, INITIAL_NATIONS,
@@ -615,12 +615,7 @@ export function buildSeasonCalendarForTeam(
   seasonYear: number = 2026
 ): League['calendarDates'] {
   const userT = allTeams.find(t => t.id === userTeamId) || allTeams[0];
-  const otherTeams = allTeams.filter(t => t.id !== userT.id);
-  // Build 14 fixtures against all 9 other franchises (9 once + first 5 again, alternating Home & Away)
-  const opponents14: Team[] = [];
-  for (let i = 0; i < 14; i++) {
-    opponents14.push(otherTeams[i % otherTeams.length] || allTeams[1]);
-  }
+  const teamsPool = [userT, ...allTeams.filter(t => t.id !== userT.id)].slice(0, 10);
 
   const dayNames = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
   const monthMeta: Record<number, { name: string; days: number }> = {
@@ -630,7 +625,6 @@ export function buildSeasonCalendarForTeam(
     7: { name: 'Jul', days: 31 },
     8: { name: 'Aug', days: 31 }
   };
-  // Start date: April 17 (Friday -> index 4) so Day index 9 is SUN 26 APR
   let curMonth = 4;
   let curDay = 17;
   let dowIdx = 4; // FRI
@@ -648,47 +642,6 @@ export function buildSeasonCalendarForTeam(
       curDay = 1;
     }
     return { dateStr, dayOfWeek, dayNumber, month: monthStr };
-  };
-
-  // Helper to generate realistic other-team league fixtures for any day index
-  const buildOtherTeamFixturesForDay = (dayIdx: number, excludeTeamIds: string[], isPastDay: boolean) => {
-    const pool = allTeams.filter(t => !excludeTeamIds.includes(t.id));
-    if (pool.length < 2) return [];
-    const fixturesCount = excludeTeamIds.length > 1 ? 1 : 2; // 2 matches on non-user days, 1 double-header match on user match days
-    const list: NonNullable<League['calendarDates'][0]['otherMatches']> = [];
-
-    for (let f = 0; f < fixturesCount; f++) {
-      const idxA = (dayIdx * 3 + f * 2) % pool.length;
-      const idxB = (idxA + 1 + ((dayIdx + f) % Math.max(1, pool.length - 1))) % pool.length;
-      const teamA = pool[idxA];
-      const teamB = pool[idxB === idxA ? (idxA + 1) % pool.length : idxB];
-      if (!teamA || !teamB || teamA.id === teamB.id) continue;
-
-      const runsA = 162 + ((dayIdx * 13 + f * 19) % 48);
-      const wktsA = 3 + ((dayIdx + f * 3) % 6);
-      const runsB = 148 + ((dayIdx * 17 + f * 23) % 52);
-      const wktsB = 4 + ((dayIdx * 2 + f) % 6);
-      const aWon = runsA >= runsB;
-      const summary = aWon
-        ? `${teamA.shortName} ${runsA}/${wktsA} beat ${teamB.shortName} ${Math.min(runsA - 4, runsB)}/${wktsB} by ${ Math.max(4, runsA - Math.min(runsA - 4, runsB))} runs`
-        : `${teamB.shortName} ${runsB}/${wktsB} beat ${teamA.shortName} ${runsA}/${wktsA} by ${Math.max(3, 10 - wktsB)} wkts`;
-
-      list.push({
-        id: `other_fix_${dayIdx}_${f}_${teamA.id}_${teamB.id}`,
-        homeTeamId: teamA.id,
-        awayTeamId: teamB.id,
-        homeShortName: teamA.shortName,
-        awayShortName: teamB.shortName,
-        homeLogo: teamA.logoEmoji || '🏏',
-        awayLogo: teamB.logoEmoji || '🏏',
-        venue: `${teamA.city} Cricket Stadium`,
-        timeStr: f === 0 && fixturesCount === 2 ? '15:30 IST' : '19:30 IST',
-        completed: isPastDay,
-        resultSummary: isPastDay ? summary : undefined,
-        format: 'T20'
-      });
-    }
-    return list;
   };
 
   const getIntlMatchesForDateStr = (dateStr: string) => {
@@ -713,77 +666,143 @@ export function buildSeasonCalendarForTeam(
   const dates: League['calendarDates'] = [];
   let runningDayIdx = 0;
 
-  for (let mIdx = 0; mIdx < 14; mIdx++) {
-    const opp = opponents14[mIdx];
-    const isHome = mIdx % 2 === 0;
-    const isCompleted = includeSampleCompleted && mIdx < 3; // First 3 fixtures completed in default 2026 start
+  // Build complete match list for all 18 rounds (each round has 5 matches: 1 user match + 4 other matches)
+  const matchPool: {
+    roundIndex: number;
+    homeTeam: Team;
+    awayTeam: Team;
+    isUserMatch: boolean;
+    isCompleted: boolean;
+  }[] = [];
 
-    // 1. Training Day before match (plus other league teams playing today!)
-    const dTrain = nextDate();
-    const isTrainPast = includeSampleCompleted && runningDayIdx < 9;
-    dates.push({
-      id: `cal_train_${mIdx + 1}`,
-      ...dTrain,
-      type: 'training',
-      title: `Prepare for ${opp.shortName}`,
-      isHome,
-      opponentTeamId: opp.id,
-      otherMatches: buildOtherTeamFixturesForDay(runningDayIdx, [userT.id], isTrainPast),
-      internationalMatches: getIntlMatchesForDateStr(dTrain.dateStr)
-    });
-    runningDayIdx++;
+  for (let mIdx = 0; mIdx < 18; mIdx++) {
+    const k = mIdx % 9;
+    const reverseVenue = mIdx >= 9;
 
-    // 2. Match Day (User match + double-header other match)
-    const dMatch = nextDate();
-    const homeTeamObj = isHome ? userT : opp;
-    const awayTeamObj = isHome ? opp : userT;
-    const venue = `${homeTeamObj.city} Cricket Stadium`;
-    const sampleResults = [
-      `${userT.shortName} 188/5 beat ${opp.shortName} 174/8 by 14 runs`,
-      `${userT.shortName} 166/3 beat ${opp.shortName} 162/7 by 7 wkts`,
-      `${opp.shortName} 195/4 beat ${userT.shortName} 181/9 by 14 runs`
-    ];
-    dates.push({
-      id: `cal_match_${mIdx + 1}`,
-      ...dMatch,
-      type: 'match',
-      title: `${isHome ? 'vs' : '@'} ${opp.city}`,
-      isHome,
-      opponentTeamId: opp.id,
-      matchFixture: {
-        id: `fix_${mIdx + 1}_${homeTeamObj.id}_${awayTeamObj.id}`,
-        homeTeamId: homeTeamObj.id,
-        awayTeamId: awayTeamObj.id,
-        homeShortName: homeTeamObj.shortName,
-        awayShortName: awayTeamObj.shortName,
-        homeLogo: homeTeamObj.logoEmoji,
-        awayLogo: awayTeamObj.logoEmoji,
-        venue,
-        timeStr: '19:30 IST',
-        completed: isCompleted,
-        resultSummary: isCompleted ? sampleResults[mIdx % sampleResults.length] : undefined,
-        format: 'T20'
-      },
-      otherMatches: buildOtherTeamFixturesForDay(runningDayIdx, [userT.id, opp.id], isCompleted),
-      internationalMatches: getIntlMatchesForDateStr(dMatch.dateStr)
-    });
-    runningDayIdx++;
+    const getPair = (idxA: number, idxB: number) => {
+      const teamA = teamsPool[idxA] || teamsPool[0];
+      const teamB = teamsPool[idxB] || teamsPool[1];
+      return reverseVenue ? { home: teamB, away: teamA } : { home: teamA, away: teamB };
+    };
 
-    // 3. Post-match Training Day (User can choose to SIM TRAINING or REST)
-    const dTrain2 = nextDate();
-    const isTrain2Past = includeSampleCompleted && runningDayIdx < 9;
-    const nextOpp = opponents14[Math.min(13, mIdx + 1)];
-    dates.push({
-      id: `cal_train2_${mIdx + 1}`,
-      ...dTrain2,
-      type: 'training',
-      title: `Prepare for ${nextOpp.shortName}`,
-      isHome: (mIdx + 1) % 2 === 0,
-      opponentTeamId: nextOpp.id,
-      otherMatches: buildOtherTeamFixturesForDay(runningDayIdx, [userT.id], isTrain2Past),
-      internationalMatches: getIntlMatchesForDateStr(dTrain2.dateStr)
+    const pair0 = getPair(0, 1 + k);
+    const pair1 = getPair(1 + ((k + 1) % 9), 1 + ((k + 8) % 9));
+    const pair2 = getPair(1 + ((k + 2) % 9), 1 + ((k + 7) % 9));
+    const pair3 = getPair(1 + ((k + 3) % 9), 1 + ((k + 6) % 9));
+    const pair4 = getPair(1 + ((k + 4) % 9), 1 + ((k + 5) % 9));
+
+    const isCompleted = includeSampleCompleted && mIdx < 3;
+
+    // User match in this round
+    const userHome = pair0.home;
+    const userAway = pair0.away;
+    const isUserHome = userHome.id === userT.id;
+
+    matchPool.push({
+      roundIndex: mIdx,
+      homeTeam: userHome,
+      awayTeam: userAway,
+      isUserMatch: true,
+      isCompleted
     });
-    runningDayIdx++;
+
+    // 4 other matches in this round
+    const aiPairs = [pair1, pair2, pair3, pair4];
+    aiPairs.forEach(p => {
+      matchPool.push({
+        roundIndex: mIdx,
+        homeTeam: p.home,
+        awayTeam: p.away,
+        isUserMatch: false,
+        isCompleted
+      });
+    });
+  }
+
+  // Now distribute matches chronologically: 1 match per day (with rest days interspersed or straight sequence)
+  // Total matches = 18 rounds * 5 matches = 90 matches.
+  // We place 1 match per calendar date.
+  // Now distribute matches chronologically: 2 matches on Saturday & Sunday (Double Header: 1st at 15:30, 2nd at 19:30), 1 match on rest days (Mon-Fri at 19:30)
+  let matchPtr = 0;
+  while (matchPtr < matchPool.length) {
+    const dInfo = nextDate();
+    const isWeekend = dInfo.dayOfWeek === 'SAT' || dInfo.dayOfWeek === 'SUN';
+    const matchesForDayCount = isWeekend ? Math.min(2, matchPool.length - matchPtr) : 1;
+
+    const dayMatches: typeof matchPool = [];
+    for (let i = 0; i < matchesForDayCount; i++) {
+      dayMatches.push(matchPool[matchPtr]);
+      matchPtr++;
+    }
+
+    let matchFixture: any = undefined;
+    const otherMatches: any[] = [];
+
+    const userMatchIndex = dayMatches.findIndex(m => m.isUserMatch || m.homeTeam.id === userT.id || m.awayTeam.id === userT.id);
+
+    dayMatches.forEach((m, idx) => {
+      const isUser = idx === userMatchIndex;
+      const homeObj = m.homeTeam;
+      const awayObj = m.awayTeam;
+      const isUserHome = homeObj.id === userT.id;
+
+      const timeStr = isWeekend
+        ? (idx === 0 ? '15:30 IST (Double Header - 1st Match)' : '19:30 IST (Double Header - 2nd Match)')
+        : '19:30 IST';
+
+      const sampleResults = [
+        `${userT.shortName} 188/5 beat opponents 174/8 by 14 runs`,
+        `${userT.shortName} 166/3 beat opponents 162/7 by 7 wkts`
+      ];
+
+      const fixRec = {
+        id: `fix_m_${matchPtr}_${homeObj.id}_${awayObj.id}`,
+        homeTeamId: homeObj.id,
+        awayTeamId: awayObj.id,
+        homeShortName: homeObj.shortName,
+        awayShortName: awayObj.shortName,
+        homeLogo: homeObj.logoEmoji || '🏏',
+        awayLogo: awayObj.logoEmoji || '🏏',
+        venue: `${homeObj.city} Cricket Stadium`,
+        timeStr,
+        completed: m.isCompleted,
+        resultSummary: m.isCompleted ? sampleResults[matchPtr % sampleResults.length] : undefined,
+        format: 'T20' as const
+      };
+
+      if (isUser) {
+        matchFixture = fixRec;
+      } else {
+        otherMatches.push(fixRec);
+      }
+    });
+
+    const hasUserMatch = Boolean(matchFixture);
+    const primaryTeamObj = hasUserMatch
+      ? teamsPool.find(t => t.id === (matchFixture.homeTeamId === userT.id ? matchFixture.awayTeamId : matchFixture.homeTeamId))
+      : otherMatches[0]
+      ? teamsPool.find(t => t.id === otherMatches[0].awayTeamId)
+      : teamsPool[1];
+
+    const dayTitle = hasUserMatch
+      ? `${matchFixture.homeTeamId === userT.id ? 'vs' : '@'} ${primaryTeamObj?.city || 'Match'}`
+      : otherMatches[0]
+      ? `${otherMatches[0].homeShortName} vs ${otherMatches[0].awayShortName}`
+      : 'Match Day';
+
+    const titlePrefix = isWeekend ? (matchesForDayCount > 1 ? 'Double Header · ' : 'Weekend Match · ') : '';
+
+    dates.push({
+      id: `cal_day_${dates.length + 1}`,
+      ...dInfo,
+      type: hasUserMatch ? 'match' : 'training',
+      title: `${titlePrefix}${dayTitle}`,
+      isHome: hasUserMatch ? matchFixture.homeTeamId === userT.id : true,
+      opponentTeamId: hasUserMatch ? (matchFixture.homeTeamId === userT.id ? matchFixture.awayTeamId : matchFixture.homeTeamId) : undefined,
+      matchFixture,
+      otherMatches,
+      internationalMatches: getIntlMatchesForDateStr(dInfo.dateStr)
+    });
   }
 
   // Append Post-IPL International Tour Window Dates (June – November 2026 Cricbuzz Calendar)
@@ -816,6 +835,41 @@ export function buildSeasonCalendarForTeam(
       matchFixture: intlFix,
       otherMatches: [],
       internationalMatches: [intlFix]
+    });
+  });
+
+  // Append Playoff Fixture Days at the end of league calendar
+  const playoffStages = [
+    { stage: 'q1', title: 'QUALIFIER 1 · 1st vs 2nd' },
+    { stage: 'eliminator', title: 'ELIMINATOR · 3rd vs 4th' },
+    { stage: 'q2', title: 'QUALIFIER 2 · Loser Q1 vs Winner Elim' },
+    { stage: 'final', title: 'THE GRAND FINAL · Championship Showdown' }
+  ];
+
+  playoffStages.forEach((ps) => {
+    const dInfo = nextDate();
+    const playoffFixtureRecord = {
+      id: `fix_playoff_${ps.stage}`,
+      homeTeamId: null,
+      awayTeamId: null,
+      homeShortName: 'TBD',
+      awayShortName: 'TBD',
+      homeLogo: '🏆',
+      awayLogo: '🏆',
+      venue: 'Narendra Modi Stadium, Ahmedabad',
+      timeStr: '19:30 IST',
+      completed: false,
+      format: 'T20' as const
+    };
+    dates.push({
+      id: `cal_playoff_${ps.stage}`,
+      ...dInfo,
+      type: 'playoff' as any,
+      title: ps.title,
+      isHome: true,
+      matchFixture: playoffFixtureRecord,
+      otherMatches: [],
+      internationalMatches: []
     });
   });
 
@@ -1073,6 +1127,7 @@ interface GameContextType {
   }) => void;
   exitAuctionSandbox: () => void;
   commitSandboxAuctionSale: (lot: AuctionPlayerItem, buyerShort: string, priceCr: number) => void;
+  tournamentHonors: TournamentHonor[];
 }
 
 const GameContext = createContext<GameContextType | undefined>(undefined);
@@ -1533,6 +1588,20 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return INITIAL_COMPLETED_MATCHES;
   });
 
+  const [tournamentHonors, setTournamentHonors] = useState<TournamentHonor[]>(() => {
+    const saved = localStorage.getItem('ms_tournament_honors_v6');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      } catch {}
+    }
+    return [
+      { year: 'Season 2025', tournamentName: 'Indian Premier League', championTeamId: 'team_kol', championTeamName: 'Kolkata Knight Riders', championLogo: '⚔️' },
+      { year: 'Season 2024', tournamentName: 'Indian Premier League', championTeamId: 'team_che', championTeamName: 'Chennai Super Kings', championLogo: '🦁' }
+    ];
+  });
+
   const userTeam = useMemo(() => {
     const found = teams.find(t => t.id === coachProfile.clubTeamId);
     return found || teams[0];
@@ -1659,6 +1728,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       inboxMessages: InboxMessage[];
       nationalSquadIds: string[];
       internationalSeries: InternationalSeriesState;
+      tournamentHonors: TournamentHonor[];
     }
   ) => {
     const nowStr = new Date().toLocaleString([], {
@@ -1712,7 +1782,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       completedMatchesHistory: compactHistory,
       inboxMessages: (snap.inboxMessages || []).slice(0, 8),
       nationalSquadIds: snap.nationalSquadIds,
-      internationalSeries: snap.internationalSeries
+      internationalSeries: snap.internationalSeries,
+      tournamentHonors: snap.tournamentHonors
     };
 
     const serialized = JSON.stringify(payload);
@@ -1751,14 +1822,15 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       completedMatchesHistory,
       inboxMessages,
       nationalSquadIds,
-      internationalSeries
+      internationalSeries,
+      tournamentHonors
     });
     sound.playTap();
   }, [
     leagues, currentLeagueId, userTeam, coachProfile, teams, players,
     nations, achievements, homePitch, simTokens, squadStamina,
     completedMatchesHistory, inboxMessages, nationalSquadIds,
-    internationalSeries, setActiveSaveSlot, writeSlotSnapshot
+    internationalSeries, tournamentHonors, setActiveSaveSlot, writeSlotSnapshot
   ]);
 
   const loadFromSlot = useCallback((slotNumber: 1 | 2 | 3): boolean => {
@@ -1798,6 +1870,10 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (Array.isArray(parsed.inboxMessages)) setInboxMessages(parsed.inboxMessages);
       if (Array.isArray(parsed.nationalSquadIds)) setNationalSquadIds(parsed.nationalSquadIds);
       if (parsed.internationalSeries) setInternationalSeries(parsed.internationalSeries);
+      if (Array.isArray(parsed.tournamentHonors)) {
+        setTournamentHonors(parsed.tournamentHonors);
+        localStorage.setItem('ms_tournament_honors_v6', JSON.stringify(parsed.tournamentHonors));
+      }
       sound.playCrowdCheer(0.7);
       return true;
     } catch {
@@ -1892,6 +1968,10 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     safeStorageSet('ms_intl_series_v6', JSON.stringify(internationalSeries));
   }, [internationalSeries]);
 
+  useEffect(() => {
+    safeStorageSet('ms_tournament_honors_v6', JSON.stringify(tournamentHonors));
+  }, [tournamentHonors]);
+
   // Automatically keep the active save slot synced with debouncing to prevent thrashing storage quota
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -1911,7 +1991,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         completedMatchesHistory,
         inboxMessages,
         nationalSquadIds,
-        internationalSeries
+        internationalSeries,
+        tournamentHonors
       });
     }, 1500);
 
@@ -1920,7 +2001,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     activeSaveSlot, userTeam, leagues, currentLeagueId, coachProfile,
     teams, players, nations, achievements, homePitch, simTokens,
     squadStamina, completedMatchesHistory, inboxMessages,
-    nationalSquadIds, internationalSeries, writeSlotSnapshot
+    nationalSquadIds, internationalSeries, tournamentHonors, writeSlotSnapshot
   ]);
 
   const unlockAchievement = useCallback((id: string) => {
@@ -2084,7 +2165,10 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       completedMatchesHistory: [],
       inboxMessages: freshInbox,
       nationalSquadIds: freshNatSquadIds,
-      internationalSeries: freshIntlSeries
+      internationalSeries: freshIntlSeries,
+      tournamentHonors: [
+        { year: 'Season 2025', tournamentName: 'Indian Premier League', championTeamId: 'team_kol', championTeamName: 'Kolkata Knight Riders', championLogo: '⚔️' }
+      ]
     });
 
     sound.playTap();
@@ -2391,6 +2475,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
             updatedStandings = updatedStandings.map(st => {
               if (st.teamId === simRes.winnerId) {
+                if (st.played >= 18) return st;
                 return {
                   ...st,
                   played: st.played + 1,
@@ -2401,6 +2486,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 };
               }
               if (st.teamId === simRes.loserId) {
+                if (st.played >= 18) return st;
                 return {
                   ...st,
                   played: st.played + 1,
@@ -2448,7 +2534,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
 
         updatedStandings.sort((a, b) => b.points - a.points || b.nrr - a.nrr);
-        const idx = (l.currentDateIndex + 1) % Math.max(1, l.calendarDates.length);
+        const idx = Math.min(l.calendarDates.length - 1, l.currentDateIndex + 1);
         return {
           ...l,
           standings: updatedStandings,
@@ -4134,6 +4220,28 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
               resultSummary: shortScoreSummary
             };
             updatedPlayoffs.championTeamId = winnerId;
+
+            const champTeamObj = winnerId === finishedMatch.homeTeam.id ? finishedMatch.homeTeam : finishedMatch.awayTeam;
+            const seasonYr = activeLeague?.seasonName || 'Season 2026';
+            setTournamentHonors(prev => {
+              const exists = prev.some(h => h.year === seasonYr && h.tournamentName === activeLeague.name);
+              if (exists) return prev;
+              const nextHonors = [
+                {
+                  year: seasonYr,
+                  tournamentName: activeLeague.name || 'Indian Premier League',
+                  championTeamId: champTeamObj.id,
+                  championTeamName: champTeamObj.name,
+                  championLogo: champTeamObj.logoEmoji || '🏆'
+                },
+                ...prev
+              ];
+              localStorage.setItem('ms_tournament_honors_v6', JSON.stringify(nextHonors));
+              return nextHonors;
+            });
+
+            confetti({ particleCount: 150, spread: 100, origin: { y: 0.5 } });
+            unlockAchievement('ach_22');
           }
 
           return {
@@ -4143,6 +4251,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
 
         // Regular League Stage Match: Compute NRR Adjustment
+        const isPlayoffMatch = Boolean(finishedMatch.playoffStage);
         const maxOv = inn1.maxOvers || 20;
         const overs1 = inn1.wickets >= 10 ? maxOv : Math.max(1, inn1.ballsCompleted / 6);
         const overs2 = (inn2?.wickets || 0) >= 10 ? (inn2?.maxOvers || maxOv) : Math.max(1, (inn2?.ballsCompleted || 60) / 6);
@@ -4151,7 +4260,9 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const rrDiffInnings1Team = (rr1 - rr2) * 0.15;
 
         const updatedStandings = league.standings.map(row => {
+          if (isPlayoffMatch) return row;
           if (row.teamId === winnerId) {
+            if (row.played >= 18) return row;
             const delta = Math.abs(rrDiffInnings1Team);
             return {
               ...row,
@@ -4163,6 +4274,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             };
           }
           if (row.teamId === loserId) {
+            if (row.played >= 18) return row;
             const delta = Math.abs(rrDiffInnings1Team);
             return {
               ...row,
@@ -5813,7 +5925,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         auctionSandbox,
         startAuctionSandbox,
         exitAuctionSandbox,
-        commitSandboxAuctionSale
+        commitSandboxAuctionSale,
+        tournamentHonors
       }}
     >
       {children}

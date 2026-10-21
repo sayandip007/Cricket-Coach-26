@@ -207,8 +207,8 @@ export const createInitialPlayoffs = (standings: { teamId: string }[]): LeaguePl
   q1: {
     stage: 'q1' as const,
     title: 'QUALIFIER 1 (1st vs 2nd)',
-    homeTeamId: standings[0]?.teamId || null,
-    awayTeamId: standings[1]?.teamId || null,
+    homeTeamId: null,
+    awayTeamId: null,
     winnerTeamId: null,
     loserTeamId: null,
     completed: false
@@ -216,8 +216,8 @@ export const createInitialPlayoffs = (standings: { teamId: string }[]): LeaguePl
   eliminator: {
     stage: 'eliminator' as const,
     title: 'ELIMINATOR (3rd vs 4th)',
-    homeTeamId: standings[2]?.teamId || null,
-    awayTeamId: standings[3]?.teamId || null,
+    homeTeamId: null,
+    awayTeamId: null,
     winnerTeamId: null,
     loserTeamId: null,
     completed: false

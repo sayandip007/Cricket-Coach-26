@@ -18,10 +18,11 @@ export const LeagueScreen: React.FC = () => {
     simPlayoffMatch,
     resetPlayoffBracket,
     pendingRetentionModal,
-    setPendingRetentionModal
+    setPendingRetentionModal,
+    tournamentHonors
   } = useGame();
 
-  const [activeTab, setActiveTab] = useState<'standings' | 'playoffs' | 'leaders'>('standings');
+  const [activeTab, setActiveTab] = useState<'standings' | 'playoffs' | 'trophy_room' | 'leaders'>('standings');
   const [showLeagueDropdown, setShowLeagueDropdown] = useState(false);
   const [leaderFilter, setLeaderFilter] = useState<'all' | 'franchise'>('all');
   const [showRetentionModal, setShowRetentionModal] = useState(false);
@@ -175,7 +176,7 @@ export const LeagueScreen: React.FC = () => {
                   {currentLeague.name} <ChevronDown className="w-4 h-4 text-amber-400" />
                 </h1>
                 <span className="text-[11px] text-slate-400 font-mono">
-                  {currentLeague.seasonName} · 20 Overs · 10 Franchises
+                  {currentLeague.seasonName} · 18 League Matches (Double Round-Robin) · 10 Franchises
                 </span>
               </div>
             </button>
@@ -187,7 +188,7 @@ export const LeagueScreen: React.FC = () => {
                   {currentLeague.name}
                 </h1>
                 <span className="text-[11px] text-slate-400 font-mono">
-                  {currentLeague.seasonName} · 20 Overs · 10 Franchises
+                  {currentLeague.seasonName} · 18 League Matches (Double Round-Robin) · 10 Franchises
                 </span>
               </div>
             </div>
@@ -219,7 +220,7 @@ export const LeagueScreen: React.FC = () => {
         )}
 
         {/* Tab Switcher */}
-        <div className="grid grid-cols-3 gap-1 p-1 bg-slate-900 rounded-xl text-xs font-bold uppercase max-w-xl">
+        <div className="grid grid-cols-4 gap-1 p-1 bg-slate-900 rounded-xl text-xs font-bold uppercase max-w-2xl">
           <button
             onClick={() => { sound.playTap(); setActiveTab('standings'); }}
             className={`py-1.5 rounded-lg transition-all ${
@@ -237,6 +238,14 @@ export const LeagueScreen: React.FC = () => {
             PLAYOFFS
           </button>
           <button
+            onClick={() => { sound.playTap(); setActiveTab('trophy_room'); }}
+            className={`py-1.5 rounded-lg transition-all ${
+              activeTab === 'trophy_room' ? 'bg-amber-400 text-black shadow' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            TROPHY ROOM
+          </button>
+          <button
             onClick={() => { sound.playTap(); setActiveTab('leaders'); }}
             className={`py-1.5 rounded-lg transition-all ${
               activeTab === 'leaders' ? 'bg-amber-400 text-black shadow' : 'text-slate-400 hover:text-white'
@@ -249,6 +258,51 @@ export const LeagueScreen: React.FC = () => {
 
       {/* Main Container */}
       <div className="flex-1 px-6 py-4 flex flex-col gap-4">
+        {activeTab === 'trophy_room' && (
+          <div className="flex flex-col gap-3">
+            <div className="bg-[#0f172a] border border-slate-800 rounded-3xl p-5">
+              <div className="flex items-center gap-3 mb-4 pb-3 border-b border-slate-800">
+                <Trophy className="w-6 h-6 text-amber-400" />
+                <div>
+                  <h2 className="text-sm font-black text-white font-display uppercase tracking-wider">
+                    HALL OF HONORS & TROPHY ROOM
+                  </h2>
+                  <p className="text-[11px] text-slate-400 font-mono">
+                    Save-slot specific league history, championship winners & historic titles.
+                  </p>
+                </div>
+              </div>
+
+              {tournamentHonors.length > 0 ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {tournamentHonors.map((honor, hIdx) => (
+                    <div key={hIdx} className="p-4 bg-gradient-to-br from-slate-900 to-[#121927] border border-amber-500/30 rounded-2xl flex items-center gap-3">
+                      <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-400/40 text-amber-300 flex items-center justify-center text-xl shrink-0 shadow-lg">
+                        {honor.championLogo || '🏆'}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <span className="text-[10px] font-mono text-amber-400 uppercase tracking-widest font-bold block">
+                          {honor.year} · {honor.tournamentName}
+                        </span>
+                        <h3 className="text-sm font-black text-white truncate font-display">
+                          {honor.championTeamName}
+                        </h3>
+                        <span className="text-[10px] text-emerald-400 font-mono">
+                          ★ Championship Winner
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-10 text-slate-400 font-mono text-xs">
+                  No tournament honors recorded in this save slot yet. Complete a Grand Final championship to engrave your first trophy.
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {activeTab === 'standings' && (
           <div>
             <div className="flex items-center justify-between text-xs text-slate-400 mb-1.5">

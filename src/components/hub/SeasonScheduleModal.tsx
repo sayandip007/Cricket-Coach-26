@@ -1857,8 +1857,8 @@ export const SeasonScheduleModal: React.FC<SeasonScheduleModalProps> = ({
     const liveMatches: ScheduleMatchItem[] = [];
 
     calendarDays.forEach((d) => {
-      // 1. Primary fixture on this day
-      if (d.type === 'match' && d.matchFixture && !d.matchFixture.isInternational) {
+      // 1. Primary fixture on this day (match or playoff)
+      if ((d.type === 'match' || d.type === 'playoff') && d.matchFixture && !d.matchFixture.isInternational) {
         const fix = d.matchFixture;
         const homeCode = (fix.homeShortName || 'KOL').toUpperCase();
         const awayCode = (fix.awayShortName || 'MUM').toUpperCase();
@@ -1902,6 +1902,7 @@ export const SeasonScheduleModal: React.FC<SeasonScheduleModalProps> = ({
         liveMatches.push({
           id: fix.id,
           dateLabel: `${d.dayNumber} ${d.month}`,
+          matchLabel: d.type === 'playoff' ? d.title : undefined,
           homeShort: homeCode,
           awayShort: awayCode,
           homeFull: homeFullName,
@@ -2600,7 +2601,12 @@ export const SeasonScheduleModal: React.FC<SeasonScheduleModalProps> = ({
                 >
                   <div className="flex items-center gap-3 min-w-0 shrink-0">
                     <span className="text-xs text-slate-400 w-12 shrink-0">{m.dateLabel}</span>
-                    {renderMatchupText(m.homeShort, m.awayShort)}
+                    <div className="flex flex-col">
+                      {m.matchLabel && (
+                        <span className="text-[11px] font-bold text-amber-400 uppercase tracking-tight">{m.matchLabel}</span>
+                      )}
+                      {renderMatchupText(m.homeShort, m.awayShort)}
+                    </div>
                   </div>
 
                   <div className="flex items-center gap-1.5 min-w-0 pl-3 justify-end">

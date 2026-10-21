@@ -134,8 +134,10 @@ runTest('SMOKE', 'Indian Premier League (IPL) is premier league with valid stand
   assert.equal(ipl.id, 'pt20', 'Premier league must be pt20 (IPL)');
   assert.equal(ipl.standings.length, 10, 'IPL must have 10 franchise teams in standings');
   const playoffs = ipl.playoffs || createInitialPlayoffs(ipl.standings);
-  assert.ok(playoffs.q1.homeTeamId && playoffs.q1.awayTeamId, 'IPL Q1 bracket missing seeds');
-  assert.ok(playoffs.eliminator.homeTeamId && playoffs.eliminator.awayTeamId, 'IPL Eliminator missing seeds');
+  assert.equal(playoffs.q1.homeTeamId, null, 'IPL Q1 home must default to TBD');
+  assert.equal(playoffs.q1.awayTeamId, null, 'IPL Q1 away must default to TBD');
+  assert.equal(playoffs.eliminator.homeTeamId, null, 'IPL Eliminator home must default to TBD');
+  assert.equal(playoffs.eliminator.awayTeamId, null, 'IPL Eliminator away must default to TBD');
 });
 
 runTest('SMOKE', 'All 8 International Nations & 79 Achievements are properly initialized', () => {
@@ -269,17 +271,39 @@ runTest('REGRESSION', 'Phase 16: Stadium & Kit Palettes dynamically adapt across
   assert.notEqual(chepaukTheme.pitchSoilColor, wankhedeTheme.pitchSoilColor, 'Dry Turner and Green Seamer pitches should have distinct soil colors');
 });
 
-runTest('REGRESSION', 'Phase 16: Calendar builds 14 user fixtures, concurrent otherMatches for all teams, and Cricbuzz 2026 International Tours', () => {
+runTest('REGRESSION', 'Phase 16: Calendar builds 18 user fixtures, 18 match rounds with 4 concurrent AI matches per round, and Cricbuzz 2026 International Tours', () => {
   assert.ok(CRICBUZZ_2026_INTL_TOURS.length >= 20, `Expected >= 20 Cricbuzz 2026 international tour fixtures, got ${CRICBUZZ_2026_INTL_TOURS.length}`);
 
   const calendar = buildSeasonCalendarForTeam('team_kol', INITIAL_TEAMS);
-  assert.ok(calendar.length >= 40, `Expected >= 40 calendar dates (league + playoffs + intl tours), got ${calendar.length}`);
+  assert.ok(calendar.length >= 50, `Expected >= 50 calendar dates (league + playoffs + intl tours), got ${calendar.length}`);
 
   const userMatchDays = calendar.filter(d => d.type === 'match' && d.matchFixture);
-  assert.equal(userMatchDays.length, 14, `Expected 14 user league match days, got ${userMatchDays.length}`);
+  assert.equal(userMatchDays.length, 18, `Expected 18 user league match days, got ${userMatchDays.length}`);
 
-  const daysWithOtherTeamMatches = calendar.filter(d => (d.otherMatches?.length || 0) > 0);
-  assert.ok(daysWithOtherTeamMatches.length >= 25, `Expected concurrent other-team fixtures across league days, got ${daysWithOtherTeamMatches.length}`);
+  const aiMatchDays = calendar.filter(d => (d.otherMatches?.length || 0) > 0);
+  assert.equal(aiMatchDays.length, 60, `Expected 60 AI league match days, got ${aiMatchDays.length}`);
+
+  // Verify that EVERY SINGLE TEAM plays EXACTLY 18 IPL league matches (full double round-robin)
+  const teamMatchCounts = new Map<string, number>();
+  INITIAL_TEAMS.forEach(t => teamMatchCounts.set(t.id, 0));
+
+  for (const d of calendar) {
+    if (d.type === 'match' && d.matchFixture) {
+      const h = d.matchFixture.homeTeamId;
+      const a = d.matchFixture.awayTeamId;
+      teamMatchCounts.set(h, (teamMatchCounts.get(h) || 0) + 1);
+      teamMatchCounts.set(a, (teamMatchCounts.get(a) || 0) + 1);
+    }
+    for (const om of d.otherMatches || []) {
+      teamMatchCounts.set(om.homeTeamId, (teamMatchCounts.get(om.homeTeamId) || 0) + 1);
+      teamMatchCounts.set(om.awayTeamId, (teamMatchCounts.get(om.awayTeamId) || 0) + 1);
+    }
+  }
+
+  for (const team of INITIAL_TEAMS) {
+    const count = teamMatchCounts.get(team.id) || 0;
+    assert.equal(count, 18, `Team ${team.shortName} should play exactly 18 IPL league matches, got ${count}`);
+  }
 
   const intlTourDays = calendar.filter(d => d.type === 'international' || (d.internationalMatches?.length || 0) > 0);
   assert.ok(intlTourDays.length >= 15, `Expected Cricbuzz 2026 international tour days in calendar, got ${intlTourDays.length}`);
@@ -1011,10 +1035,15 @@ runTest('REGRESSION', 'Step 5.2: IPL Playoff qualification and winner/loser prog
   }));
 
   const playoffs = createInitialPlayoffs(standings);
-  assert.equal(playoffs.q1.homeTeamId, standings[0].teamId, 'Q1 home must be #1 seed');
-  assert.equal(playoffs.q1.awayTeamId, standings[1].teamId, 'Q1 away must be #2 seed');
-  assert.equal(playoffs.eliminator.homeTeamId, standings[2].teamId, 'Eliminator home must be #3 seed');
-  assert.equal(playoffs.eliminator.awayTeamId, standings[3].teamId, 'Eliminator away must be #4 seed');
+  assert.equal(playoffs.q1.homeTeamId, null, 'Q1 home must be TBD by default');
+  assert.equal(playoffs.q1.awayTeamId, null, 'Q1 away must be TBD by default');
+  assert.equal(playoffs.eliminator.homeTeamId, null, 'Eliminator home must be TBD by default');
+  assert.equal(playoffs.eliminator.awayTeamId, null, 'Eliminator away must be TBD by default');
+
+  playoffs.q1.homeTeamId = standings[0].teamId;
+  playoffs.q1.awayTeamId = standings[1].teamId;
+  playoffs.eliminator.homeTeamId = standings[2].teamId;
+  playoffs.eliminator.awayTeamId = standings[3].teamId;
 
   // Advance Q1: #1 beats #2 -> #1 to Final, #2 to Q2
   playoffs.q1.completed = true;

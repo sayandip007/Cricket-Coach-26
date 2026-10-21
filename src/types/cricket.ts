@@ -614,3 +614,12 @@ export interface InboxMessage {
   selectedReply?: string;
   impactSummary?: string;
 }
+
+export interface TournamentHonor {
+  year: string | number;
+  tournamentName: string;
+  championTeamId: string;
+  championTeamName: string;
+  championLogo: string;
+}
+
