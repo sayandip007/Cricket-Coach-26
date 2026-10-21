@@ -5,6 +5,7 @@ import { Player } from '../../types/cricket';
 import { sound } from '../../utils/soundEffects';
 import { derivePlayerPersonality } from '../../services/cricketServices';
 import { TeamLogo } from '../common/TeamLogo';
+import { PlayerCareerStatsCard } from '../common/PlayerCareerStatsCard';
 
 export const TeamManagementScreen: React.FC = () => {
   const {
@@ -720,30 +721,8 @@ export const TeamManagementScreen: React.FC = () => {
               </div>
             </div>
 
-            {/* Lifetime Stats */}
-            <div className="p-3 bg-slate-900/60 rounded-2xl border border-slate-800/80 mb-4">
-              <span className="text-[10px] font-mono text-slate-400 uppercase tracking-wider block mb-2 font-bold">
-                CAREER STATS
-              </span>
-              <div className="grid grid-cols-4 gap-2 text-center text-xs">
-                <div>
-                  <span className="text-[9px] text-slate-400 block">MATCHES</span>
-                  <span className="font-mono-nums font-bold text-white">{selectedPlayer.stats.matches}</span>
-                </div>
-                <div>
-                  <span className="text-[9px] text-slate-400 block">RUNS</span>
-                  <span className="font-mono-nums font-bold text-amber-400">{selectedPlayer.stats.runs}</span>
-                </div>
-                <div>
-                  <span className="text-[9px] text-slate-400 block">WICKETS</span>
-                  <span className="font-mono-nums font-bold text-emerald-400">{selectedPlayer.stats.wickets}</span>
-                </div>
-                <div>
-                  <span className="text-[9px] text-slate-400 block">BEST BOWL</span>
-                  <span className="font-mono-nums font-bold text-cyan-400">{selectedPlayer.stats.bestBowling || '-'}</span>
-                </div>
-              </div>
-            </div>
+            {/* Role-Specific Career Stats Card */}
+            <PlayerCareerStatsCard player={selectedPlayer} className="mb-4" />
 
             <div className="grid grid-cols-2 gap-2">
               <button

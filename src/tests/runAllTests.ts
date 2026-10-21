@@ -23,6 +23,12 @@ import {
   pruneLegacyCacheKeys,
   applyTriggerDrsReviewState
 } from '../context/GameContext';
+import {
+  getRoleDisciplines,
+  getBattingStats,
+  getBowlingStats,
+  getKeepingStats
+} from '../utils/playerStatsHelpers';
 import { checkDrsEligibility, evaluateDrsDeliveryEvidence, getInitialReviewsForFormat } from '../utils/drsRules';
 import {
   computeAnimationFrame,
@@ -1446,6 +1452,328 @@ runTest('REGRESSION', 'Phase 21: TATA IPL 2026 Auction Audit — 350 PDF Players
 
 runTest('REGRESSION', 'Phase 22: Bowling Statistics, Player Attribution, DRS Overturns & Auction Sandbox Isolation', () => {
   runBowlingAndSandboxTests();
+});
+
+function runPlayerStatsTests() {
+  console.log('🧪 Starting Role-Specific Player Career Statistics Cards Tests...');
+
+  // 1. Batter with runs, highest score, fours, sixes, fifties, hundreds
+  const batter: Player = {
+    id: 'test_batter_1',
+    name: 'Viraj Sharma',
+    role: 'Top-order',
+    bowlingArm: 'ROB',
+    battingHand: 'RHB',
+    age: 28,
+    country: 'India',
+    clubId: 'team_che',
+    isOverseas: false,
+    tier: 'Platinum',
+    basePriceCr: 2.0,
+    salaryCr: 10.0,
+    form: 90, morale: 90, fitness: 95, isInjured: false, injuryDays: 0,
+    ratings: { bat: 85, pow: 80, tec: 88, tmp: 85, agg: 80, sty: 80, run: 85, vp: 85, vs: 85, bowl: 20, pace: 20, ctrl: 20, var: 20, dth: 20, comp: 80, cat: 80, fld: 80, fit: 90 },
+    stats: {
+      matches: 50,
+      runs: 2150,
+      balls: 1520,
+      fours: 210,
+      sixes: 75,
+      fifties: 18,
+      hundreds: 3,
+      highestScore: 112,
+      wickets: 0,
+      oversBowled: 0,
+      runsConceded: 0,
+      maidens: 0,
+      bestBowling: '0/0',
+      average: 45.74,
+      strikeRate: 141.45
+    }
+  };
+
+  const bStats1 = getBattingStats(batter);
+  assert.equal(bStats1.matches, '50');
+  assert.equal(bStats1.runs, '2150');
+  assert.equal(bStats1.highestScore, '112');
+  assert.equal(bStats1.fours, '210');
+  assert.equal(bStats1.sixes, '75');
+  assert.equal(bStats1.fifties, '18');
+  assert.equal(bStats1.hundreds, '3');
+  assert.equal(bStats1.strikeRate, '141.45');
+
+  // 2. Batter who has never bowled: bowling-only statistics display "-"
+  const bwStats1 = getBowlingStats(batter);
+  assert.equal(bwStats1.hasBowled, false);
+  assert.equal(bwStats1.overs, '-');
+  assert.equal(bwStats1.maidens, '-');
+  assert.equal(bwStats1.runsConceded, '-');
+  assert.equal(bwStats1.wickets, '-');
+  assert.equal(bwStats1.bestBowling, '-');
+  assert.equal(bwStats1.average, '-');
+  assert.equal(bwStats1.economy, '-');
+  assert.equal(bwStats1.strikeRate, '-');
+
+  // 3. Bowler with overs, maidens, runs conceded, wickets and best figures
+  const bowler: Player = {
+    id: 'test_bowler_1',
+    name: 'Jaspreet Singh',
+    role: 'Pace',
+    bowlingArm: 'RAF',
+    battingHand: 'RHB',
+    age: 26,
+    country: 'India',
+    clubId: 'team_mum',
+    isOverseas: false,
+    tier: 'Platinum',
+    basePriceCr: 2.0,
+    salaryCr: 12.0,
+    form: 90, morale: 90, fitness: 95, isInjured: false, injuryDays: 0,
+    ratings: { bat: 20, pow: 20, tec: 20, tmp: 50, agg: 50, sty: 50, run: 60, vp: 50, vs: 50, bowl: 90, pace: 92, ctrl: 88, var: 85, dth: 90, comp: 85, cat: 75, fld: 75, fit: 92 },
+    stats: {
+      matches: 40,
+      runs: 0,
+      balls: 0,
+      fours: 0,
+      sixes: 0,
+      fifties: 0,
+      hundreds: 0,
+      highestScore: 0,
+      wickets: 65,
+      oversBowled: 152.4, // 152 overs and 4 balls
+      runsConceded: 1120,
+      maidens: 8,
+      bestBowling: '5/18'
+    }
+  };
+
+  const bwStats3 = getBowlingStats(bowler);
+  assert.equal(bwStats3.hasBowled, true);
+  assert.equal(bwStats3.wickets, '65');
+  assert.equal(bwStats3.runsConceded, '1120');
+  assert.equal(bwStats3.maidens, '8');
+  assert.equal(bwStats3.bestBowling, '5/18');
+  assert.equal(bwStats3.average, (1120 / 65).toFixed(2));
+  // 11. Overs formatted correctly, including partial overs (152.4 -> 152.4)
+  assert.equal(bwStats3.overs, '152.4');
+
+  // 4. Bowler with zero wickets but valid bowling figures
+  const zeroWktBowler: Player = {
+    ...bowler,
+    id: 'test_zero_wkt',
+    stats: {
+      ...bowler.stats,
+      wickets: 0,
+      oversBowled: 3.2, // 3 overs 2 balls
+      runsConceded: 18,
+      maidens: 0,
+      bestBowling: '0/18'
+    }
+  };
+  const bwStats4 = getBowlingStats(zeroWktBowler);
+  assert.equal(bwStats4.hasBowled, true);
+  assert.equal(bwStats4.wickets, '0');
+  assert.equal(bwStats4.overs, '3.2');
+  assert.equal(bwStats4.bestBowling, '0/18');
+  assert.equal(bwStats4.average, '-');
+  assert.equal(bwStats4.strikeRate, '-');
+
+  // 5. Bowler who has never batted: batting-only statistics display "-"
+  const bStats5 = getBattingStats(bowler);
+  assert.equal(bStats5.hasBatted, false);
+  assert.equal(bStats5.runs, '-');
+  assert.equal(bStats5.highestScore, '-');
+  assert.equal(bStats5.average, '-');
+  assert.equal(bStats5.strikeRate, '-');
+  assert.equal(bStats5.balls, '-');
+  assert.equal(bStats5.fours, '-');
+
+  // 6. All-rounder with both batting and bowling figures
+  const allRounder: Player = {
+    id: 'test_ar_1',
+    name: 'Hardik Roy',
+    role: 'All-rounder',
+    bowlingArm: 'RAM',
+    battingHand: 'RHB',
+    age: 29,
+    country: 'India',
+    clubId: 'team_guj',
+    isOverseas: false,
+    tier: 'Platinum',
+    basePriceCr: 2.0,
+    salaryCr: 15.0,
+    form: 90, morale: 90, fitness: 95, isInjured: false, injuryDays: 0,
+    ratings: { bat: 82, pow: 85, tec: 78, tmp: 80, agg: 85, sty: 80, run: 82, vp: 80, vs: 80, bowl: 80, pace: 80, ctrl: 78, var: 78, dth: 80, comp: 82, cat: 80, fld: 82, fit: 90 },
+    stats: {
+      matches: 30,
+      runs: 750,
+      balls: 520,
+      fours: 60,
+      sixes: 35,
+      fifties: 4,
+      hundreds: 0,
+      highestScore: 78,
+      wickets: 28,
+      oversBowled: 85.2,
+      runsConceded: 650,
+      maidens: 2,
+      bestBowling: '3/22'
+    }
+  };
+  const disc6 = getRoleDisciplines(allRounder);
+  assert.equal(disc6.showBatting, true);
+  assert.equal(disc6.showBowling, true);
+  assert.equal(getBattingStats(allRounder).runs, '750');
+  assert.equal(getBowlingStats(allRounder).wickets, '28');
+
+  // 7. All-rounder who has not yet bowled
+  const unbowledAr: Player = {
+    ...allRounder,
+    id: 'test_unbowled_ar',
+    stats: {
+      ...allRounder.stats,
+      wickets: 0,
+      oversBowled: 0,
+      runsConceded: 0,
+      maidens: 0,
+      bestBowling: '0/0'
+    }
+  };
+  const disc7 = getRoleDisciplines(unbowledAr);
+  assert.equal(disc7.showBatting, true);
+  assert.equal(disc7.showBowling, true);
+  const bwStats7 = getBowlingStats(unbowledAr);
+  assert.equal(bwStats7.hasBowled, false);
+  assert.equal(bwStats7.overs, '-');
+  assert.equal(bwStats7.wickets, '-');
+  assert.equal(bwStats7.bestBowling, '-');
+
+  // 8. Wicketkeeper with batting figures and keeping statistics
+  const keeper: Player = {
+    id: 'test_keeper_1',
+    name: 'Sanju Verma',
+    role: 'Wk-bat',
+    bowlingArm: 'ROB',
+    battingHand: 'RHB',
+    age: 28,
+    country: 'India',
+    clubId: 'team_raj',
+    isOverseas: false,
+    tier: 'Platinum',
+    basePriceCr: 2.0,
+    salaryCr: 12.0,
+    form: 90, morale: 90, fitness: 95, isInjured: false, injuryDays: 0,
+    ratings: { bat: 84, pow: 86, tec: 82, tmp: 80, agg: 85, sty: 85, run: 82, vp: 82, vs: 82, bowl: 15, pace: 15, ctrl: 15, var: 15, dth: 15, comp: 80, cat: 88, fld: 85, fit: 90 },
+    stats: {
+      matches: 45,
+      runs: 1420,
+      balls: 980,
+      fours: 120,
+      sixes: 55,
+      fifties: 10,
+      hundreds: 1,
+      highestScore: 105,
+      wickets: 0,
+      oversBowled: 0,
+      runsConceded: 0,
+      maidens: 0,
+      bestBowling: '0/0',
+      catches: 32,
+      stumpings: 8
+    }
+  };
+  const disc8 = getRoleDisciplines(keeper);
+  assert.equal(disc8.showBatting, true);
+  assert.equal(disc8.showKeeping, true);
+  const kStats8 = getKeepingStats(keeper);
+  assert.equal(kStats8.catches, '32');
+  assert.equal(kStats8.stumpings, '8');
+  assert.equal(kStats8.totalDismissals, '40');
+
+  // 9. Missing optional fields do not display "undefined", "NaN" or "Infinity"
+  const corruptPlayer: Player = {
+    id: 'corrupt_p',
+    name: 'Null Stats Player',
+    role: 'Top-order',
+    bowlingArm: 'ROB',
+    battingHand: 'RHB',
+    age: 22,
+    country: 'India',
+    clubId: 'team_che',
+    isOverseas: false,
+    tier: 'Bronze',
+    basePriceCr: 0.2,
+    salaryCr: 0.2,
+    form: 50, morale: 50, fitness: 50, isInjured: false, injuryDays: 0,
+    ratings: { bat: 50, pow: 50, tmp: 50, bowl: 20, pace: 20, ctrl: 20, dth: 20 },
+    stats: {
+      matches: undefined as any,
+      runs: NaN as any,
+      balls: null as any,
+      fours: undefined as any,
+      sixes: NaN as any,
+      fifties: null as any,
+      hundreds: undefined as any,
+      highestScore: null as any,
+      wickets: NaN as any,
+      oversBowled: null as any,
+      runsConceded: undefined as any,
+      maidens: null as any,
+      bestBowling: undefined as any,
+      average: Infinity as any,
+      strikeRate: -Infinity as any,
+      economy: NaN as any
+    }
+  };
+
+  const bCorrupt = getBattingStats(corruptPlayer);
+  assert.equal(bCorrupt.runs, '-');
+  assert.equal(bCorrupt.average, '-');
+  assert.equal(bCorrupt.strikeRate, '-');
+  assert.notEqual(bCorrupt.runs, 'NaN');
+  assert.notEqual(bCorrupt.average, 'Infinity');
+
+  const bwCorrupt = getBowlingStats(corruptPlayer);
+  assert.equal(bwCorrupt.overs, '-');
+  assert.equal(bwCorrupt.wickets, '-');
+  assert.equal(bwCorrupt.economy, '-');
+  assert.notEqual(bwCorrupt.economy, 'NaN');
+
+  // 10. Genuine zero values are preserved
+  const zeroBatter: Player = {
+    ...batter,
+    id: 'zero_batter',
+    stats: {
+      ...batter.stats,
+      fifties: 0,
+      hundreds: 0,
+      fours: 0,
+      sixes: 0
+    }
+  };
+  const bZero = getBattingStats(zeroBatter);
+  assert.equal(bZero.fifties, '0');
+  assert.equal(bZero.hundreds, '0');
+  assert.equal(bZero.fours, '0');
+  assert.equal(bZero.sixes, '0');
+
+  // 12. Existing career statistics remain unchanged after card formatting
+  const originalRuns = batter.stats.runs;
+  const originalWickets = batter.stats.wickets;
+  getBattingStats(batter);
+  getBowlingStats(batter);
+  assert.equal(batter.stats.runs, originalRuns, 'Player stats must remain immutable when generating card display');
+  assert.equal(batter.stats.wickets, originalWickets, 'Player stats must remain immutable when generating card display');
+
+  // 13. Save/load serialization retains display values
+  const serialized = JSON.parse(JSON.stringify(batter));
+  assert.equal(getBattingStats(serialized).runs, '2150');
+
+  console.log('✅ ALL Role-Specific Player Career Statistics Cards Tests PASSED!');
+}
+
+runTest('REGRESSION', 'Phase 23: Role-Specific Player Career Statistics Cards', () => {
+  runPlayerStatsTests();
 });
 
 const failed = results.filter(r => !r.passed);

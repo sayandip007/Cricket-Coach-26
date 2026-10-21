@@ -13,6 +13,7 @@ import { OpenerSelectionModal } from './OpenerSelectionModal';
 import { FielderPosition, Player } from '../../types/cricket';
 import { sound } from '../../utils/soundEffects';
 import { TeamLogo } from '../common/TeamLogo';
+import { PlayerCareerStatsCard } from '../common/PlayerCareerStatsCard';
 import { checkDrsEligibility } from '../../utils/drsRules';
 import { calculateBowlingEconomy, formatOversDisplay } from '../../utils/bowlingStats';
 
@@ -1672,6 +1673,8 @@ export const LiveMatchEngine: React.FC = () => {
                 ))}
               </div>
             </div>
+
+            <PlayerCareerStatsCard player={inspectedPlayer} className="mb-4" />
 
             <button
               onClick={() => setInspectedPlayer(null)}

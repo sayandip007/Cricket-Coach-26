@@ -22,6 +22,13 @@ export interface PlayerStats {
   average?: number;
   strikeRate?: number;
   economy?: number;
+  innings?: number;
+  dismissals?: number;
+  inningsBowled?: number;
+  bowlingAverage?: number;
+  bowlingStrikeRate?: number;
+  catches?: number;
+  stumpings?: number;
 }
 
 export interface Player {
