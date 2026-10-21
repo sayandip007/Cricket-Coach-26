@@ -3,6 +3,7 @@ import { X, BarChart3 } from 'lucide-react';
 import { MatchLiveState, InningsData } from '../../types/cricket';
 import { resolveKitColor } from './TacticalStadium2D';
 import { sound } from '../../utils/soundEffects';
+import { calculateBowlingEconomy, formatOversDisplay } from '../../utils/bowlingStats';
 
 interface MatchAnalysisModalProps {
   matchState: MatchLiveState;
@@ -143,16 +144,12 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ matchSta
 
         <div className="divide-y divide-slate-800/50 text-xs">
           {inn.bowlers.map((bw) => {
-            const econStr =
-              bw.economy > 0
-                ? bw.economy.toFixed(1)
-                : bw.overs > 0
-                ? (bw.runs / bw.overs).toFixed(1)
-                : '0.0';
+            const econStr = calculateBowlingEconomy(bw.runs, bw.overs).toFixed(2);
+            const oversDisplay = formatOversDisplay(bw.overs, false, true);
             return (
               <div key={bw.playerId} className="grid grid-cols-12 px-3 py-2 items-center">
                 <span className="col-span-5 font-bold text-white truncate pr-1">{bw.name}</span>
-                <span className="col-span-1 text-right font-mono text-slate-300">{bw.overs}</span>
+                <span className="col-span-1 text-right font-mono text-slate-300">{oversDisplay}</span>
                 <span className="col-span-1 text-right font-mono text-slate-400">{bw.maidens || 0}</span>
                 <span className="col-span-2 text-right font-mono text-slate-200">{bw.runs}</span>
                 <span className="col-span-1 text-right font-mono font-black text-amber-400">{bw.wickets}</span>

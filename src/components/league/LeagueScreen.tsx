@@ -104,12 +104,13 @@ export const LeagueScreen: React.FC = () => {
       .slice(0, 8)
       .map(({ player: p, teamShort }) => {
         const wkts = p.stats?.wickets || 0;
-        const overs = Math.max(1, p.stats?.oversBowled || 1);
         const runsConceded = p.stats?.runsConceded || 0;
-        const econ = p.stats?.economy ?? Number((runsConceded / overs).toFixed(1));
-        const best = p.stats?.bestBowling && p.stats.bestBowling !== '0/0'
+        const econ = typeof p.stats?.economy === 'number' && p.stats.economy > 0
+          ? p.stats.economy
+          : 0.0;
+        const best = p.stats?.bestBowling && p.stats.bestBowling !== '0/0' && p.stats.bestBowling !== '-'
           ? p.stats.bestBowling
-          : `${Math.min(5, Math.max(1, Math.round(wkts / 18)))}/${18 + (p.age % 9)}`;
+          : (wkts > 0 ? `${wkts}/${runsConceded}` : '-');
         return {
           id: p.id,
           name: p.name,

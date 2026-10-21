@@ -644,7 +644,7 @@ export const HubScreen: React.FC = () => {
                             <span className="text-[9px] text-slate-400 block uppercase">Bowling</span>
                             {inn1TopBowler ? (
                               <div className="text-emerald-400 font-bold">
-                                {inn1TopBowler.name.split(' ').pop()} {inn1TopBowler.overs}-{inn1TopBowler.maidens}-{inn1TopBowler.runsConceded}-{inn1TopBowler.wickets}
+                                {inn1TopBowler.name.split(' ').pop()} {inn1TopBowler.overs}-{inn1TopBowler.maidens}-{inn1TopBowler.runsConceded ?? inn1TopBowler.runs ?? 0}-{inn1TopBowler.wickets}
                               </div>
                             ) : (
                               <div className="text-emerald-400 font-bold">Sandeep 4-1-28-2</div>
@@ -679,7 +679,7 @@ export const HubScreen: React.FC = () => {
                             <span className="text-[9px] text-slate-400 block uppercase">Bowling</span>
                             {inn2TopBowler ? (
                               <div className="text-emerald-400 font-bold">
-                                {inn2TopBowler.name.split(' ').pop()} {inn2TopBowler.overs}-{inn2TopBowler.maidens}-{inn2TopBowler.runsConceded}-{inn2TopBowler.wickets}
+                                {inn2TopBowler.name.split(' ').pop()} {inn2TopBowler.overs}-{inn2TopBowler.maidens}-{inn2TopBowler.runsConceded ?? inn2TopBowler.runs ?? 0}-{inn2TopBowler.wickets}
                               </div>
                             ) : (
                               <div className="text-emerald-400 font-bold">Green 4-0-18-2</div>

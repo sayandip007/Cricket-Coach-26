@@ -14,6 +14,7 @@ import { FielderPosition, Player } from '../../types/cricket';
 import { sound } from '../../utils/soundEffects';
 import { TeamLogo } from '../common/TeamLogo';
 import { checkDrsEligibility } from '../../utils/drsRules';
+import { calculateBowlingEconomy, formatOversDisplay } from '../../utils/bowlingStats';
 
 export const LiveMatchEngine: React.FC = () => {
   const {
@@ -255,9 +256,9 @@ export const LiveMatchEngine: React.FC = () => {
   const isUserBatting = battingTeam.id === activeUserMatchTeam.id;
 
   // Active Players
-  const striker = players.find(p => p.id === currentInnings.currentStrikerId) || players[0];
-  const nonStriker = players.find(p => p.id === currentInnings.currentNonStrikerId) || players[1];
-  const currentBowler = players.find(p => p.id === currentInnings.currentBowlerId) || players[2];
+  const striker = players.find(p => p.id === currentInnings.currentStrikerId) || battingTeam.squad?.find(p => p.id === currentInnings.currentStrikerId) || players[0];
+  const nonStriker = players.find(p => p.id === currentInnings.currentNonStrikerId) || battingTeam.squad?.find(p => p.id === currentInnings.currentNonStrikerId) || players[1];
+  const currentBowler = players.find(p => p.id === currentInnings.currentBowlerId) || bowlingTeam.squad?.find(p => p.id === currentInnings.currentBowlerId) || players[2];
 
   const strikerScore = currentInnings.batters.find(b => b.playerId === striker.id) || { runs: 0, balls: 0, fours: 0, sixes: 0, dismissal: 'not out', strikeRate: 0 };
   const nonStrikerScore = currentInnings.batters.find(b => b.playerId === nonStriker.id) || { runs: 0, balls: 0, fours: 0, sixes: 0, dismissal: 'not out', strikeRate: 0 };
@@ -411,9 +412,9 @@ export const LiveMatchEngine: React.FC = () => {
 
   const bowlerScore = currentInnings.bowlers?.find(b => b.playerId === currentBowler.id);
   const bowlerFigures = bowlerScore
-    ? `${bowlerScore.overs}-${bowlerScore.maidens}-${bowlerScore.runs}-${bowlerScore.wickets}`
+    ? `${formatOversDisplay(bowlerScore.overs, false, true)}-${bowlerScore.maidens}-${bowlerScore.runs}-${bowlerScore.wickets}`
     : `0.0-0-0-0`;
-  const bowlerEcon = bowlerScore ? bowlerScore.economy.toFixed(1) : '0.0';
+  const bowlerEcon = bowlerScore ? calculateBowlingEconomy(bowlerScore.runs, bowlerScore.overs).toFixed(2) : '0.00';
   const bowlerOversBowled = bowlerScore ? bowlerScore.overs : 0;
   const activeEffort = bowlingTactics.effort || 'standard';
   const liveBowlerStamina = Math.max(

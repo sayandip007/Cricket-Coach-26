@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { Trophy, ChevronRight, Play, Settings, Info, X, Folder } from 'lucide-react';
+import { Trophy, ChevronRight, Play, Settings, Info, X, Folder, Gavel } from 'lucide-react';
 import { useGame } from '../../context/GameContext';
 import { SettingsModal } from './SettingsModal';
 import { AchievementsScreen } from './AchievementsScreen';
+import { AuctionSandboxModal } from '../auction/AuctionSandboxModal';
 import { sound } from '../../utils/soundEffects';
 
 export const OpeningLandingScreen: React.FC = () => {
@@ -21,6 +22,7 @@ export const OpeningLandingScreen: React.FC = () => {
   const [showAchievements, setShowAchievements] = useState(false);
   const [showAboutModal, setShowAboutModal] = useState(false);
   const [showNewGameModal, setShowNewGameModal] = useState(false);
+  const [showSandboxModal, setShowSandboxModal] = useState(false);
   const [newGameSlot, setNewGameSlot] = useState<1 | 2 | 3>(() => {
     const empty = saveSlots.find(s => !s.hasSave);
     return empty ? empty.slotNumber : activeSaveSlot;
@@ -184,7 +186,33 @@ export const OpeningLandingScreen: React.FC = () => {
             <ChevronRight className="w-6 h-6 text-black group-hover:translate-x-1 transition-transform" />
           </button>
 
-          {/* 2. NEW GAME (Dark Card) */}
+          {/* 2. AUCTION ONLY SANDBOX (Dedicated Isolated Lab Card) */}
+          <button
+            onClick={() => {
+              sound.playTap();
+              setShowSandboxModal(true);
+            }}
+            className="w-full py-3.5 px-5 rounded-2xl bg-[#141d33]/90 hover:bg-[#1a2745] border border-amber-500/50 text-left flex items-center justify-between shadow-xl active:scale-[0.98] transition-all group backdrop-blur-md"
+          >
+            <div>
+              <div className="flex items-center gap-2">
+                <div className="text-sm font-black font-display tracking-wider uppercase text-amber-400 leading-tight">
+                  AUCTION ONLY SANDBOX
+                </div>
+                <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                  ISOLATED LAB
+                </span>
+              </div>
+              <div className="text-xs text-slate-300 mt-0.5">
+                Play standalone Mega or Mini Auction as any of the 10 franchises with custom retentions
+              </div>
+            </div>
+            <div className="w-8 h-8 rounded-full bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 group-hover:scale-105 transition-transform">
+              <Gavel className="w-4 h-4 fill-current" />
+            </div>
+          </button>
+
+          {/* 3. NEW GAME (Dark Card) */}
           <button
             onClick={openNewGameModal}
             className="w-full py-3.5 px-5 rounded-2xl bg-[#121927]/90 hover:bg-[#1a2336] border border-slate-800 text-left flex items-center justify-between shadow-xl active:scale-[0.98] transition-all group backdrop-blur-md"
@@ -391,6 +419,13 @@ export const OpeningLandingScreen: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {showSandboxModal && (
+        <AuctionSandboxModal
+          isOpen={showSandboxModal}
+          onClose={() => setShowSandboxModal(false)}
+        />
       )}
     </div>
   );

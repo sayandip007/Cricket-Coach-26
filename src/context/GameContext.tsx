@@ -11,11 +11,42 @@ import {
 import { simulateBall } from '../engine/cricketEngine';
 import { calculateDLSTarget } from '../engine/dlsEngine';
 import { checkDrsEligibility, evaluateDrsDeliveryEvidence, getInitialReviewsForFormat } from '../utils/drsRules';
+import {
+  oversToBalls,
+  ballsToOvers,
+  addCricketOvers,
+  calculateBowlingEconomy,
+  isLegalBallForBowler,
+  getRunsChargedToBowler,
+  isBowlerCreditedWicket,
+  compareBestBowling,
+  applyDeliveryToBowlerScorecard,
+  aggregateBowlerMatchStatsIntoCareer
+} from '../utils/bowlingStats';
+import {
+  AuctionSandboxMode,
+  buildAuctionSandboxState
+} from '../utils/auctionSandboxEngine';
+import { AuctionPlayerItem } from '../data/auctionSets2026';
 import { sound } from '../utils/soundEffects';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import confetti from 'canvas-confetti';
 
 export type MainTab = 'landing' | 'hub' | 'team' | 'league' | 'world' | 'profile' | 'auction' | 'live_match';
+
+export interface AuctionSandboxSessionState {
+  isActive: boolean;
+  franchiseId: string;
+  mode: AuctionSandboxMode;
+  userRetainedPlayerIds: string[];
+  sandboxTeams: Team[];
+  sandboxPlayers: Player[];
+  sandboxLots: AuctionPlayerItem[];
+  teamPursesByShort: Record<string, number>;
+  userPurseCr: number;
+  userRtmCards: number;
+  releasedPlayerIds: string[];
+}
 
 const INITIAL_COMPLETED_MATCHES: CompletedMatchRecord[] = [];
 
@@ -1029,6 +1060,15 @@ interface GameContextType {
   isAiBidding: boolean;
   aiBiddingSpeed: 'instant' | 'fast' | 'normal';
   setAiBiddingSpeed: (speed: 'instant' | 'fast' | 'normal') => void;
+  // Auction Sandbox
+  auctionSandbox: AuctionSandboxSessionState | null;
+  startAuctionSandbox: (params: {
+    franchiseId: string;
+    mode: AuctionSandboxMode;
+    userRetainedPlayerIds: string[];
+  }) => void;
+  exitAuctionSandbox: () => void;
+  commitSandboxAuctionSale: (lot: AuctionPlayerItem, buyerShort: string, priceCr: number) => void;
 }
 
 const GameContext = createContext<GameContextType | undefined>(undefined);
@@ -1038,24 +1078,27 @@ function applyMatchToPlayerList(playerList: Player[], finishedMatch: MatchLiveSt
   const inn2 = finishedMatch.innings2;
 
   const batterMap = new Map<string, BatterInningsScorecard>();
-  const bowlerMap = new Map<string, BowlerInningsScorecard>();
+  const bowlerEntriesMap = new Map<string, BowlerInningsScorecard[]>();
 
   [...(inn1?.batters || []), ...(inn2?.batters || [])].forEach(b => {
     batterMap.set(b.playerId, b);
   });
   [...(inn1?.bowlers || []), ...(inn2?.bowlers || [])].forEach(bw => {
-    bowlerMap.set(bw.playerId, bw);
+    const list = bowlerEntriesMap.get(bw.playerId) || [];
+    list.push(bw);
+    bowlerEntriesMap.set(bw.playerId, list);
   });
 
   return playerList.map(p => {
     const bCard = batterMap.get(p.id);
-    const bwCard = bowlerMap.get(p.id);
-    if (!bCard && !bwCard) return p;
+    const bwCards = bowlerEntriesMap.get(p.id) || [];
+    if (!bCard && bwCards.length === 0) return p;
 
     const prevStats = p.stats || {
       matches: 0, runs: 0, balls: 0, fours: 0, sixes: 0,
       fifties: 0, hundreds: 0, highestScore: 0, wickets: 0,
-      oversBowled: 0, runsConceded: 0, maidens: 0, bestBowling: '0/0'
+      oversBowled: 0, runsConceded: 0, maidens: 0, bestBowling: '0/0',
+      economy: 0, average: 0, strikeRate: 0
     };
 
     const newMatches = (prevStats.matches || 0) + 1;
@@ -1074,35 +1117,16 @@ function applyMatchToPlayerList(playerList: Player[], finishedMatch: MatchLiveSt
     const newHundreds = (prevStats.hundreds || 0) + addHundred;
     const newHighest = Math.max(prevStats.highestScore || 0, addRuns);
 
-    const addWkts = bwCard ? bwCard.wickets : 0;
-    const addOvers = bwCard ? (Math.floor(bwCard.overs) + (bwCard.ballsInCurrentOver || 0) / 6) : 0;
-    const addConceded = bwCard ? bwCard.runs : 0;
-    const addMaidens = bwCard ? (bwCard.maidens || 0) : 0;
-
-    const newWickets = (prevStats.wickets || 0) + addWkts;
-    const newOversBowled = Number(((prevStats.oversBowled || 0) + addOvers).toFixed(1));
-    const newRunsConceded = (prevStats.runsConceded || 0) + addConceded;
-    const newMaidens = (prevStats.maidens || 0) + addMaidens;
-
-    let bestBowling = prevStats.bestBowling || '0/0';
-    if (bwCard && (bwCard.overs > 0 || bwCard.ballsInCurrentOver > 0)) {
-      const [prevBestW, prevBestR] = bestBowling.split('/').map(Number);
-      if (
-        bwCard.wickets > (prevBestW || 0) ||
-        (bwCard.wickets === (prevBestW || 0) && bwCard.runs < (prevBestR || 999) && bwCard.wickets > 0)
-      ) {
-        bestBowling = `${bwCard.wickets}/${bwCard.runs}`;
-      }
-    }
+    const bowlingAgg = aggregateBowlerMatchStatsIntoCareer(prevStats, bwCards);
+    const totalWktsThisMatch = bwCards.reduce((sum, c) => sum + (c.wickets || 0), 0);
 
     const estDismissals = Math.max(1, Math.round(newMatches * 0.75));
     const average = newRuns > 0 ? Number((newRuns / estDismissals).toFixed(1)) : 0;
     const strikeRate = newBalls > 0 ? Number(((newRuns / newBalls) * 100).toFixed(1)) : 0;
-    const economy = newOversBowled > 0 ? Number((newRunsConceded / newOversBowled).toFixed(1)) : 0;
 
     return {
       ...p,
-      form: Math.max(40, Math.min(100, p.form + (addRuns >= 35 || addWkts >= 2 ? 4 : -1))),
+      form: Math.max(40, Math.min(100, p.form + (addRuns >= 35 || totalWktsThisMatch >= 2 ? 4 : -1))),
       stats: {
         matches: newMatches,
         runs: newRuns,
@@ -1112,14 +1136,14 @@ function applyMatchToPlayerList(playerList: Player[], finishedMatch: MatchLiveSt
         fifties: newFifties,
         hundreds: newHundreds,
         highestScore: newHighest,
-        wickets: newWickets,
-        oversBowled: newOversBowled,
-        runsConceded: newRunsConceded,
-        maidens: newMaidens,
-        bestBowling,
+        wickets: bowlingAgg.wickets,
+        oversBowled: bowlingAgg.oversBowled,
+        runsConceded: bowlingAgg.runsConceded,
+        maidens: bowlingAgg.maidens,
+        bestBowling: bowlingAgg.bestBowling,
         average,
         strikeRate,
-        economy
+        economy: bowlingAgg.economy
       }
     };
   });
@@ -2529,10 +2553,35 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       injuryDays: Math.max(0, p.injuryDays - (medCenterTier >= 3 ? 2 : 1)),
       isInjured: p.injuryDays - (medCenterTier >= 3 ? 2 : 1) > 0
     }));
-    setPlayers(finalPlayers);
+
+    setPlayers(prevPlayers => {
+      return prevPlayers.map(p => {
+        const wp = finalPlayers.find(fp => fp.id === p.id);
+        if (!wp) return p;
+        return {
+          ...p,
+          fitness: wp.fitness,
+          injuryDays: wp.injuryDays,
+          isInjured: wp.isInjured,
+          form: wp.form,
+          stats: wp.stats ? { ...wp.stats } : p.stats
+        };
+      });
+    });
     setTeams(prev => prev.map(t => ({
       ...t,
-      squad: t.squad.map(sp => finalPlayers.find(fp => fp.id === sp.id) || sp)
+      squad: t.squad.map(sp => {
+        const fp = finalPlayers.find(f => f.id === sp.id);
+        if (!fp) return sp;
+        return {
+          ...sp,
+          fitness: fp.fitness,
+          injuryDays: fp.injuryDays,
+          isInjured: fp.isInjured,
+          form: fp.form,
+          stats: fp.stats ? { ...fp.stats } : sp.stats
+        };
+      })
     })));
 
     sound.playTap();
@@ -3467,10 +3516,26 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return finalizeInningsOrMatch(state, currentInnings, state.lastBallOutcome);
     }
 
-    // Determine current striker, nonStriker, and bowler
-    const striker = players.find(p => p.id === currentInnings.currentStrikerId) || players[0];
-    const nonStriker = players.find(p => p.id === currentInnings.currentNonStrikerId) || players[1];
-    const bowler = players.find(p => p.id === currentInnings.currentBowlerId) || players[2];
+    // Determine current striker, nonStriker, and bowler strictly by stable player ID
+    const bowlingTeam = currentInnings.bowlingTeamId === state.homeTeam.id ? state.homeTeam : state.awayTeam;
+    const battingTeam = currentInnings.battingTeamId === state.homeTeam.id ? state.homeTeam : state.awayTeam;
+
+    const striker =
+      players.find(p => p.id === currentInnings.currentStrikerId) ||
+      battingTeam.squad.find(p => p.id === currentInnings.currentStrikerId) ||
+      players[0];
+    const nonStriker =
+      players.find(p => p.id === currentInnings.currentNonStrikerId) ||
+      battingTeam.squad.find(p => p.id === currentInnings.currentNonStrikerId) ||
+      players[1];
+    const bowler =
+      players.find(p => p.id === currentInnings.currentBowlerId) ||
+      bowlingTeam.squad.find(p => p.id === currentInnings.currentBowlerId) ||
+      (currentInnings.bowlers.find(b => b.isCurrentBowler)
+        ? players.find(p => p.id === currentInnings.bowlers.find(b => b.isCurrentBowler)?.playerId)
+        : null) ||
+      bowlingTeam.squad[0] ||
+      players[2];
 
     const overNum = Math.floor(currentInnings.ballsCompleted / 6);
     const ballInOver = (currentInnings.ballsCompleted % 6) + 1;
@@ -3615,52 +3680,15 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } else {
       updatedOverRuns[overNum] += runsThisBall;
     }
-    const runsInThisOverAfterBall = (currentInnings.currentOverRuns || 0) + runsThisBall;
-    const isMaidenOver = isOverComplete && runsInThisOverAfterBall === 0;
-
-    // Update bowler figures
-    let bowlerFound = false;
-    let updatedBowlers = currentInnings.bowlers.map(b => {
-      if (b.playerId === bowler.id) {
-        bowlerFound = true;
-        const addBall = isLegalDelivery ? 1 : 0;
-        const totalBalls = Math.round(Math.floor(b.overs) * 6) + (b.ballsInCurrentOver || 0) + addBall;
-        const newOvers = Math.floor(totalBalls / 6);
-        const newBallsInOver = totalBalls % 6;
-        const newRuns = b.runs + runsThisBall;
-        const newWickets = b.wickets + (isWicket && ballOutcome.wicketType !== 'run out' ? 1 : 0);
-        const newMaidens = (b.maidens || 0) + (isMaidenOver ? 1 : 0);
-        const floatOvers = newOvers + (newBallsInOver / 6);
-        const newEconomy = floatOvers > 0 ? Number((newRuns / floatOvers).toFixed(1)) : 0;
-
-        return {
-          ...b,
-          overs: Number(`${newOvers}.${newBallsInOver}`),
-          ballsInCurrentOver: newBallsInOver,
-          maidens: newMaidens,
-          runs: newRuns,
-          wickets: newWickets,
-          economy: newEconomy,
-          isCurrentBowler: true
-        };
-      }
-      return { ...b, isCurrentBowler: false };
+    // Update bowler figures using canonical bowler math
+    const bowlerUpdate = applyDeliveryToBowlerScorecard({
+      bowlers: currentInnings.bowlers,
+      actualBowler: bowler,
+      outcome: ballOutcome,
+      currentOverBowlerRuns: currentInnings.currentOverRuns || 0
     });
-
-    if (!bowlerFound && bowler) {
-      const addBall = isLegalDelivery ? 1 : 0;
-      updatedBowlers.push({
-        playerId: bowler.id,
-        name: bowler.name,
-        overs: Number(`0.${addBall}`),
-        ballsInCurrentOver: addBall,
-        maidens: 0,
-        runs: runsThisBall,
-        wickets: isWicket && ballOutcome.wicketType !== 'run out' ? 1 : 0,
-        economy: Number((runsThisBall / (addBall / 6 || 1)).toFixed(1)),
-        isCurrentBowler: true
-      });
-    }
+    let updatedBowlers = bowlerUpdate.bowlers;
+    const runsInThisOverAfterBall = bowlerUpdate.nextOverBowlerRuns;
 
     // Automatically rotate AI bowler (or during auto-sim) at the end of an over respecting bowler quota
     let nextBowlerId = currentInnings.currentBowlerId;
@@ -3927,8 +3955,19 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     inn2?.batters.forEach(b => batterMap.set(b.playerId, b));
 
     const bowlerMap = new Map<string, BowlerInningsScorecard>();
-    inn1.bowlers.forEach(bw => bowlerMap.set(bw.playerId, bw));
-    inn2?.bowlers.forEach(bw => bowlerMap.set(bw.playerId, bw));
+    const bowlerEntriesMap = new Map<string, BowlerInningsScorecard[]>();
+    inn1.bowlers.forEach(bw => {
+      bowlerMap.set(bw.playerId, bw);
+      const list = bowlerEntriesMap.get(bw.playerId) || [];
+      list.push(bw);
+      bowlerEntriesMap.set(bw.playerId, list);
+    });
+    inn2?.bowlers.forEach(bw => {
+      bowlerMap.set(bw.playerId, bw);
+      const list = bowlerEntriesMap.get(bw.playerId) || [];
+      list.push(bw);
+      bowlerEntriesMap.set(bw.playerId, list);
+    });
 
     // Check match feat achievements
     batterMap.forEach(b => {
@@ -3984,13 +4023,14 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // 1. Update participating players' season & career stats
     const applyStatsToPlayer = (p: Player): Player => {
       const bCard = batterMap.get(p.id);
-      const bwCard = bowlerMap.get(p.id);
-      if (!bCard && !bwCard) return p;
+      const bwCards = bowlerEntriesMap.get(p.id) || [];
+      if (!bCard && bwCards.length === 0) return p;
 
       const prevStats = p.stats || {
         matches: 0, runs: 0, balls: 0, fours: 0, sixes: 0,
         fifties: 0, hundreds: 0, highestScore: 0, wickets: 0,
-        oversBowled: 0, runsConceded: 0, maidens: 0, bestBowling: '0/0'
+        oversBowled: 0, runsConceded: 0, maidens: 0, bestBowling: '0/0',
+        economy: 0, average: 0, strikeRate: 0
       };
 
       const newMatches = (prevStats.matches || 0) + 1;
@@ -4009,36 +4049,16 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const newHundreds = (prevStats.hundreds || 0) + addHundred;
       const newHighest = Math.max(prevStats.highestScore || 0, addRuns);
 
-      const addWkts = bwCard ? bwCard.wickets : 0;
-      const addOvers = bwCard ? (Math.floor(bwCard.overs) + (bwCard.ballsInCurrentOver || 0) / 6) : 0;
-      const addConceded = bwCard ? bwCard.runs : 0;
-      const addMaidens = bwCard ? (bwCard.maidens || 0) : 0;
-
-      const newWickets = (prevStats.wickets || 0) + addWkts;
-      const newOversBowled = Number(((prevStats.oversBowled || 0) + addOvers).toFixed(1));
-      const newRunsConceded = (prevStats.runsConceded || 0) + addConceded;
-      const newMaidens = (prevStats.maidens || 0) + addMaidens;
-
-      // Compare best bowling W/R
-      let bestBowling = prevStats.bestBowling || '0/0';
-      if (bwCard && (bwCard.overs > 0 || bwCard.ballsInCurrentOver > 0)) {
-        const [prevBestW, prevBestR] = bestBowling.split('/').map(Number);
-        if (
-          bwCard.wickets > (prevBestW || 0) ||
-          (bwCard.wickets === (prevBestW || 0) && bwCard.runs < (prevBestR || 999) && bwCard.wickets > 0)
-        ) {
-          bestBowling = `${bwCard.wickets}/${bwCard.runs}`;
-        }
-      }
+      const bowlingAgg = aggregateBowlerMatchStatsIntoCareer(prevStats, bwCards);
+      const totalWktsThisMatch = bwCards.reduce((sum, c) => sum + (c.wickets || 0), 0);
 
       const estDismissals = Math.max(1, Math.round(newMatches * 0.82));
       const average = Number((newRuns / estDismissals).toFixed(1));
       const strikeRate = newBalls > 0 ? Number(((newRuns / newBalls) * 100).toFixed(1)) : 130.0;
-      const economy = newOversBowled > 0 ? Number((newRunsConceded / newOversBowled).toFixed(1)) : 7.8;
 
       return {
         ...p,
-        form: Math.max(40, Math.min(100, p.form + (addRuns >= 35 || addWkts >= 2 ? 4 : -1))),
+        form: Math.max(40, Math.min(100, p.form + (addRuns >= 35 || totalWktsThisMatch >= 2 ? 4 : -1))),
         stats: {
           matches: newMatches,
           runs: newRuns,
@@ -4048,14 +4068,14 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           fifties: newFifties,
           hundreds: newHundreds,
           highestScore: newHighest,
-          wickets: newWickets,
-          oversBowled: newOversBowled,
-          runsConceded: newRunsConceded,
-          maidens: newMaidens,
-          bestBowling,
+          wickets: bowlingAgg.wickets,
+          oversBowled: bowlingAgg.oversBowled,
+          runsConceded: bowlingAgg.runsConceded,
+          maidens: bowlingAgg.maidens,
+          bestBowling: bowlingAgg.bestBowling,
           average,
           strikeRate,
-          economy
+          economy: bowlingAgg.economy
         }
       };
     };
@@ -4392,11 +4412,11 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           .filter(bw => bw.overs > 0 || bw.ballsInCurrentOver > 0)
           .map(bw => ({
             name: bw.name,
-            overs: Number(`${bw.overs}.${bw.ballsInCurrentOver || 0}`),
+            overs: bw.overs,
             maidens: bw.maidens || 0,
             runs: bw.runs,
             wickets: bw.wickets,
-            econ: bw.economy || 0
+            econ: bw.economy > 0 ? bw.economy : calculateBowlingEconomy(bw.runs, bw.overs)
           }))
       },
       innings2: {
@@ -4420,11 +4440,11 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           .filter(bw => bw.overs > 0 || bw.ballsInCurrentOver > 0)
           .map(bw => ({
             name: bw.name,
-            overs: Number(`${bw.overs}.${bw.ballsInCurrentOver || 0}`),
+            overs: bw.overs,
             maidens: bw.maidens || 0,
             runs: bw.runs,
             wickets: bw.wickets,
-            econ: bw.economy || 0
+            econ: bw.economy > 0 ? bw.economy : calculateBowlingEconomy(bw.runs, bw.overs)
           }))
       }
     };
@@ -4871,7 +4891,11 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Remove wicket from bowler figures
         updatedInnings.bowlers = updatedInnings.bowlers.map(bw => {
           if (bw.playerId === rev.bowlerId || bw.name === rev.bowlerName) {
-            return { ...bw, wickets: Math.max(0, bw.wickets - 1) };
+            return {
+              ...bw,
+              wickets: Math.max(0, bw.wickets - 1),
+              runsConceded: bw.runs
+            };
           }
           return bw;
         });
@@ -4959,12 +4983,12 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         updatedInnings.bowlers = updatedInnings.bowlers.map(bw => {
           if (bw.playerId === rev.bowlerId || bw.name === rev.bowlerName) {
             const adjRuns = Math.max(0, bw.runs - runsToRevert);
-            const floatOvers = Math.floor(bw.overs) + (bw.ballsInCurrentOver || 0) / 6;
             return {
               ...bw,
               runs: adjRuns,
+              runsConceded: adjRuns,
               wickets: bw.wickets + 1,
-              economy: floatOvers > 0 ? Number((adjRuns / floatOvers).toFixed(1)) : 0
+              economy: calculateBowlingEconomy(adjRuns, bw.overs)
             };
           }
           return bw;
@@ -5233,17 +5257,19 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const curInnings = isFirst ? prev.innings1 : prev.innings2;
       if (!curInnings) return prev;
 
-      const bowlerPlayer = players.find(p => p.id === bowlerId);
+      const bowlingTeamSquad = (isFirst ? prev.awayTeam : prev.homeTeam).squad || [];
+      const bowlerPlayer = players.find(p => p.id === bowlerId) || bowlingTeamSquad.find(p => p.id === bowlerId);
       const updatedBowlers = [...curInnings.bowlers];
       let bScore = updatedBowlers.find(b => b.playerId === bowlerId);
-      if (!bScore && bowlerPlayer) {
+      if (!bScore) {
         bScore = {
-          playerId: bowlerPlayer.id,
-          name: bowlerPlayer.name,
+          playerId: bowlerId,
+          name: bowlerPlayer?.name || 'Bowler',
           overs: 0,
           ballsInCurrentOver: 0,
           maidens: 0,
           runs: 0,
+          runsConceded: 0,
           wickets: 0,
           economy: 0,
           isCurrentBowler: true
@@ -5669,6 +5695,151 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [currentAuctionIndex, auctionPool]);
 
+  // AUCTION SANDBOX IMPLEMENTATION (Completely isolated from career save slots)
+  const [auctionSandbox, setAuctionSandbox] = useState<AuctionSandboxSessionState | null>(null);
+
+  const startAuctionSandbox = useCallback((params: {
+    franchiseId: string;
+    mode: AuctionSandboxMode;
+    userRetainedPlayerIds: string[];
+  }) => {
+    const sandboxData = buildAuctionSandboxState({
+      userTeamId: params.franchiseId,
+      mode: params.mode,
+      userRetainedPlayerIds: params.userRetainedPlayerIds,
+      allTeams: teams,
+      allPlayers: players
+    });
+
+    setAuctionSandbox({
+      isActive: true,
+      franchiseId: params.franchiseId,
+      mode: params.mode,
+      userRetainedPlayerIds: params.userRetainedPlayerIds,
+      sandboxTeams: sandboxData.updatedTeams,
+      sandboxPlayers: sandboxData.updatedPlayers,
+      sandboxLots: sandboxData.auctionPoolLots,
+      teamPursesByShort: sandboxData.teamPursesByShort,
+      userPurseCr: sandboxData.userPurseCr,
+      userRtmCards: sandboxData.userRtmCards,
+      releasedPlayerIds: sandboxData.releasedPlayerIds
+    });
+
+    setActiveTab('auction');
+    sound.playCrowdCheer(0.8);
+  }, [teams, players]);
+
+  const exitAuctionSandbox = useCallback(() => {
+    setAuctionSandbox(null);
+    setActiveTab('landing');
+    sound.playTap();
+  }, []);
+
+  const commitSandboxAuctionSale = useCallback((lot: AuctionPlayerItem, buyerShort: string, priceCr: number) => {
+    setAuctionSandbox(prev => {
+      if (!prev) return null;
+      const buyerTeam = prev.sandboxTeams.find(
+        t => t.shortName.toUpperCase() === buyerShort.toUpperCase()
+      );
+      if (!buyerTeam) return prev;
+
+      const existingPlayer = prev.sandboxPlayers.find(
+        p => p.id === lot.id || p.name.toLowerCase() === lot.name.toLowerCase()
+      );
+      const mappedPlayer: Player = existingPlayer
+        ? {
+            ...existingPlayer,
+            name: lot.name,
+            clubId: buyerTeam.id,
+            salaryCr: priceCr
+          }
+        : {
+            id: lot.id,
+            name: lot.name,
+            jerseyNumber: lot.jerseyNumber || 45,
+            age: lot.age,
+            country: lot.country,
+            isOverseas: lot.isOverseas,
+            role: lot.role,
+            battingHand: lot.battingHand,
+            bowlingArm: lot.bowlingArm || 'RAM',
+            bowlingStyle: lot.bowlingStyle || undefined,
+            clubId: buyerTeam.id,
+            salaryCr: priceCr,
+            basePriceCr: lot.basePriceCr || 0.3,
+            tier: lot.tier,
+            ratings: {
+              bat: lot.ratings.bat,
+              pow: lot.ratings.pow ?? 75,
+              bowl: lot.ratings.bowl,
+              ctrl: lot.ratings.ctrl ?? 75,
+              pace: lot.ratings.pace ?? 50,
+              dth: lot.ratings.dth ?? 50,
+              tmp: lot.ratings.tmp ?? 80,
+              fit: 95
+            },
+            form: lot.form || 80,
+            morale: lot.morale || 85,
+            fitness: 95,
+            isInjured: false,
+            injuryDays: 0,
+            stats: {
+              matches: lot.iplMatches || 0,
+              runs: 0,
+              balls: 0,
+              fours: 0,
+              sixes: 0,
+              fifties: 0,
+              hundreds: 0,
+              highestScore: 0,
+              average: 0,
+              strikeRate: 0,
+              wickets: 0,
+              oversBowled: 0,
+              runsConceded: 0,
+              maidens: 0,
+              bestBowling: '0/0',
+              economy: 0
+            }
+          };
+
+      const nextPlayers = existingPlayer
+        ? prev.sandboxPlayers.map(p => p.id === existingPlayer.id ? mappedPlayer : p)
+        : [...prev.sandboxPlayers, mappedPlayer];
+
+      const nextTeams = prev.sandboxTeams.map(t => {
+        if (t.id === buyerTeam.id) {
+          const updatedPurse = Math.max(0, Number((t.purseCr - priceCr).toFixed(2)));
+          const currentSquad = t.squad.filter(p => p.id !== mappedPlayer.id);
+          return {
+            ...t,
+            purseCr: updatedPurse,
+            squad: [...currentSquad, mappedPlayer],
+            playingXIIds: t.playingXIIds.length < 11 && !t.playingXIIds.includes(mappedPlayer.id)
+              ? [...t.playingXIIds, mappedPlayer.id]
+              : t.playingXIIds
+          };
+        }
+        return t;
+      });
+
+      const nextPurses = {
+        ...prev.teamPursesByShort,
+        [buyerShort]: Math.max(0, Number(((prev.teamPursesByShort[buyerShort] || 0) - priceCr).toFixed(2)))
+      };
+
+      const isUserBuyer = buyerTeam.id === prev.franchiseId;
+
+      return {
+        ...prev,
+        sandboxTeams: nextTeams,
+        sandboxPlayers: nextPlayers,
+        teamPursesByShort: nextPurses,
+        userPurseCr: isUserBuyer ? Math.max(0, Number((prev.userPurseCr - priceCr).toFixed(2))) : prev.userPurseCr
+      };
+    });
+  }, []);
+
   return (
     <GameContext.Provider
       value={{
@@ -5758,7 +5929,11 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         nextAuctionLot,
         isAiBidding,
         aiBiddingSpeed,
-        setAiBiddingSpeed
+        setAiBiddingSpeed,
+        auctionSandbox,
+        startAuctionSandbox,
+        exitAuctionSandbox,
+        commitSandboxAuctionSale
       }}
     >
       {children}

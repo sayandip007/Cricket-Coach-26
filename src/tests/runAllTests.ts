@@ -45,6 +45,7 @@ import {
   evaluateAiCounterBid,
   settleAuctionLotAmongAi
 } from '../data/auctionSets2026';
+import { runBowlingAndSandboxTests } from './bowlingAndSandbox.test';
 import {
   FIELD_TEMPLATES,
   validateFieldRestrictions,
@@ -1423,6 +1424,10 @@ runTest('REGRESSION', 'Phase 21: TATA IPL 2026 Auction Audit — 350 PDF Players
     aiTeams: brokeAiSnapshots
   });
   assert.equal(unsoldSettlement.status, 'unsold', 'Lot must go unsold when no AI team can afford the reserve price');
+});
+
+runTest('REGRESSION', 'Phase 22: Bowling Statistics, Player Attribution, DRS Overturns & Auction Sandbox Isolation', () => {
+  runBowlingAndSandboxTests();
 });
 
 const failed = results.filter(r => !r.passed);

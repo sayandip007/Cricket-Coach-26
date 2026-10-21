@@ -22,12 +22,20 @@ import { OpeningLandingScreen } from './components/opening/OpeningLandingScreen'
 import { PWAInstallButton, OfflineIndicator } from './components/common/PWAInstallButton';
 
 const MainAppContent: React.FC = () => {
-  const { activeTab, setActiveTab, activeSaveSlot, userTeam } = useGame();
+  const { activeTab, setActiveTab, activeSaveSlot, userTeam, auctionSandbox, exitAuctionSandbox } = useGame();
 
   // Standard React Native Android Hardware Back Button Handler
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (activeTab === 'live_match' || activeTab === 'auction') {
+      if (activeTab === 'auction') {
+        if (auctionSandbox?.isActive) {
+          exitAuctionSandbox();
+        } else {
+          setActiveTab('hub');
+        }
+        return true;
+      }
+      if (activeTab === 'live_match') {
         setActiveTab('hub');
         return true;
       }
@@ -42,7 +50,7 @@ const MainAppContent: React.FC = () => {
       return false;
     });
     return () => subscription.remove();
-  }, [activeTab, setActiveTab]);
+  }, [activeTab, setActiveTab, auctionSandbox, exitAuctionSandbox]);
 
   if (activeTab === 'landing') {
     return (
