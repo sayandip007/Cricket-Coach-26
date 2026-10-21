@@ -1,5 +1,4 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, StyleSheet } from 'react-native';
 import Svg, {
   Circle,
   Rect,
@@ -57,6 +56,7 @@ interface TacticalStadium2DProps {
   isOverComplete?: boolean;
   inningsIndex?: number;
   ballsCompleted?: number;
+  speedMultiplier?: number;
   onPitchTargetClick?: (length: PitchLength, line: PitchLine) => void;
 }
 
@@ -190,9 +190,15 @@ export function getStadiumTheme(
 }
 
 /**
- * Reusable SVG Umpire Marker & Hand Signal Component
- * Renders a white umpire circle with black center dot and recognizable hand signals
- * for FOUR, SIX, OUT, WIDE, NO-BALL, and OVER COMPLETE.
+ * Reusable SVG Umpire Marker & Unmistakable Hand Signal Component
+ * Renders a white umpire circle with a black centre and large, unmistakable white SVG
+ * hand/arm icons directly beside the relevant umpire marker for:
+ * - FOUR: horizontal extended arm & hand
+ * - SIX: both arms raised high overhead
+ * - OUT: raised hand with prominent vertical index finger
+ * - WIDE: horizontal extended arm(s)
+ * - NO-BALL: distinct diagonal raised arm with free-hit ring
+ * - OVER COMPLETE: hands arched overhead on umpire hat
  */
 export const UmpireMarkerSvg: React.FC<{
   x: number;
@@ -200,192 +206,313 @@ export const UmpireMarkerSvg: React.FC<{
   signal: UmpireSignalType;
   role: 'bowler_end' | 'square_leg';
 }> = ({ x, y, signal }) => {
+  const isSignaling = signal !== 'none';
+
   return (
     <G transform={`translate(${x}, ${y})`} pointerEvents="none">
-      {/* 1. Signal Arm / Hand Overlays */}
+      {/* 1. Unmistakable White SVG Hand / Arm Signal Icons Directly Beside Umpire Marker */}
       {signal === 'four' && (
         <G>
-          {/* Horizontal extended arm & sleeve to the right */}
+          {/* High-contrast dark backing plate behind extended horizontal arm */}
           <Rect
             x={7}
-            y={-3.2}
-            width={11.5}
-            height={6.4}
-            rx={1.8}
-            fill="#f8fafc"
-            stroke="#0f172a"
+            y={-8.5}
+            width={31}
+            height={17}
+            rx={8.5}
+            fill="rgba(15, 23, 42, 0.85)"
+            stroke="#38bdf8"
             strokeWidth={1.3}
           />
-          <Path
-            d="M 18 -2.3 L 24 -2.3 L 24 -1.1 L 28.2 -1.1 C 29 -1.1 29 0.4 28.2 0.4 L 24.5 0.4 L 24.5 2.3 L 18 2.3 Z"
-            fill="#f8fafc"
+          {/* White horizontal sleeve & forearm */}
+          <Rect
+            x={8.5}
+            y={-4.2}
+            width={15}
+            height={8.4}
+            rx={2.2}
+            fill="#ffffff"
             stroke="#0f172a"
-            strokeWidth={1.1}
+            strokeWidth={1.4}
+          />
+          {/* Open white hand with thumb & extended fingers pointing horizontally */}
+          <Path
+            d="M 23 -3.6 L 27.5 -3.6 L 26.8 -6.6 C 26.8 -7.8 29 -7.8 29.2 -6.4 L 30 -3.4 L 34.8 -3.4 C 36.2 -3.4 36.2 3.4 34.8 3.4 L 23 3.4 Z"
+            fill="#ffffff"
+            stroke="#0f172a"
+            strokeWidth={1.3}
             strokeLinejoin="round"
           />
-          <Line x1={18} y1={-2.8} x2={18} y2={2.8} stroke="#0f172a" strokeWidth={1.1} />
+          {/* Cuff divider & horizontal wave accent */}
+          <Line x1={23} y1={-3.8} x2={23} y2={3.8} stroke="#0f172a" strokeWidth={1.3} />
+          <Path
+            d="M 38.5 -5.5 Q 41.5 0 38.5 5.5"
+            fill="none"
+            stroke="#ffffff"
+            strokeWidth={1.6}
+            strokeLinecap="round"
+          />
         </G>
       )}
 
       {signal === 'six' && (
         <G>
-          {/* Left raised arm in V-shape */}
-          <G transform="rotate(-22)">
+          {/* High-contrast dark backing arch behind both raised arms */}
+          <Path
+            d="M -21 -4 C -24 -28 -8 -35 0 -31 C 8 -35 24 -28 21 -4 Z"
+            fill="rgba(15, 23, 42, 0.85)"
+            stroke="#c084fc"
+            strokeWidth={1.3}
+          />
+          {/* Left raised arm & open hand in V-shape */}
+          <G transform="rotate(-24)">
             <Rect
-              x={-6.2}
-              y={-20.5}
-              width={5.4}
-              height={12.5}
-              rx={1.6}
-              fill="#f8fafc"
+              x={-7.8}
+              y={-23.5}
+              width={7}
+              height={15}
+              rx={2}
+              fill="#ffffff"
               stroke="#0f172a"
-              strokeWidth={1.3}
+              strokeWidth={1.4}
             />
             <Path
-              d="M -6 -20.5 L -6 -26 C -6 -27.4 -1 -27.4 -1 -26 L -1 -20.5 Z"
-              fill="#f8fafc"
+              d="M -7.6 -23.5 L -7.6 -30.5 C -7.6 -32.2 -1.2 -32.2 -1.2 -30.5 L -1.2 -27.2 L 1.2 -27.2 C 2.2 -27.2 2.2 -25 1.0 -25 L -1.2 -23.5 Z"
+              fill="#ffffff"
               stroke="#0f172a"
-              strokeWidth={1.1}
+              strokeWidth={1.3}
+              strokeLinejoin="round"
             />
-            <Line x1={-6} y1={-20.2} x2={-0.8} y2={-20.2} stroke="#0f172a" strokeWidth={1.1} />
+            <Line x1={-7.6} y1={-23.2} x2={-1} y2={-23.2} stroke="#0f172a" strokeWidth={1.2} />
           </G>
-          {/* Right raised arm in V-shape */}
-          <G transform="rotate(22)">
+          {/* Right raised arm & open hand in V-shape */}
+          <G transform="rotate(24)">
             <Rect
               x={0.8}
-              y={-20.5}
-              width={5.4}
-              height={12.5}
-              rx={1.6}
-              fill="#f8fafc"
+              y={-23.5}
+              width={7}
+              height={15}
+              rx={2}
+              fill="#ffffff"
               stroke="#0f172a"
-              strokeWidth={1.3}
+              strokeWidth={1.4}
             />
             <Path
-              d="M 1 -20.5 L 1 -26 C 1 -27.4 6 -27.4 6 -26 L 6 -20.5 Z"
-              fill="#f8fafc"
+              d="M 1.2 -23.5 L -1.0 -25 C -2.2 -25 -2.2 -27.2 -1.2 -27.2 L 1.2 -27.2 L 1.2 -30.5 C 1.2 -32.2 7.6 -32.2 7.6 -30.5 L 7.6 -23.5 Z"
+              fill="#ffffff"
               stroke="#0f172a"
-              strokeWidth={1.1}
+              strokeWidth={1.3}
+              strokeLinejoin="round"
             />
-            <Line x1={0.8} y1={-20.2} x2={6} y2={-20.2} stroke="#0f172a" strokeWidth={1.1} />
+            <Line x1={1} y1={-23.2} x2={7.6} y2={-23.2} stroke="#0f172a" strokeWidth={1.2} />
           </G>
         </G>
       )}
 
       {signal === 'out' && (
-        <G transform="translate(13.5, -11.5)">
-          {/* Raised hand with one index finger pointing straight up */}
-          <Rect
-            x={-3.2}
-            y={4.2}
-            width={6.4}
-            height={3.2}
-            rx={1}
-            fill="#f8fafc"
-            stroke="#0f172a"
-            strokeWidth={1.2}
-          />
+        <G>
+          {/* Connecting white arm from umpire shoulder to raised hand */}
           <Path
-            d="M -3.2 4.2 L -3.2 -1.5 C -4.8 -1.5 -5.4 0.3 -4.3 1.9 L -3.2 2.6 M -2.2 4.2 L -2.2 -7.6 C -2.2 -8.8 -0.2 -8.8 -0.2 -7.6 L -0.2 -1.8 C 1.0 -2.0 1.5 -1.0 1.4 0.2 C 2.5 -0.1 3.0 0.8 2.9 1.8 C 3.8 1.6 4.2 2.4 3.9 3.5 L 3.2 4.2 Z"
-            fill="#f8fafc"
-            stroke="#0f172a"
-            strokeWidth={1.2}
-            strokeLinejoin="round"
+            d="M 7 -2 L 16 -4"
+            stroke="#ffffff"
+            strokeWidth={5}
+            strokeLinecap="round"
           />
+          {/* High-contrast dark circular shield behind raised index-finger hand */}
+          <G transform="translate(21, -8)">
+            <Circle
+              cx={0}
+              cy={-2}
+              r={14}
+              fill="rgba(15, 23, 42, 0.9)"
+              stroke="#fb7185"
+              strokeWidth={1.5}
+            />
+            {/* Wrist / Sleeve Cuff */}
+            <Rect
+              x={-5}
+              y={5.2}
+              width={10}
+              height={4.5}
+              rx={1.4}
+              fill="#ffffff"
+              stroke="#0f172a"
+              strokeWidth={1.3}
+            />
+            {/* Clenched Palm & Curled Knuckles + Tall Raised Index Finger */}
+            <Path
+              d="M -5 5.2 L -5 -12.8 C -5 -14.8 -0.4 -14.8 -0.4 -12.8 L -0.4 -2.2 C 1.5 -2.5 2.4 -1.2 2.2 0.2 C 3.8 -0.1 4.6 1.0 4.4 2.4 C 5.8 2.2 6.4 3.3 5.8 4.6 L 5 5.2 Z"
+              fill="#ffffff"
+              stroke="#0f172a"
+              strokeWidth={1.4}
+              strokeLinejoin="round"
+            />
+            {/* Tucked Thumb across palm */}
+            <Path
+              d="M -5 3.5 C -8.2 3.2 -8.2 -1.2 -5 -1.6 Z"
+              fill="#ffffff"
+              stroke="#0f172a"
+              strokeWidth={1.3}
+              strokeLinejoin="round"
+            />
+          </G>
         </G>
       )}
 
       {signal === 'wide' && (
         <G>
-          {/* Extended horizontal arm with pointing hand */}
+          {/* High-contrast dark backing across outstretched horizontal arms */}
           <Rect
-            x={7}
-            y={-3.2}
-            width={11.5}
-            height={6.4}
-            rx={1.8}
-            fill="#f8fafc"
+            x={-35}
+            y={-8}
+            width={70}
+            height={16}
+            rx={8}
+            fill="rgba(15, 23, 42, 0.85)"
+            stroke="#facc15"
+            strokeWidth={1.3}
+          />
+          {/* Left horizontal arm & hand */}
+          <Rect
+            x={-23.5}
+            y={-4}
+            width={15}
+            height={8}
+            rx={2}
+            fill="#ffffff"
+            stroke="#0f172a"
+            strokeWidth={1.4}
+          />
+          <Path
+            d="M -23 -3.4 L -32.5 -3.4 C -34 -3.4 -34 3.4 -32.5 3.4 L -23 3.4 Z"
+            fill="#ffffff"
             stroke="#0f172a"
             strokeWidth={1.3}
           />
-          <Path
-            d="M 18 -2.3 L 24 -2.3 L 24 -1.1 L 28.2 -1.1 C 29 -1.1 29 0.4 28.2 0.4 L 24.5 0.4 L 24.5 2.3 L 18 2.3 Z"
-            fill="#f8fafc"
+          {/* Right horizontal arm & hand */}
+          <Rect
+            x={8.5}
+            y={-4}
+            width={15}
+            height={8}
+            rx={2}
+            fill="#ffffff"
             stroke="#0f172a"
-            strokeWidth={1.1}
-            strokeLinejoin="round"
+            strokeWidth={1.4}
           />
-          <Line x1={18} y1={-2.8} x2={18} y2={2.8} stroke="#0f172a" strokeWidth={1.1} />
+          <Path
+            d="M 23 -3.4 L 32.5 -3.4 C 34 -3.4 34 3.4 32.5 3.4 L 23 3.4 Z"
+            fill="#ffffff"
+            stroke="#0f172a"
+            strokeWidth={1.3}
+          />
         </G>
       )}
 
       {signal === 'no_ball' && (
-        <G transform="rotate(-40)">
-          {/* Diagonally raised arm at 40 degrees for No-Ball */}
+        <G transform="rotate(-38)">
+          {/* High-contrast dark backing behind diagonal No-Ball arm + ring */}
           <Rect
             x={7}
-            y={-3.2}
-            width={11.5}
-            height={6.4}
-            rx={1.8}
-            fill="#f8fafc"
+            y={-9}
+            width={33}
+            height={18}
+            rx={9}
+            fill="rgba(15, 23, 42, 0.88)"
+            stroke="#f59e0b"
+            strokeWidth={1.4}
+          />
+          {/* Diagonal extended white arm & hand */}
+          <Rect
+            x={8.5}
+            y={-4}
+            width={14.5}
+            height={8}
+            rx={2}
+            fill="#ffffff"
+            stroke="#0f172a"
+            strokeWidth={1.4}
+          />
+          <Path
+            d="M 22.5 -3.4 L 32 -3.4 C 33.5 -3.4 33.5 3.4 32 3.4 L 22.5 3.4 Z"
+            fill="#ffffff"
             stroke="#0f172a"
             strokeWidth={1.3}
           />
-          <Path
-            d="M 18 -2.3 L 24 -2.3 L 24 -1.1 L 28.2 -1.1 C 29 -1.1 29 0.4 28.2 0.4 L 24.5 0.4 L 24.5 2.3 L 18 2.3 Z"
-            fill="#f8fafc"
-            stroke="#0f172a"
-            strokeWidth={1.1}
-            strokeLinejoin="round"
+          {/* Distinct Free-Hit / No-Ball circle indicator at hand */}
+          <Circle
+            cx={30}
+            cy={0}
+            r={6.5}
+            fill="none"
+            stroke="#f59e0b"
+            strokeWidth={1.8}
           />
-          <Line x1={18} y1={-2.8} x2={18} y2={2.8} stroke="#0f172a" strokeWidth={1.1} />
         </G>
       )}
 
       {signal === 'over_complete' && (
         <G>
-          {/* Both arms arched overhead touching umpire hat */}
-          <Path
-            d="M -7.5 -3.5 C -13.5 -7.5 -11.5 -13.8 -5.5 -14.8 L -4.5 -11.4 C -8.2 -10.6 -9.2 -7.2 -5.8 -4.8 Z"
-            fill="#f8fafc"
-            stroke="#0f172a"
+          {/* Symmetrical arms arched overhead touching white umpire hat */}
+          <Circle
+            cx={0}
+            cy={-13}
+            r={11}
+            fill="rgba(15, 23, 42, 0.82)"
+            stroke="#94a3b8"
             strokeWidth={1.2}
+          />
+          <Path
+            d="M -8 -3.5 C -15 -8 -12.5 -15.5 -5.8 -16.5 L -4.5 -12.5 C -9 -11.5 -10 -7.5 -6 -4.8 Z"
+            fill="#ffffff"
+            stroke="#0f172a"
+            strokeWidth={1.3}
             strokeLinejoin="round"
           />
           <Path
-            d="M 7.5 -3.5 C 13.5 -7.5 11.5 -13.8 5.5 -14.8 L 4.5 -11.4 C 8.2 -10.6 9.2 -7.2 5.8 -4.8 Z"
-            fill="#f8fafc"
+            d="M 8 -3.5 C 15 -8 12.5 -15.5 5.8 -16.5 L 4.5 -12.5 C 9 -11.5 10 -7.5 6 -4.8 Z"
+            fill="#ffffff"
             stroke="#0f172a"
-            strokeWidth={1.2}
+            strokeWidth={1.3}
             strokeLinejoin="round"
           />
           <Path
-            d="M -7 -11.5 Q 0 -13.5 7 -11.5 C 8 -11.2 8 -9.5 6.5 -9.5 Q 0 -10.8 -6.5 -9.5 C -8 -9.5 -8 -11.2 -7 -11.5 Z"
-            fill="#f8fafc"
+            d="M -7.8 -12.5 Q 0 -15 7.8 -12.5 C 9 -12 9 -10 7.2 -10 Q 0 -11.5 -7.2 -10 C -9 -10 -9 -12 -7.8 -12.5 Z"
+            fill="#ffffff"
             stroke="#0f172a"
-            strokeWidth={1.2}
+            strokeWidth={1.3}
           />
           <Path
-            d="M -4.2 -12.2 Q 0 -16.8 4.2 -12.2 Z"
-            fill="#f8fafc"
+            d="M -4.8 -13.2 Q 0 -18.5 4.8 -13.2 Z"
+            fill="#ffffff"
             stroke="#0f172a"
-            strokeWidth={1.2}
+            strokeWidth={1.3}
           />
         </G>
       )}
 
-      {/* 2. Core Umpire Marker: Subtle Drop Shadow + White Circle + Black Center Dot */}
-      <Circle cx={0} cy={1.3} r={9.6} fill="rgba(0,0,0,0.4)" />
+      {/* 2. Core Umpire Marker: White Outer Circle + Black Center Circle */}
+      {isSignaling && (
+        <Circle
+          cx={0}
+          cy={0}
+          r={12.8}
+          fill="none"
+          stroke="#ffffff"
+          strokeWidth={1.6}
+          opacity={0.9}
+        />
+      )}
+      <Circle cx={0} cy={1.4} r={10.6} fill="rgba(0,0,0,0.45)" />
       <Circle
         cx={0}
         cy={0}
-        r={9}
-        fill="#f8fafc"
+        r={10}
+        fill="#ffffff"
         stroke="#0f172a"
-        strokeWidth={1.6}
+        strokeWidth={1.8}
       />
-      <Circle cx={0} cy={0} r={4.1} fill="#0f172a" />
+      <Circle cx={0} cy={0} r={4.5} fill="#0f172a" />
     </G>
   );
 };
@@ -415,6 +542,7 @@ export const TacticalStadium2D: React.FC<TacticalStadium2DProps> = ({
   isOverComplete = false,
   inningsIndex = 1,
   ballsCompleted = 0,
+  speedMultiplier = 2,
 }) => {
   const [animProgress, setAnimProgress] = useState<number>(1);
   const [signalExpired, setSignalExpired] = useState<boolean>(false);
@@ -442,7 +570,7 @@ export const TacticalStadium2D: React.FC<TacticalStadium2DProps> = ({
 
     const expireTimer = setTimeout(() => {
       setSignalExpired(true);
-    }, 4500);
+    }, 12000);
 
     return () => clearTimeout(expireTimer);
   }, [lastBallOutcome, inningsIndex, ballsCompleted]);
@@ -465,7 +593,7 @@ export const TacticalStadium2D: React.FC<TacticalStadium2DProps> = ({
 
     let frameId: number;
     const start = performance.now();
-    const duration = 1250;
+    const duration = speedMultiplier >= 3 ? 520 : speedMultiplier === 2 ? 720 : 950;
     setAnimProgress(0);
 
     const step = (now: number) => {
@@ -473,14 +601,14 @@ export const TacticalStadium2D: React.FC<TacticalStadium2DProps> = ({
       const p = Math.min(1, elapsed / duration);
       setAnimProgress(p);
 
-      if (p >= 0.30 && !audioPlayedRef.current.hit) {
+      if (p >= 0.24 && !audioPlayedRef.current.hit) {
         audioPlayedRef.current.hit = true;
         if (lastBallOutcome.runs > 0 || lastBallOutcome.isFour || lastBallOutcome.isSix) {
           sound.playBatHit(lastBallOutcome.isFour || lastBallOutcome.isSix, lastBallOutcome.isSix);
         }
       }
 
-      if (p >= 0.32 && !audioPlayedRef.current.wicket && lastBallOutcome.isWicket && !isDrsPending) {
+      if (p >= 0.26 && !audioPlayedRef.current.wicket && lastBallOutcome.isWicket && !isDrsPending) {
         audioPlayedRef.current.wicket = true;
         sound.playWicketCrash();
       }
@@ -492,7 +620,7 @@ export const TacticalStadium2D: React.FC<TacticalStadium2DProps> = ({
 
     frameId = requestAnimationFrame(step);
     return () => cancelAnimationFrame(frameId);
-  }, [lastBallOutcome, inningsIndex, isDrsPending]);
+  }, [lastBallOutcome, inningsIndex, isDrsPending, speedMultiplier]);
 
   const frameState: AnimationFrameState = computeAnimationFrame(
     animProgress,
@@ -526,14 +654,15 @@ export const TacticalStadium2D: React.FC<TacticalStadium2DProps> = ({
   const batColor = resolveKitColor(battingTeamColors?.shortName, battingTeamColors?.primary, '#7c3aed');
   const bowlColor = resolveKitColor(bowlingTeamColors?.shortName, bowlingTeamColors?.primary, '#ef4444');
 
+  // Enlarged circular stadium filling 99% of the 400x400 coordinate system
   const cx = 200;
   const cy = 200;
-  const outerR = 178;
-  const boundaryR = 163;
-  const circle30R = 95;
+  const outerR = 191;
+  const boundaryR = 176;
+  const circle30R = 102;
 
-  const topCreaseY = 168;
-  const bottomCreaseY = 232;
+  const topCreaseY = 166;
+  const bottomCreaseY = 234;
 
   const updateFielderFromClientPoint = (id: number, clientX: number, clientY: number) => {
     if (!svgContainerRef.current) return;
@@ -541,8 +670,8 @@ export const TacticalStadium2D: React.FC<TacticalStadium2DProps> = ({
     if (!rect.width || !rect.height) return;
     const clickX = ((clientX - rect.left) / rect.width) * 400;
     const clickY = ((clientY - rect.top) / rect.height) * 400;
-    const normX = Math.round((clickX - cx) / 1.52);
-    const normY = Math.round((clickY - cy) / 1.52);
+    const normX = Math.round((clickX - cx) / 1.68);
+    const normY = Math.round((clickY - cy) / 1.68);
     const dist = Math.hypot(normX, normY);
     if (dist <= 98 && dist >= 12) {
       onMoveFielder(id, normX, normY);
@@ -587,16 +716,23 @@ export const TacticalStadium2D: React.FC<TacticalStadium2DProps> = ({
   const bouncePoint = computeBouncePoint(plannedLength, plannedLine);
 
   return (
-    <View style={styles.wrapper}>
+    <div className="w-full flex items-center justify-center px-0">
       <div
         ref={svgContainerRef}
         onPointerDown={handleSvgPointerDown}
         onPointerMove={handleSvgPointerMove}
         onPointerUp={handleSvgPointerUp}
         onPointerCancel={handleSvgPointerUp}
-        className="w-[96%] max-w-[min(96vw,560px)] max-h-[min(96vw,58vh,560px)] aspect-square mx-auto relative select-none cursor-pointer touch-none flex items-center justify-center"
+        style={{ width: '96.5%', maxWidth: 520, aspectRatio: '1 / 1' }}
+        className="w-[96.5%] max-w-[520px] aspect-square mx-auto relative select-none cursor-pointer touch-none flex items-center justify-center"
       >
-        <Svg viewBox="0 0 400 400" width="100%" height="100%" preserveAspectRatio="xMidYMid meet">
+        <Svg
+          viewBox="0 0 400 400"
+          width="100%"
+          height="100%"
+          preserveAspectRatio="xMidYMid meet"
+          style={{ width: '100%', height: '100%', display: 'block' }}
+        >
           <Defs>
             <RadialGradient id="turfGrad" cx="50%" cy="50%" r="50%">
               <Stop offset="0%" stopColor={theme.turfStops[0]} />
@@ -627,40 +763,40 @@ export const TacticalStadium2D: React.FC<TacticalStadium2DProps> = ({
             </RadialGradient>
           </Defs>
 
-          {/* 1. Stadium Outer Rim & Turf */}
-          <Circle cx={cx} cy={cy} r={outerR + 8} fill="#111827" stroke="#1f2937" strokeWidth={2} />
+          {/* 1. Stadium Outer Rim & Turf (Fills 99% of 400x400 viewBox) */}
+          <Circle cx={cx} cy={cy} r={outerR + 6} fill="#111827" stroke="#1f2937" strokeWidth={2} />
           <Circle
             cx={cx}
             cy={cy}
             r={outerR}
             fill="url(#turfGrad)"
             stroke={theme.boundaryBoardColor}
-            strokeWidth={3.2}
-            strokeOpacity={0.65}
+            strokeWidth={3.4}
+            strokeOpacity={0.68}
           />
 
           {/* 2. Concentric Mowed Grass Rings */}
-          <Circle cx={cx} cy={cy} r={144} fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth={16} />
-          <Circle cx={cx} cy={cy} r={112} fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth={16} />
-          <Circle cx={cx} cy={cy} r={78} fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth={14} />
-          <Circle cx={cx} cy={cy} r={46} fill="none" stroke="rgba(255,255,255,0.035)" strokeWidth={12} />
+          <Circle cx={cx} cy={cy} r={156} fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth={17} />
+          <Circle cx={cx} cy={cy} r={122} fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth={17} />
+          <Circle cx={cx} cy={cy} r={86} fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth={15} />
+          <Circle cx={cx} cy={cy} r={52} fill="none" stroke="rgba(255,255,255,0.035)" strokeWidth={13} />
           <Circle cx={cx} cy={cy} r={outerR} fill="url(#sheenGrad)" />
 
           {/* 3. Boundary Rope & 30-Yard Dashed Inner Circle */}
-          <Circle cx={cx} cy={cy} r={boundaryR} fill="none" stroke="rgba(255,255,255,0.52)" strokeWidth={1.6} />
+          <Circle cx={cx} cy={cy} r={boundaryR} fill="none" stroke="rgba(255,255,255,0.55)" strokeWidth={1.8} />
           <Circle
             cx={cx}
             cy={cy}
             r={circle30R}
             fill="none"
-            stroke="rgba(255,255,255,0.48)"
-            strokeWidth={1.4}
+            stroke="rgba(255,255,255,0.5)"
+            strokeWidth={1.5}
             strokeDasharray="4 4"
           />
 
           {/* Boundary Splash Effect */}
           {frameState.isBoundarySplash && (
-            <Circle cx={cx} cy={cy} r={boundaryR} fill="none" stroke="#f59e0b" strokeWidth={3.5} opacity={0.7} />
+            <Circle cx={cx} cy={cy} r={boundaryR} fill="none" stroke="#f59e0b" strokeWidth={4} opacity={0.75} />
           )}
 
           {/* Optional Shot-Zone Labels */}
@@ -670,7 +806,7 @@ export const TacticalStadium2D: React.FC<TacticalStadium2DProps> = ({
               x={lbl.x}
               y={lbl.y}
               fill={lbl.color || '#f5b82e'}
-              fontSize={9}
+              fontSize={9.5}
               fontWeight="800"
               fontFamily="monospace"
               textAnchor="middle"
@@ -682,73 +818,73 @@ export const TacticalStadium2D: React.FC<TacticalStadium2DProps> = ({
 
           {/* 4. Central Cricket Pitch Square & Strip */}
           <Rect
-            x={cx - 26}
-            y={cy - 44}
-            width={52}
-            height={88}
+            x={cx - 27}
+            y={cy - 45}
+            width={54}
+            height={90}
             rx={2}
             fill="rgba(255, 255, 255, 0.05)"
           />
           <Rect
-            x={cx - 14}
-            y={cy - 44}
-            width={28}
-            height={88}
+            x={cx - 14.5}
+            y={cy - 45}
+            width={29}
+            height={90}
             rx={3}
             fill={theme.pitchSoilColor}
             stroke={theme.pitchBorderColor}
-            strokeWidth={1.4}
+            strokeWidth={1.5}
           />
-          <Line x1={cx - 14} y1={topCreaseY} x2={cx + 14} y2={topCreaseY} stroke="rgba(255,255,255,0.85)" strokeWidth={1.2} />
-          <Line x1={cx - 14} y1={bottomCreaseY} x2={cx + 14} y2={bottomCreaseY} stroke="rgba(255,255,255,0.85)" strokeWidth={1.2} />
-          <Line x1={cx - 9} y1={topCreaseY} x2={cx - 9} y2={bottomCreaseY} stroke="rgba(255,255,255,0.22)" strokeWidth={0.8} />
-          <Line x1={cx + 9} y1={topCreaseY} x2={cx + 9} y2={bottomCreaseY} stroke="rgba(255,255,255,0.22)" strokeWidth={0.8} />
+          <Line x1={cx - 14.5} y1={topCreaseY} x2={cx + 14.5} y2={topCreaseY} stroke="rgba(255,255,255,0.88)" strokeWidth={1.3} />
+          <Line x1={cx - 14.5} y1={bottomCreaseY} x2={cx + 14.5} y2={bottomCreaseY} stroke="rgba(255,255,255,0.88)" strokeWidth={1.3} />
+          <Line x1={cx - 9.5} y1={topCreaseY} x2={cx - 9.5} y2={bottomCreaseY} stroke="rgba(255,255,255,0.24)" strokeWidth={0.9} />
+          <Line x1={cx + 9.5} y1={topCreaseY} x2={cx + 9.5} y2={bottomCreaseY} stroke="rgba(255,255,255,0.24)" strokeWidth={0.9} />
 
           {/* Top & Bottom 3-Stump Pitch Extensions */}
-          <Line x1={cx - 3.5} y1={cy - 50} x2={cx - 3.5} y2={cy - 41} stroke="rgba(255,255,255,0.55)" strokeWidth={0.9} />
-          <Line x1={cx} y1={cy - 52} x2={cx} y2={cy - 41} stroke="rgba(255,255,255,0.7)" strokeWidth={1.1} />
-          <Line x1={cx + 3.5} y1={cy - 50} x2={cx + 3.5} y2={cy - 41} stroke="rgba(255,255,255,0.55)" strokeWidth={0.9} />
+          <Line x1={cx - 3.8} y1={cy - 51} x2={cx - 3.8} y2={cy - 41} stroke="rgba(255,255,255,0.58)" strokeWidth={1} />
+          <Line x1={cx} y1={cy - 53} x2={cx} y2={cy - 41} stroke="rgba(255,255,255,0.72)" strokeWidth={1.2} />
+          <Line x1={cx + 3.8} y1={cy - 51} x2={cx + 3.8} y2={cy - 41} stroke="rgba(255,255,255,0.58)" strokeWidth={1} />
 
-          <Line x1={cx - 3.5} y1={cy + 41} x2={cx - 3.5} y2={cy + 50} stroke="rgba(255,255,255,0.55)" strokeWidth={0.9} />
-          <Line x1={cx} y1={cy + 41} x2={cx} y2={cy + 52} stroke="rgba(255,255,255,0.7)" strokeWidth={1.1} />
-          <Line x1={cx + 3.5} y1={cy + 41} x2={cx + 3.5} y2={cy + 50} stroke="rgba(255,255,255,0.55)" strokeWidth={0.9} />
+          <Line x1={cx - 3.8} y1={cy + 41} x2={cx - 3.8} y2={cy + 51} stroke="rgba(255,255,255,0.58)" strokeWidth={1} />
+          <Line x1={cx} y1={cy + 41} x2={cx} y2={cy + 53} stroke="rgba(255,255,255,0.72)" strokeWidth={1.2} />
+          <Line x1={cx + 3.8} y1={cy + 41} x2={cx + 3.8} y2={cy + 51} stroke="rgba(255,255,255,0.58)" strokeWidth={1} />
 
           {/* Stumps Top End */}
-          <Rect x={cx - 4} y={cy - 41} width={8} height={2.5} fill="#ffffff" />
+          <Rect x={cx - 4.5} y={cy - 42} width={9} height={2.8} fill="#ffffff" />
 
           {/* Stumps Bottom End & Bails */}
-          <Rect x={cx - 4} y={cy + 38.5} width={8} height={2.5} fill="#ffffff" />
+          <Rect x={cx - 4.5} y={cy + 39} width={9} height={2.8} fill="#ffffff" />
           {frameState.bailsDislodged ? (
             <G>
               <Rect
-                x={cx - 6 + frameState.bailLeftOffset.x}
-                y={cy + 37 + frameState.bailLeftOffset.y}
-                width={4}
-                height={1.5}
+                x={cx - 6.5 + frameState.bailLeftOffset.x}
+                y={cy + 37.5 + frameState.bailLeftOffset.y}
+                width={4.2}
+                height={1.6}
                 fill="#f43f5e"
               />
               <Rect
-                x={cx + 2 + frameState.bailRightOffset.x}
-                y={cy + 37 + frameState.bailRightOffset.y}
-                width={4}
-                height={1.5}
+                x={cx + 2.2 + frameState.bailRightOffset.x}
+                y={cy + 37.5 + frameState.bailRightOffset.y}
+                width={4.2}
+                height={1.6}
                 fill="#f43f5e"
               />
             </G>
           ) : (
-            <Rect x={cx - 4} y={cy + 37} width={8} height={1.5} fill="#e2e8f0" />
+            <Rect x={cx - 4.5} y={cy + 37.5} width={9} height={1.6} fill="#e2e8f0" />
           )}
 
           {/* Turf Dust Ripple on Pitch Bounce */}
           {frameState.isTurfDust && (
-            <Circle cx={bouncePoint.x} cy={bouncePoint.y} r={6} fill="none" stroke="#d8b47c" strokeWidth={1.5} opacity={0.8} />
+            <Circle cx={bouncePoint.x} cy={bouncePoint.y} r={6.5} fill="none" stroke="#d8b47c" strokeWidth={1.6} opacity={0.85} />
           )}
 
           {/* Contact Impact Flash */}
           {frameState.isContactImpact && (
             <G transform={`translate(${cx}, ${bottomCreaseY})`}>
-              <Circle cx={0} cy={0} r={10} fill="rgba(245,158,11,0.35)" />
-              <Circle cx={0} cy={0} r={5} fill="#ffffff" />
+              <Circle cx={0} cy={0} r={11} fill="rgba(245,158,11,0.38)" />
+              <Circle cx={0} cy={0} r={5.5} fill="#ffffff" />
             </G>
           )}
 
@@ -764,31 +900,15 @@ export const TacticalStadium2D: React.FC<TacticalStadium2DProps> = ({
                   ? '#f59e0b'
                   : lastBallOutcome?.isFour
                   ? '#38bdf8'
-                  : 'rgba(255,255,255,0.55)'
+                  : 'rgba(255,255,255,0.58)'
               }
-              strokeWidth={lastBallOutcome?.isFour || lastBallOutcome?.isSix ? 2.4 : 1.5}
+              strokeWidth={lastBallOutcome?.isFour || lastBallOutcome?.isSix ? 2.6 : 1.7}
               strokeDasharray={lastBallOutcome?.isSix ? '4 3' : undefined}
-              opacity={0.7}
+              opacity={0.75}
             />
           )}
 
-          {/* 6. Two On-Field Umpire Markers & Hand Signals */}
-          {/* Bowler's-end umpire (immediately behind bowler's-end stumps) */}
-          <UmpireMarkerSvg
-            x={frameState.bowlerUmpirePos.x}
-            y={frameState.bowlerUmpirePos.y}
-            signal={activeBowlerUmpireSignal}
-            role="bowler_end"
-          />
-          {/* Square-leg umpire (to the side of the pitch at square leg) */}
-          <UmpireMarkerSvg
-            x={frameState.squareLegUmpirePos.x}
-            y={frameState.squareLegUmpirePos.y}
-            signal={activeSquareLegUmpireSignal}
-            role="square_leg"
-          />
-
-          {/* 7. Fielders with Realistic Pursuit Animations */}
+          {/* 6. Fielders with Realistic Pursuit Animations */}
           {frameState.fielders.map((f, idx) => {
             const isSelected = selectedFielderId === f.id || draggingFielderId === f.id;
             const jNum = fielderJerseys[idx % fielderJerseys.length] || f.id;
@@ -808,9 +928,9 @@ export const TacticalStadium2D: React.FC<TacticalStadium2DProps> = ({
               >
                 <SvgText
                   x={f.x}
-                  y={f.y - 14}
-                  fill="rgba(226,232,240,0.88)"
-                  fontSize={8.5}
+                  y={f.y - 14.5}
+                  fill="rgba(226,232,240,0.9)"
+                  fontSize={9}
                   fontWeight="700"
                   fontFamily="monospace"
                   textAnchor="middle"
@@ -822,10 +942,10 @@ export const TacticalStadium2D: React.FC<TacticalStadium2DProps> = ({
                   <Circle
                     cx={f.x}
                     cy={f.y}
-                    r={13.5}
+                    r={14.5}
                     fill="none"
                     stroke="#38bdf8"
-                    strokeWidth={1.8}
+                    strokeWidth={1.9}
                     strokeDasharray="3 2"
                   />
                 )}
@@ -834,20 +954,20 @@ export const TacticalStadium2D: React.FC<TacticalStadium2DProps> = ({
                   <Circle
                     cx={f.x}
                     cy={f.y}
-                    r={14.5}
+                    r={15.5}
                     fill="none"
                     stroke="#f5b82e"
-                    strokeWidth={2}
+                    strokeWidth={2.2}
                     strokeDasharray="3 2"
                   />
                 )}
 
-                <Circle cx={f.x} cy={f.y} r={10.5} fill={bowlColor} stroke="#ffffff" strokeWidth={1.8} />
+                <Circle cx={f.x} cy={f.y} r={11.2} fill={bowlColor} stroke="#ffffff" strokeWidth={1.9} />
                 <SvgText
                   x={f.x}
-                  y={f.y + 3.2}
+                  y={f.y + 3.4}
                   fill={bowlColor === '#eab308' ? '#000000' : '#ffffff'}
-                  fontSize={9.5}
+                  fontSize={10}
                   fontWeight="800"
                   fontFamily="monospace"
                   textAnchor="middle"
@@ -858,14 +978,14 @@ export const TacticalStadium2D: React.FC<TacticalStadium2DProps> = ({
             );
           })}
 
-          {/* 8. Non-Striker & Bowler Tokens at Bowler's End */}
+          {/* 7. Non-Striker & Bowler Tokens at Bowler's End */}
           <G transform={`translate(${frameState.nonStrikerPos.x}, ${frameState.nonStrikerPos.y})`}>
-            <Circle cx={0} cy={0} r={9.5} fill={batColor} stroke="#ffffff" strokeWidth={1.7} />
+            <Circle cx={0} cy={0} r={10} fill={batColor} stroke="#ffffff" strokeWidth={1.8} />
             <SvgText
               x={0}
-              y={3}
+              y={3.2}
               fill={batColor === '#eab308' ? '#000000' : '#ffffff'}
-              fontSize={9}
+              fontSize={9.5}
               fontWeight="800"
               fontFamily="monospace"
               textAnchor="middle"
@@ -879,18 +999,18 @@ export const TacticalStadium2D: React.FC<TacticalStadium2DProps> = ({
               <Line
                 x1={0}
                 y1={0}
-                x2={Math.sin((frameState.bowlerArmAngle * Math.PI) / 180) * 11}
-                y2={Math.cos((frameState.bowlerArmAngle * Math.PI) / 180) * 11}
+                x2={Math.sin((frameState.bowlerArmAngle * Math.PI) / 180) * 12}
+                y2={Math.cos((frameState.bowlerArmAngle * Math.PI) / 180) * 12}
                 stroke="#ffffff"
-                strokeWidth={2}
+                strokeWidth={2.2}
               />
             )}
-            <Circle cx={0} cy={0} r={9} fill={bowlColor} stroke="#ffffff" strokeWidth={1.7} />
+            <Circle cx={0} cy={0} r={9.8} fill={bowlColor} stroke="#ffffff" strokeWidth={1.8} />
             <SvgText
               x={0}
-              y={3}
+              y={3.2}
               fill={bowlColor === '#eab308' ? '#000000' : '#ffffff'}
-              fontSize={8.5}
+              fontSize={9}
               fontWeight="800"
               fontFamily="monospace"
               textAnchor="middle"
@@ -899,14 +1019,14 @@ export const TacticalStadium2D: React.FC<TacticalStadium2DProps> = ({
             </SvgText>
           </G>
 
-          {/* 9. Wicketkeeper Token */}
+          {/* 8. Wicketkeeper Token */}
           <G transform={`translate(${frameState.keeperPos.x}, ${frameState.keeperPos.y})`}>
-            <Circle cx={0} cy={0} r={10.5} fill={bowlColor} stroke="#ffffff" strokeWidth={1.8} />
+            <Circle cx={0} cy={0} r={11} fill={bowlColor} stroke="#ffffff" strokeWidth={1.9} />
             <SvgText
               x={0}
-              y={3.2}
+              y={3.4}
               fill={bowlColor === '#eab308' ? '#000000' : '#ffffff'}
-              fontSize={9.5}
+              fontSize={10}
               fontWeight="800"
               fontFamily="monospace"
               textAnchor="middle"
@@ -915,15 +1035,15 @@ export const TacticalStadium2D: React.FC<TacticalStadium2DProps> = ({
             </SvgText>
           </G>
 
-          {/* 10. Striker Player Shape with Separate Bat Element & Pivot Rotation */}
+          {/* 9. Striker Player Shape with Separate Bat Element & Pivot Rotation */}
           <G transform={`translate(${frameState.strikerPos.x}, ${frameState.strikerPos.y})`}>
-            <Circle cx={0} cy={0} r={12.5} fill="none" stroke="#f5b82e" strokeWidth={2.2} />
-            <Circle cx={0} cy={0} r={10} fill="#f5b82e" stroke="#0f172a" strokeWidth={1.5} />
+            <Circle cx={0} cy={0} r={13.5} fill="none" stroke="#f5b82e" strokeWidth={2.3} />
+            <Circle cx={0} cy={0} r={10.8} fill="#f5b82e" stroke="#0f172a" strokeWidth={1.6} />
             <SvgText
               x={0}
-              y={3.2}
+              y={3.4}
               fill="#0f172a"
-              fontSize={9.5}
+              fontSize={10}
               fontWeight="900"
               fontFamily="monospace"
               textAnchor="middle"
@@ -933,43 +1053,51 @@ export const TacticalStadium2D: React.FC<TacticalStadium2DProps> = ({
 
             {/* Separate Bat Element attached to Striker */}
             <G transform={`rotate(${frameState.strikerBatAngle})`}>
-              <Rect x={7} y={-2} width={10} height={3} rx={1} fill="#eab308" stroke="#78350f" strokeWidth={0.8} />
+              <Rect x={7.5} y={-2} width={11} height={3.2} rx={1} fill="#eab308" stroke="#78350f" strokeWidth={0.9} />
             </G>
           </G>
+
+          {/* 10. Two On-Field Umpire Markers & Unmistakable Hand Signals (Rendered above player tokens so never occluded) */}
+          {/* Bowler's-end umpire (immediately behind bowler's-end stumps) */}
+          <UmpireMarkerSvg
+            x={frameState.bowlerUmpirePos.x}
+            y={frameState.bowlerUmpirePos.y}
+            signal={activeBowlerUmpireSignal}
+            role="bowler_end"
+          />
+          {/* Square-leg umpire (to the side of the pitch at square leg) */}
+          <UmpireMarkerSvg
+            x={frameState.squareLegUmpirePos.x}
+            y={frameState.squareLegUmpirePos.y}
+            signal={activeSquareLegUmpireSignal}
+            role="square_leg"
+          />
 
           {/* 11. Ball Shadow & Live Ball Element */}
           {frameState.showBall && (
             <G>
               {frameState.ballHeight > 1 && (
-                <Circle cx={frameState.ballShadowPos.x} cy={frameState.ballShadowPos.y} r={3} fill="rgba(0,0,0,0.35)" />
+                <Circle cx={frameState.ballShadowPos.x} cy={frameState.ballShadowPos.y} r={3.4} fill="rgba(0,0,0,0.38)" />
               )}
               <G transform={`translate(${frameState.ballPos.x}, ${frameState.ballPos.y - frameState.ballHeight})`}>
-                <Circle cx={0} cy={0} r={6.5 + frameState.ballHeight * 0.12} fill="rgba(255,255,255,0.28)" />
-                <Circle cx={0} cy={0} r={3.8 + frameState.ballHeight * 0.08} fill="#ffffff" stroke="#f59e0b" strokeWidth={1} />
+                <Circle cx={0} cy={0} r={7.2 + frameState.ballHeight * 0.14} fill="rgba(255,255,255,0.3)" />
+                <Circle cx={0} cy={0} r={4.2 + frameState.ballHeight * 0.09} fill="#ffffff" stroke="#f59e0b" strokeWidth={1.1} />
               </G>
             </G>
           )}
 
           {/* 12. Corner Floodlight Glow Cones & LED Towers */}
-          <Circle cx={cx} cy={cy} r={outerR + 8} fill="url(#cornerGlowTL)" pointerEvents="none" />
-          <Circle cx={cx} cy={cy} r={outerR + 8} fill="url(#cornerGlowTR)" pointerEvents="none" />
-          <Circle cx={cx} cy={cy} r={outerR + 8} fill="url(#cornerGlowBL)" pointerEvents="none" />
-          <Circle cx={cx} cy={cy} r={outerR + 8} fill="url(#cornerGlowBR)" pointerEvents="none" />
+          <Circle cx={cx} cy={cy} r={outerR + 6} fill="url(#cornerGlowTL)" pointerEvents="none" />
+          <Circle cx={cx} cy={cy} r={outerR + 6} fill="url(#cornerGlowTR)" pointerEvents="none" />
+          <Circle cx={cx} cy={cy} r={outerR + 6} fill="url(#cornerGlowBL)" pointerEvents="none" />
+          <Circle cx={cx} cy={cy} r={outerR + 6} fill="url(#cornerGlowBR)" pointerEvents="none" />
 
-          {renderCornerFloodlight(34, 34, -45, 'fl_tl')}
-          {renderCornerFloodlight(366, 34, 45, 'fl_tr')}
-          {renderCornerFloodlight(34, 366, 45, 'fl_bl')}
-          {renderCornerFloodlight(366, 366, -45, 'fl_br')}
+          {renderCornerFloodlight(27, 27, -45, 'fl_tl')}
+          {renderCornerFloodlight(373, 27, 45, 'fl_tr')}
+          {renderCornerFloodlight(27, 373, 45, 'fl_bl')}
+          {renderCornerFloodlight(373, 373, -45, 'fl_br')}
         </Svg>
       </div>
-    </View>
+    </div>
   );
 };
-
-const styles = StyleSheet.create({
-  wrapper: {
-    width: '100%',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});

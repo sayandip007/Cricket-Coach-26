@@ -19,6 +19,89 @@ export type MainTab = 'landing' | 'hub' | 'team' | 'league' | 'world' | 'profile
 
 const INITIAL_COMPLETED_MATCHES: CompletedMatchRecord[] = [];
 
+/**
+ * Central DRS Review Trigger State Handler
+ * Independently validates match state, active review status, latest delivery identity,
+ * and canonical DRS eligibility before activating a review.
+ */
+export function applyTriggerDrsReviewState(
+  prev: MatchLiveState | null,
+  userTeamId: string,
+  allPlayers: Player[]
+): MatchLiveState | null {
+  if (!prev || !prev.lastBallOutcome) return prev;
+  if (prev.status !== 'in_progress') return prev;
+  if (prev.activeDrsReview?.isActive) return prev;
+
+  const lbo = prev.lastBallOutcome;
+  const isFirst = prev.currentInningsIndex === 1;
+  const curInnings = isFirst ? prev.innings1 : prev.innings2;
+  if (!curInnings || curInnings.ballHistory.length === 0) return prev;
+
+  const latestBall = curInnings.ballHistory[0];
+  if (
+    !latestBall ||
+    latestBall.over !== lbo.over ||
+    latestBall.ballNumber !== lbo.ballNumber ||
+    latestBall.bowlerId !== lbo.bowlerId ||
+    latestBall.strikerId !== lbo.strikerId ||
+    latestBall.drsReviewed ||
+    lbo.drsReviewed
+  ) {
+    return prev;
+  }
+
+  const isUserHome = prev.homeTeam.id === userTeamId || Boolean(prev.homeTeam.isUserTeam);
+  const userMatchTeamId = isUserHome ? prev.homeTeam.id : prev.awayTeam.id;
+  const isUserBatting = curInnings.battingTeamId === userMatchTeamId;
+  const userSideKey: 'home' | 'away' = isUserHome ? 'home' : 'away';
+  const initRevs = getInitialReviewsForFormat(prev.format);
+  const reviewsLeft = prev.reviewsRemaining?.[userSideKey] ?? initRevs;
+
+  const eligibility = checkDrsEligibility(lbo, isUserBatting, reviewsLeft, {
+    isDrsActive: Boolean(prev.activeDrsReview?.isActive),
+    matchStatus: prev.status,
+    latestBallOutcome: latestBall
+  });
+  if (!eligibility.canReview) {
+    return prev;
+  }
+
+  const reviewedBatterId = lbo.dismissedPlayerId || lbo.strikerId || curInnings.currentStrikerId;
+  const reviewedBatterObj = allPlayers.find(p => p.id === reviewedBatterId) || allPlayers[0];
+  const reviewedBowlerId = lbo.bowlerId || curInnings.currentBowlerId;
+  const reviewedBowlerObj = allPlayers.find(p => p.id === reviewedBowlerId) || allPlayers[2];
+
+  const originalDecision: 'OUT' | 'NOT OUT' = lbo.isWicket ? 'OUT' : 'NOT OUT';
+  const line = prev.bowlingTactics?.line;
+  const length = prev.bowlingTactics?.length;
+
+  const forcedType = eligibility.reviewType === 'none' ? undefined : eligibility.reviewType;
+  const evidence = evaluateDrsDeliveryEvidence(lbo, isUserBatting, originalDecision, line, length, forcedType);
+
+  const reviewingTeamId = isUserBatting ? curInnings.battingTeamId : curInnings.bowlingTeamId;
+
+  return {
+    ...prev,
+    activeDrsReview: {
+      isActive: true,
+      reviewingTeamId,
+      batterId: reviewedBatterId,
+      batterName: lbo.dismissedPlayerName || lbo.strikerName || reviewedBatterObj?.name || 'Batter',
+      bowlerId: reviewedBowlerId,
+      bowlerName: lbo.bowlerName || reviewedBowlerObj?.name || 'Bowler',
+      replacedBatterId: lbo.incomingBatterId,
+      type: evidence.reviewType === 'lbw' ? 'lbw' : 'caught',
+      snickoSpike: evidence.snickoSpike,
+      hawkeye: evidence.hawkeye,
+      originalDecision: evidence.originalDecision,
+      finalDecision: evidence.finalDecision,
+      isOverturned: evidence.isOverturned,
+      reviewRetained: evidence.reviewRetained
+    }
+  };
+}
+
 export const CRICBUZZ_2026_INTL_TOURS: {
   id: string;
   dateStr: string;
@@ -4712,62 +4795,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // FEATURE 6.1: DRS & BALL-TRACKING REVIEW
   const triggerDrsReview = useCallback(() => {
-    setMatchLiveState(prev => {
-      if (!prev || !prev.lastBallOutcome) return prev;
-      const lbo = prev.lastBallOutcome;
-
-      const isFirst = prev.currentInningsIndex === 1;
-      const curInnings = isFirst ? prev.innings1 : prev.innings2;
-      if (!curInnings) return prev;
-
-      const isUserHome = prev.homeTeam.id === userTeam.id || Boolean(prev.homeTeam.isUserTeam);
-      const isUserBatting = isFirst ? isUserHome : !isUserHome;
-      const userSideKey: 'home' | 'away' = isUserHome ? 'home' : 'away';
-      const initRevs = getInitialReviewsForFormat(prev.format);
-      const reviewsLeft = prev.reviewsRemaining?.[userSideKey] ?? initRevs;
-
-      // Enforce shared canonical DRS eligibility check
-      const eligibility = checkDrsEligibility(lbo, isUserBatting, reviewsLeft);
-      if (!eligibility.canReview) {
-        console.warn("DRS review rejected by canonical checkDrsEligibility:", eligibility.reason);
-        return prev;
-      }
-
-      const reviewedBatterId = lbo.dismissedPlayerId || lbo.strikerId || curInnings.currentStrikerId;
-      const reviewedBatterObj = players.find(p => p.id === reviewedBatterId) || players[0];
-      const reviewedBowlerId = lbo.bowlerId || curInnings.currentBowlerId;
-      const reviewedBowlerObj = players.find(p => p.id === reviewedBowlerId) || players[2];
-
-      const originalDecision: 'OUT' | 'NOT OUT' = lbo.isWicket ? 'OUT' : 'NOT OUT';
-      const line = prev.bowlingTactics?.line;
-      const length = prev.bowlingTactics?.length;
-
-      // Evaluate evidence deterministically based on delivery telemetry and reviewType
-      const forcedType = eligibility.reviewType === 'none' ? undefined : eligibility.reviewType;
-      const evidence = evaluateDrsDeliveryEvidence(lbo, isUserBatting, originalDecision, line, length, forcedType);
-
-      const reviewingTeamId = isUserBatting ? curInnings.battingTeamId : curInnings.bowlingTeamId;
-
-      return {
-        ...prev,
-        activeDrsReview: {
-          isActive: true,
-          reviewingTeamId,
-          batterId: reviewedBatterId,
-          batterName: lbo.dismissedPlayerName || lbo.strikerName || reviewedBatterObj.name,
-          bowlerId: reviewedBowlerId,
-          bowlerName: lbo.bowlerName || reviewedBowlerObj.name,
-          replacedBatterId: lbo.incomingBatterId,
-          type: evidence.reviewType === 'lbw' ? 'lbw' : 'caught',
-          snickoSpike: evidence.snickoSpike,
-          hawkeye: evidence.hawkeye,
-          originalDecision: evidence.originalDecision,
-          finalDecision: evidence.finalDecision,
-          isOverturned: evidence.isOverturned,
-          reviewRetained: evidence.reviewRetained
-        }
-      };
-    });
+    setMatchLiveState(prev => applyTriggerDrsReviewState(prev, userTeam.id, players));
   }, [players, userTeam.id]);
 
   const resolveDrsReview = useCallback((finalVerdict: 'OUT' | 'NOT OUT', reviewRetained: boolean) => {

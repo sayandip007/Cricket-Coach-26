@@ -15,7 +15,13 @@ import {
 import { simulateBall } from '../engine/cricketEngine';
 import { calculateDLSTarget, applyDewFactorModifier } from '../engine/dlsEngine';
 import { resolveKitColor, getStadiumTheme, UmpireMarkerSvg } from '../components/match/TacticalStadium2D';
-import { CRICBUZZ_2026_INTL_TOURS, buildSeasonCalendarForTeam, safeStorageSet, pruneLegacyCacheKeys } from '../context/GameContext';
+import {
+  CRICBUZZ_2026_INTL_TOURS,
+  buildSeasonCalendarForTeam,
+  safeStorageSet,
+  pruneLegacyCacheKeys,
+  applyTriggerDrsReviewState
+} from '../context/GameContext';
 import { checkDrsEligibility, evaluateDrsDeliveryEvidence, getInitialReviewsForFormat } from '../utils/drsRules';
 import {
   computeAnimationFrame,
@@ -25,7 +31,7 @@ import {
   BOWLER_END_UMPIRE_POS,
   SQUARE_LEG_UMPIRE_POS
 } from '../utils/cricketAnimationTimeline';
-import { InningsData, BallOutcome, Player } from '../types/cricket';
+import { InningsData, BallOutcome, Player, MatchLiveState } from '../types/cricket';
 import {
   FIELD_TEMPLATES,
   validateFieldRestrictions,
@@ -668,6 +674,268 @@ runTest('REGRESSION', 'Phase 19: Enlarged Circular Stadium, Dual Umpire Markers,
   // 4. Verify Signal Clears Before Next Delivery Run-Up
   const nextBallRunupSig = resolveUmpireSignal(fourOutcome, { animProgress: 0.1 });
   assert.equal(nextBallRunupSig.primarySignal, 'none', 'Umpire signal clears immediately when next delivery run-up starts');
+});
+
+runTest('REGRESSION', 'Phase 20: Strict DRS Eligibility & Central State Handler Verification (All 19 Scenarios)', () => {
+  const baseBall: BallOutcome = {
+    over: 3,
+    ballNumber: 2,
+    bowlerId: 'p_bowl_1',
+    bowlerName: 'Kagiso Rabada',
+    strikerId: 'p_bat_1',
+    strikerName: 'Ajinkya Rahane',
+    nonStrikerId: 'p_bat_2',
+    nonStrikerName: 'Rinku Singh',
+    runs: 0,
+    isWicket: false,
+    appealType: 'none',
+    isFour: false,
+    isSix: false,
+    isExtra: false,
+    bowlerSpeedMps: 39.2,
+    shotAngleDeg: 45,
+    shotDistanceM: 12,
+    commentary: 'Pushed firmly to cover inside the 30-yard circle, no run.',
+    tacticalNote: 'Disciplined good length on off stump.'
+  };
+
+  // 1. Ordinary dot ball with no appeal: DRS unavailable for both teams
+  assert.equal(checkDrsEligibility(baseBall, false, 2).canReview, false, 'Scenario 1a: Ordinary dot ball must not offer bowling DRS');
+  assert.equal(checkDrsEligibility(baseBall, true, 2).canReview, false, 'Scenario 1b: Ordinary dot ball must not offer batting DRS');
+
+  //Legacy dot ball without appealType field
+  const legacyDotBall: BallOutcome = { ...baseBall, appealType: undefined, commentary: 'Dot ball to mid-off.' };
+  assert.equal(checkDrsEligibility(legacyDotBall, false, 2).canReview, false, 'Scenario 1c: Legacy dot ball without appeal must not offer DRS');
+
+  // 2. Defensive shot with zero runs and no appeal: unavailable
+  const defensiveDot: BallOutcome = {
+    ...baseBall,
+    appealType: undefined,
+    commentary: 'Rahane defends solidly off the front foot back down the pitch, dot ball.'
+  };
+  assert.equal(checkDrsEligibility(defensiveDot, false, 2).canReview, false, 'Scenario 2: Defensive dot ball must not offer DRS');
+
+  // 3. Missed delivery ("Beaten outside off...") with zero runs and no appeal: unavailable
+  const missedDot: BallOutcome = {
+    ...baseBall,
+    appealType: undefined,
+    commentary: 'Beaten outside off! Good probing line from Rabada, dot ball.',
+    tacticalNote: 'Hit the pad on the way through, no appeal.'
+  };
+  assert.equal(checkDrsEligibility(missedDot, false, 2).canReview, false, 'Scenario 3: Missed delivery without appeal must not offer DRS');
+
+  // 4. Single: unavailable unless a valid appeal event explicitly exists
+  const singleBall: BallOutcome = {
+    ...baseBall,
+    runs: 1,
+    commentary: 'Tucked away softly for an easy single to rotate strike.'
+  };
+  assert.equal(checkDrsEligibility(singleBall, false, 2).canReview, false, 'Scenario 4a: Ordinary single must not offer DRS');
+  const singleWithExplicitAppeal: BallOutcome = {
+    ...singleBall,
+    appealType: 'lbw',
+    commentary: 'Huge LBW appeal as they scamper a leg-bye single!'
+  };
+  assert.equal(checkDrsEligibility(singleWithExplicitAppeal, false, 2).canReview, true, 'Scenario 4b: Single with explicit LBW appealType is reviewable');
+
+  // 5. Four and six: unavailable
+  const fourBall: BallOutcome = { ...baseBall, runs: 4, isFour: true, appealType: 'lbw' };
+  const sixBall: BallOutcome = { ...baseBall, runs: 6, isSix: true, appealType: 'caught_behind' };
+  assert.equal(checkDrsEligibility(fourBall, false, 2).canReview, false, 'Scenario 5a: Four boundary must not offer DRS');
+  assert.equal(checkDrsEligibility(sixBall, false, 2).canReview, false, 'Scenario 5b: Six boundary must not offer DRS');
+
+  // 6. Genuine LBW appeal with NOT OUT decision: bowling review available
+  const genuineLbwAppeal: BallOutcome = {
+    ...baseBall,
+    appealType: 'lbw',
+    commentary: 'Huge LBW appeal from Rabada! Struck on the front pad in line, but the umpire shakes his head — NOT OUT!'
+  };
+  const lbwAppealRes = checkDrsEligibility(genuineLbwAppeal, false, 2);
+  assert.equal(lbwAppealRes.canReview, true, 'Scenario 6: Genuine LBW appeal on NOT OUT ball must offer bowling DRS');
+  assert.equal(lbwAppealRes.reviewType, 'lbw');
+
+  // 7. Genuine caught-behind appeal with NOT OUT decision: bowling review available
+  const genuineEdgeAppeal: BallOutcome = {
+    ...baseBall,
+    appealType: 'caught_behind',
+    commentary: 'Loud appeal from the keeper and Rabada for a faint edge! Umpire says NOT OUT!'
+  };
+  const edgeAppealRes = checkDrsEligibility(genuineEdgeAppeal, false, 2);
+  assert.equal(edgeAppealRes.canReview, true, 'Scenario 7: Genuine caught-behind appeal on NOT OUT ball must offer bowling DRS');
+  assert.equal(edgeAppealRes.reviewType, 'caught_behind');
+
+  // 8. Confirmed reviewable LBW dismissal: batting review available
+  const confirmedLbwOut: BallOutcome = {
+    ...baseBall,
+    isWicket: true,
+    wicketType: 'lbw',
+    appealType: 'lbw',
+    dismissalText: 'lbw b Rabada'
+  };
+  const batLbwRes = checkDrsEligibility(confirmedLbwOut, true, 2);
+  assert.equal(batLbwRes.canReview, true, 'Scenario 8: Confirmed LBW dismissal must offer batting DRS');
+  assert.equal(batLbwRes.reviewType, 'lbw');
+
+  // 9. Confirmed caught-behind dismissal: batting review available
+  const confirmedCaughtBehind: BallOutcome = {
+    ...baseBall,
+    isWicket: true,
+    wicketType: 'caught',
+    appealType: 'caught_behind',
+    fielderName: 'Wicketkeeper',
+    dismissalText: 'c Keeper b Rabada'
+  };
+  const batEdgeRes = checkDrsEligibility(confirmedCaughtBehind, true, 2);
+  assert.equal(batEdgeRes.canReview, true, 'Scenario 9: Confirmed caught-behind dismissal must offer batting DRS');
+  assert.equal(batEdgeRes.reviewType, 'caught_behind');
+
+  // 10. Ordinary outfield catch: batting review unavailable (even with 'c ... b ...' dismissalText)
+  const outfieldCatch: BallOutcome = {
+    ...baseBall,
+    isWicket: true,
+    wicketType: 'caught',
+    appealType: 'none',
+    fielderName: 'Long-on',
+    dismissalText: 'c Long-on b Rabada'
+  };
+  assert.equal(checkDrsEligibility(outfieldCatch, true, 2).canReview, false, 'Scenario 10a: Outfield catch at Long-on must not offer batting DRS');
+  const coverCatchNoFielderProp: BallOutcome = {
+    ...baseBall,
+    isWicket: true,
+    wicketType: 'caught',
+    appealType: undefined,
+    fielderName: undefined,
+    dismissalText: 'c Cover b Rabada'
+  };
+  assert.equal(checkDrsEligibility(coverCatchNoFielderProp, true, 2).canReview, false, 'Scenario 10b: Catch at Cover without fielderName prop must not offer DRS');
+
+  // 11. Bowled, run-out and stumped: unavailable
+  const bowledOut: BallOutcome = { ...baseBall, isWicket: true, wicketType: 'bowled', dismissalText: 'b Rabada' };
+  const runOutBall: BallOutcome = { ...baseBall, isWicket: true, wicketType: 'run out', dismissalText: 'run out (Deep)' };
+  const stumpedOut: BallOutcome = { ...baseBall, isWicket: true, wicketType: 'stumped', fielderName: 'Wicketkeeper', dismissalText: 'st Keeper b Rabada' };
+  assert.equal(checkDrsEligibility(bowledOut, true, 2).canReview, false, 'Scenario 11a: Bowled must not offer DRS');
+  assert.equal(checkDrsEligibility(runOutBall, true, 2).canReview, false, 'Scenario 11b: Run out must not offer DRS');
+  assert.equal(checkDrsEligibility(stumpedOut, true, 2).canReview, false, 'Scenario 11c: Stumped must not offer DRS');
+
+  // 12. Wide and unsupported extras: unavailable
+  const wideExtra: BallOutcome = { ...baseBall, runs: 1, isExtra: true, extraType: 'wide' };
+  const noBallExtra: BallOutcome = { ...baseBall, runs: 1, isExtra: true, extraType: 'no_ball', appealType: 'lbw' };
+  assert.equal(checkDrsEligibility(wideExtra, false, 2).canReview, false, 'Scenario 12a: Wide delivery must not offer DRS');
+  assert.equal(checkDrsEligibility(noBallExtra, false, 2).canReview, false, 'Scenario 12b: No-ball delivery must not offer LBW/edge DRS');
+
+  // 13. No reviews remaining: unavailable
+  assert.equal(checkDrsEligibility(confirmedLbwOut, true, 0).canReview, false, 'Scenario 13: Zero reviews remaining must disallow DRS');
+
+  // 14. Delivery already reviewed: unavailable
+  assert.equal(checkDrsEligibility({ ...confirmedLbwOut, drsReviewed: true }, true, 2).canReview, false, 'Scenario 14: Already reviewed delivery must disallow DRS');
+
+  // 15. Active review: another review cannot start
+  assert.equal(
+    checkDrsEligibility(confirmedLbwOut, true, 2, { isDrsActive: true }).canReview,
+    false,
+    'Scenario 15: Active DRS review must block starting another review'
+  );
+
+  // 16. Missing actual lastBallOutcome: no review
+  assert.equal(checkDrsEligibility(null, true, 2).canReview, false, 'Scenario 16a: Null lastBallOutcome must disallow DRS');
+  assert.equal(checkDrsEligibility(undefined, false, 2).canReview, false, 'Scenario 16b: Undefined lastBallOutcome must disallow DRS');
+
+  // 17. Stale delivery outcome: cannot review an older delivery
+  const newerBall: BallOutcome = { ...baseBall, over: 3, ballNumber: 3 };
+  assert.equal(
+    checkDrsEligibility(confirmedLbwOut, true, 2, { latestBallOutcome: newerBall }).canReview,
+    false,
+    'Scenario 17: Stale delivery outcome not matching latest ball in history must disallow DRS'
+  );
+
+  // 18 & 19. Central Handler (applyTriggerDrsReviewState) Verification
+  const kkrTeam = INITIAL_TEAMS.find(t => t.id === 'team_kol')!;
+  const pbksTeam = INITIAL_TEAMS.find(t => t.id === 'team_pun')!;
+  const mockMatchState: MatchLiveState = {
+    id: 'test_match_drs',
+    leagueId: 'ipl',
+    format: 'T20',
+    homeTeam: { ...kkrTeam, isUserTeam: true },
+    awayTeam: pbksTeam,
+    venue: 'Eden Gardens',
+    pitchType: 'Natural',
+    weather: 'Clear Night',
+    currentInningsIndex: 1,
+    innings1: {
+      battingTeamId: kkrTeam.id,
+      bowlingTeamId: pbksTeam.id,
+      runs: 40,
+      wickets: 1,
+      overs: 3.2,
+      ballsCompleted: 20,
+      maxOvers: 20,
+      batters: [],
+      bowlers: [],
+      currentStrikerId: 'p_bat_1',
+      currentNonStrikerId: 'p_bat_2',
+      currentBowlerId: 'p_bowl_1',
+      ballHistory: [baseBall],
+      fallOfWickets: [],
+      overRuns: [8, 12, 10, 10]
+    },
+    innings2: null,
+    targetRuns: null,
+    status: 'in_progress',
+    lastBallOutcome: baseBall,
+    isBallInFlight: false,
+    bowlingTactics: {
+      length: 'good',
+      line: 'off_stump',
+      angle: 'over',
+      variation: 'standard',
+      fielders: INITIAL_DEFAULT_FIELD
+    },
+    battingTactics: {
+      approach: 'balanced',
+      targetSide: 'all',
+      runningRisk: 'normal'
+    },
+    reviewsRemaining: { home: 2, away: 2 },
+    activeDrsReview: null
+  };
+
+  // Scenario 18a: Central handler rejects ordinary dot ball without mutating state
+  const rejectedDotState = applyTriggerDrsReviewState(mockMatchState, kkrTeam.id, INITIAL_PLAYERS);
+  assert.equal(rejectedDotState, mockMatchState, 'Scenario 18a: Central handler must return identical state reference for non-reviewable dot ball');
+  assert.equal(rejectedDotState?.activeDrsReview, null);
+
+  // Scenario 18b: Central handler rejects outfield catch without mutating state
+  const outfieldCatchState: MatchLiveState = {
+    ...mockMatchState,
+    lastBallOutcome: outfieldCatch,
+    innings1: { ...mockMatchState.innings1, ballHistory: [outfieldCatch] }
+  };
+  const rejectedCatchState = applyTriggerDrsReviewState(outfieldCatchState, kkrTeam.id, INITIAL_PLAYERS);
+  assert.equal(rejectedCatchState, outfieldCatchState, 'Scenario 18b: Central handler must reject outfield catch');
+
+  // Scenario 18c: Central handler rejects stale delivery outcome
+  const staleOutcomeState: MatchLiveState = {
+    ...mockMatchState,
+    lastBallOutcome: confirmedLbwOut,
+    innings1: { ...mockMatchState.innings1, ballHistory: [newerBall, confirmedLbwOut] }
+  };
+  const rejectedStaleState = applyTriggerDrsReviewState(staleOutcomeState, kkrTeam.id, INITIAL_PLAYERS);
+  assert.equal(rejectedStaleState, staleOutcomeState, 'Scenario 18c: Central handler must reject stale delivery when ballHistory[0] has advanced');
+
+  // Scenario 19: Central handler activates DRS review on valid confirmed LBW and blocks duplicate trigger while active
+  const validLbwState: MatchLiveState = {
+    ...mockMatchState,
+    lastBallOutcome: confirmedLbwOut,
+    innings1: { ...mockMatchState.innings1, ballHistory: [confirmedLbwOut] }
+  };
+  const activatedState = applyTriggerDrsReviewState(validLbwState, kkrTeam.id, INITIAL_PLAYERS);
+  assert.notEqual(activatedState, validLbwState, 'Scenario 19a: Central handler must return new state with activeDrsReview for valid LBW challenge');
+  assert.equal(activatedState?.activeDrsReview?.isActive, true);
+  assert.equal(activatedState?.activeDrsReview?.type, 'lbw');
+
+  // Duplicate trigger while active is rejected
+  const duplicateTriggerState = applyTriggerDrsReviewState(activatedState, kkrTeam.id, INITIAL_PLAYERS);
+  assert.equal(duplicateTriggerState, activatedState, 'Scenario 19b: Central handler must reject duplicate trigger while a review is already active');
 });
 
 runTest('SMOKE', 'React Native Architecture: StyleSheet, Platform, Dimensions, AppRegistry & AsyncStorage operate cleanly', () => {

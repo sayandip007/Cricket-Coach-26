@@ -102,34 +102,15 @@ export const WicketBatterModal: React.FC<WicketBatterModalProps> = ({
                 );
               }
 
-              const dLower = (dismissalText || '').toLowerCase();
-              const isLbw = dLower.startsWith('lbw') || dLower.includes('lbw');
-              const outcomeToTest: BallOutcome = lastBallOutcome || {
-                over: 1,
-                ballNumber: 1,
-                bowlerId: 'bowler',
-                bowlerName,
-                strikerId: 'striker',
-                strikerName: outBatterName,
-                nonStrikerId: 'nonStriker',
-                nonStrikerName: 'NonStriker',
-                runs: 0,
-                isWicket: true,
-                wicketType: isLbw ? 'lbw' : 'caught',
-                fielderName: isLbw ? undefined : 'Wicketkeeper',
-                dismissalText,
-                drsReviewed: drsAlreadyReviewed,
-                isFour: false,
-                isSix: false,
-                isExtra: false,
-                bowlerSpeedMps: 38,
-                shotAngleDeg: 0,
-                shotDistanceM: 0,
-                commentary: dismissalText,
-                tacticalNote
-              };
+              if (!lastBallOutcome) {
+                return (
+                  <div className="w-full py-2 px-3 rounded-xl bg-slate-900/70 border border-slate-800 text-slate-400 font-mono text-[10px] text-center flex items-center justify-center gap-1">
+                    <span>🚫 No reviewable delivery telemetry available.</span>
+                  </div>
+                );
+              }
 
-              const drs = checkDrsEligibility(outcomeToTest, true, reviewsRemaining);
+              const drs = checkDrsEligibility(lastBallOutcome, true, reviewsRemaining);
 
               if (!drs.canReview) {
                 return (

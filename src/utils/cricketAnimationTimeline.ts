@@ -14,6 +14,8 @@ export type UmpireSignalType =
   | 'no_ball'
   | 'over_complete';
 
+export type UmpireSignal = UmpireSignalType | 'not_out';
+
 export interface UmpireSignalResolution {
   bowlerEndSignal: UmpireSignalType;
   squareLegSignal: UmpireSignalType;

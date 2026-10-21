@@ -251,6 +251,7 @@ export interface BallOutcome {
   dismissalText?: string;
   incomingBatterId?: string;
   drsReviewed?: boolean;
+  appealType?: 'lbw' | 'caught_behind' | 'none';
   isFour: boolean;
   isSix: boolean;
   isExtra: boolean;

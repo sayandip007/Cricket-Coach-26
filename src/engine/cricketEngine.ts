@@ -191,6 +191,7 @@ export function simulateBall(input: DeliveryInput): BallOutcome {
   let runs = 0;
   let isWicket = false;
   let wicketType: 'bowled' | 'caught' | 'lbw' | 'run out' | 'stumped' | undefined;
+  let appealType: 'lbw' | 'caught_behind' | 'none' = 'none';
   let isFour = false;
   let isSix = false;
   let shotDistanceM = 15 + Math.floor(Math.random() * 20);
@@ -211,6 +212,7 @@ export function simulateBall(input: DeliveryInput): BallOutcome {
       nonStrikerName: nonStriker.name,
       runs: 1,
       isWicket: false,
+      appealType: 'none',
       isFour: false,
       isSix: false,
       isExtra: true,
@@ -255,6 +257,7 @@ export function simulateBall(input: DeliveryInput): BallOutcome {
       Math.random() < 0.35
     ) {
       wicketType = 'stumped';
+      appealType = 'none';
       chosenFielder = 'Wicketkeeper';
       dismissalText = `st Keeper b ${bowlerLast}`;
       commentary = `STUMPED! ${striker.name} charges down the track and misses! Keeper whips the bails off in a flash!`;
@@ -262,12 +265,14 @@ export function simulateBall(input: DeliveryInput): BallOutcome {
       shotDistanceM = 0;
     } else if (bowlingTactics.length === 'yorker' && (bowlingTactics.line === 'stumps' || bowlingTactics.line === 'off_stump')) {
       wicketType = 'bowled';
+      appealType = 'none';
       dismissalText = `b ${bowlerLast}`;
       commentary = `CLEAN BOWLED! Spearing ${Math.round(bowlerSpeedMps * 3.6)} km/h yorker rattles off-stump! ${striker.name} beaten completely for pace!`;
       tacticalNote = `Pinpoint yorker on stumps (CTRL ${bowler.ratings.ctrl}) pierced defense.`;
       shotDistanceM = 0;
     } else if ((bowlingTactics.length === 'full' || bowlingTactics.length === 'good') && (bowlingTactics.line === 'stumps' || bowlingTactics.line === 'off_stump') && Math.random() < 0.42) {
       wicketType = 'lbw';
+      appealType = 'lbw';
       dismissalText = `lbw b ${bowlerLast}`;
       commentary = `L.B.W.! Struck right in front of middle! Finger goes up without hesitation. Big breakthrough!`;
       tacticalNote = `Full length hitting front pad in line with middle stump.`;
@@ -277,6 +282,10 @@ export function simulateBall(input: DeliveryInput): BallOutcome {
       const namedFielders = activeFielders.map(f => f.name).filter(Boolean);
       const catchers = namedFielders.length > 0 ? namedFielders : ['Slip', 'Cover', 'Long-on', 'Deep Midwicket', 'Point', 'Keeper'];
       chosenFielder = catchers[Math.floor(Math.random() * catchers.length)];
+      const cfLower = chosenFielder.toLowerCase();
+      appealType = (cfLower.includes('keeper') || cfLower.includes('wicketkeeper') || cfLower.includes('slip'))
+        ? 'caught_behind'
+        : 'none';
       dismissalText = `c ${chosenFielder} b ${bowlerLast}`;
       commentary = `OUT! ${striker.name} slices ${bowler.name} in the air and taken neatly by ${chosenFielder}!`;
       tacticalNote = `Field trap paid off: caught at ${chosenFielder}.`;
@@ -294,6 +303,7 @@ export function simulateBall(input: DeliveryInput): BallOutcome {
       runs: 0,
       isWicket: true,
       wicketType,
+      appealType,
       fielderName: wicketType === 'caught' || wicketType === 'stumped' ? chosenFielder : undefined,
       dismissedPlayerId: striker.id,
       dismissedPlayerName: striker.name,
@@ -321,6 +331,7 @@ export function simulateBall(input: DeliveryInput): BallOutcome {
     // SIX
     runs = 6;
     isSix = true;
+    appealType = 'none';
     shotDistanceM = 78 + Math.floor(Math.random() * 24);
     commentary = `PURE POWER (POW ${striker.ratings.pow}): ${striker.name} heaves ${bowler.name} way over the ropes! SIX! (${shotDistanceM}m)`;
     tacticalNote = `Capitalized on ${bowlingTactics.length} delivery with aggressive intent.`;
@@ -328,37 +339,67 @@ export function simulateBall(input: DeliveryInput): BallOutcome {
     // FOUR
     runs = 4;
     isFour = true;
+    appealType = 'none';
     shotDistanceM = 65 + Math.floor(Math.random() * 12);
     commentary = `CRACKING SHOT! ${striker.name} punches ${bowler.name} cleanly through the gap to the boundary! FOUR runs!`;
     tacticalNote = `Found the unfilled gap between fielders with supreme placement.`;
   } else if (roll > 0.52) {
     // Two runs
     runs = 2;
+    appealType = 'none';
     shotDistanceM = 42 + Math.floor(Math.random() * 18);
     commentary = `Pushed into the deep pocket, good hustle between the wickets for a comfortable brace.`;
     tacticalNote = `Good running between wickets (RUN ${striker.ratings.run}).`;
   } else if (roll > Math.min(0.48, Math.max(0.18, dewMods.dotProb + innerRingSqueezeMod))) {
     // Single
     runs = 1;
+    appealType = 'none';
     shotDistanceM = 25 + Math.floor(Math.random() * 20);
     commentary = `Tucked away softly for an easy single to rotate strike.`;
     tacticalNote = `Working the ball into vacant inner circle space.`;
   } else {
-    // Dot ball
+    // Dot ball: Most dot balls are ordinary defensive blocks, leaves, or ring stops (appealType = 'none').
+    // Only a small fraction of close deliveries produce a genuine LBW or caught-behind NOT OUT appeal.
     runs = 0;
     shotDistanceM = 5 + Math.floor(Math.random() * 15);
-    commentary = `Beaten outside off! Good probing line from ${bowler.name}, dot ball.`;
-    tacticalNote = `Disciplined ${bowlingTactics.length} length on ${bowlingTactics.line.replace('_', ' ')}.`;
+    const appealRoll = Math.random();
+    const isStumpLine = bowlingTactics.line === 'stumps' || bowlingTactics.line === 'off_stump';
+    const isFullOrGood = bowlingTactics.length === 'full' || bowlingTactics.length === 'good' || bowlingTactics.length === 'yorker';
+    const isOffChannel = bowlingTactics.line === 'outside_off' || bowlingTactics.line === 'off_stump';
+
+    if (isStumpLine && isFullOrGood && appealRoll < 0.12) {
+      appealType = 'lbw';
+      shotDistanceM = 2;
+      commentary = `Huge LBW appeal from ${bowler.name}! Struck on the front pad in line, but the umpire shakes his head — NOT OUT!`;
+      tacticalNote = `Close LBW shout on ${bowlingTactics.length} length targeting the stumps.`;
+    } else if (isOffChannel && appealRoll >= 0.12 && appealRoll < 0.20) {
+      appealType = 'caught_behind';
+      shotDistanceM = 3;
+      commentary = `Loud appeal from the keeper and ${bowler.name} for a faint edge! Umpire says NOT OUT!`;
+      tacticalNote = `Probing channel outside off drew a close pass past the outside edge.`;
+    } else {
+      appealType = 'none';
+      const dotVariants = [
+        `${striker.name} defends solidly off the front foot back down the pitch, dot ball.`,
+        `Pushed firmly to cover inside the 30-yard circle, no run.`,
+        `Good disciplined line from ${bowler.name}, watched closely into the keeper's gloves.`,
+        `Blocked compactly into the turf by ${striker.name}, dot ball.`
+      ];
+      commentary = dotVariants[(over * 6 + ballInOver) % dotVariants.length];
+      tacticalNote = `Disciplined ${bowlingTactics.length} length on ${bowlingTactics.line.replace('_', ' ')}.`;
+    }
   }
 
   // Pair Running Tactical Modifiers ('hold_ones' | 'standard' | 'push_hard' | 'shield')
   if (runs === 1) {
     if (activePairRunning === 'hold_ones' && Math.random() < 0.25) {
       runs = 0;
+      appealType = 'none';
       commentary = `${striker.name} taps it to the ring and holds back — cautious calling ('Hold 1s').`;
       tacticalNote = `Pair running set to Hold 1s: zero run-out risk.`;
     } else if (activePairRunning === 'shield' && ballInOver <= 4) {
       runs = 0;
+      appealType = 'none';
       commentary = `${striker.name} turns down the single on ball ${ballInOver} to shield ${nonStriker.name.split(' ').pop()} at the non-striker's end!`;
       tacticalNote = `Strike Farming (Shield Tailender) active on balls 1-4.`;
     } else if (activePairRunning === 'push_hard') {
@@ -379,6 +420,7 @@ export function simulateBall(input: DeliveryInput): BallOutcome {
             runs: 0,
             isWicket: true,
             wicketType: 'run out',
+            appealType: 'none',
             fielderName: 'Deep Fielder',
             dismissedPlayerId: striker.id,
             dismissedPlayerName: striker.name,
@@ -394,11 +436,12 @@ export function simulateBall(input: DeliveryInput): BallOutcome {
           };
         }
         runs = 2;
+        appealType = 'none';
         commentary = `Hustled hard! ${striker.name} & ${nonStriker.name.split(' ').pop()} turn a single into TWO with electric running!`;
         tacticalNote = `Push Hard running converted 1 into 2 (RUN ${striker.ratings.run}).`;
       }
     }
-  } else if (runs === 0 && activePairRunning === 'shield' && ballInOver >= 5 && Math.random() < 0.35) {
+  } else if (runs === 0 && appealType === 'none' && activePairRunning === 'shield' && ballInOver >= 5 && Math.random() < 0.35) {
     runs = 1;
     commentary = `Quick tip-and-run on ball ${ballInOver}! ${striker.name} retains strike for the next over!`;
     tacticalNote = `Shield Tailender: rotated strike at the end of the over.`;
@@ -415,6 +458,7 @@ export function simulateBall(input: DeliveryInput): BallOutcome {
     nonStrikerName: nonStriker.name,
     runs,
     isWicket: false,
+    appealType,
     isFour,
     isSix,
     isExtra: false,

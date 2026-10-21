@@ -997,7 +997,7 @@ export const BowlingTacticsDrawer: React.FC<BowlingTacticsDrawerProps> = ({
                 }}
                 onPointerUp={() => setDraggingRadarFielderId(null)}
                 onPointerCancel={() => setDraggingRadarFielderId(null)}
-                className="relative w-full aspect-square max-w-[320px] mx-auto rounded-full bg-gradient-to-b from-[#2e6b3b] via-[#255e32] to-[#1b4a25] border-4 border-slate-800 shadow-inner flex items-center justify-center overflow-hidden my-1 cursor-crosshair touch-none select-none"
+                className="relative w-[95%] aspect-square max-w-[420px] mx-auto rounded-full bg-gradient-to-b from-[#2e6b3b] via-[#255e32] to-[#1b4a25] border-4 border-slate-800 shadow-inner flex items-center justify-center overflow-hidden my-1 cursor-crosshair touch-none select-none"
               >
                 {/* Boundary Rope & 30-yard Circle */}
                 <div className="absolute w-[92%] h-[92%] rounded-full border border-white/45 pointer-events-none" />

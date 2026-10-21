@@ -852,11 +852,23 @@ export const LiveMatchEngine: React.FC = () => {
       {/* 4. Live Tactical Commentary Strip + Instant 1-Tap DRS Appeal/Challenge Button */}
       <div className="px-3.5 py-2 bg-[#090e19] border-t border-slate-800/80 text-xs flex items-center justify-between gap-2">
         <p className="font-mono text-slate-300 line-clamp-1 flex-1">
-          {lastBallOutcome ? lastBallOutcome.commentary : `Openers: ${striker.name.split(' ').pop()} & ${nonStriker.name.split(' ').pop()}.`}
+          {lastBallOutcome && currentInnings.ballHistory.length > 0
+            ? lastBallOutcome.commentary
+            : `Openers: ${striker.name.split(' ').pop()} & ${nonStriker.name.split(' ').pop()}.`}
         </p>
-        {lastBallOutcome && !lastBallOutcome.isExtra && (() => {
-          const drs = checkDrsEligibility(lastBallOutcome, isUserBatting, userReviewsLeft);
-          if (lastBallOutcome.drsReviewed) {
+        {lastBallOutcome && currentInnings.ballHistory.length > 0 && (() => {
+          const latestBall = currentInnings.ballHistory[0];
+          const drs = checkDrsEligibility(lastBallOutcome, isUserBatting, userReviewsLeft, {
+            isDrsActive: Boolean(matchLiveState.activeDrsReview?.isActive),
+            matchStatus: status,
+            latestBallOutcome: latestBall
+          });
+          if (
+            lastBallOutcome.drsReviewed &&
+            latestBall &&
+            latestBall.over === lastBallOutcome.over &&
+            latestBall.ballNumber === lastBallOutcome.ballNumber
+          ) {
             return (
               <span className="px-2 py-1 rounded-lg bg-slate-800/90 border border-slate-700 text-[10px] font-mono font-bold text-slate-400 shrink-0">
                 DRS USED
@@ -871,7 +883,7 @@ export const LiveMatchEngine: React.FC = () => {
                   setAutoPlaySpeed(null);
                   triggerDrsReview();
                 }}
-                disabled={userReviewsLeft <= 0}
+                disabled={userReviewsLeft <= 0 || Boolean(matchLiveState.activeDrsReview?.isActive)}
                 className="px-2.5 py-1 rounded-lg bg-cyan-950/90 hover:bg-cyan-900 border border-cyan-400/70 text-cyan-300 font-mono font-black text-[10px] uppercase flex items-center gap-1 shrink-0 shadow-sm shadow-cyan-500/20 active:scale-95 transition-all animate-pulse"
                 title={drs.reason}
               >
@@ -1061,16 +1073,27 @@ export const LiveMatchEngine: React.FC = () => {
             {/* Secondary Match Tools Row (DRS / Rain DLS / Power Surge / Declare) */}
             <div className="pt-2 border-t border-slate-800/80 grid grid-cols-3 gap-2">
               {(() => {
-                const drs = checkDrsEligibility(lastBallOutcome, isUserBatting, userReviewsLeft);
+                const latestBall = currentInnings.ballHistory.length > 0 ? currentInnings.ballHistory[0] : null;
+                const drs = checkDrsEligibility(
+                  currentInnings.ballHistory.length > 0 ? lastBallOutcome : null,
+                  isUserBatting,
+                  userReviewsLeft,
+                  {
+                    isDrsActive: Boolean(matchLiveState.activeDrsReview?.isActive),
+                    matchStatus: status,
+                    latestBallOutcome: latestBall
+                  }
+                );
                 return (
                   <button
                     onClick={() => {
+                      if (!drs.canReview) return;
                       sound.playTap();
                       setShowSimMenu(false);
                       triggerDrsReview();
                     }}
                     disabled={!drs.canReview}
-                    title={drs.canReview ? `Challenge via DRS (${drs.reviewType.toUpperCase()})` : drs.reason}
+                    title={drs.canReview ? `Challenge via DRS (${drs.reviewType.toUpperCase()}): ${drs.reason}` : drs.reason}
                     className="p-2 rounded-xl bg-[#121a2b] border border-slate-800 text-cyan-300 font-mono font-bold text-[10px] disabled:opacity-40 text-center"
                   >
                     📺 DRS ({userReviewsLeft})
@@ -1471,7 +1494,7 @@ export const LiveMatchEngine: React.FC = () => {
         outBatterBalls={dismissedBatterScore.balls}
         dismissalText={lastBallOutcome?.dismissalText || dismissedBatterScore.dismissal}
         bowlerName={lastBallOutcome?.bowlerName || currentBowler.name}
-        tacticalNote={lastBallOutcome?.tacticalNote || 'Swing weakness exposed: miscues to keeper. Caught.'}
+        tacticalNote={lastBallOutcome?.tacticalNote || `${dismissedBatterPlayer.name} dismissed by ${currentBowler.name}.`}
         availableBatters={availableDugoutBatters.length > 0 ? availableDugoutBatters : players.filter(p => p.clubId === battingTeam.id && p.id !== dismissedBatterPlayer.id && p.id !== survivingPartnerId).slice(0, 5)}
         onSelectBatter={(batterId) => {
           selectNextBatter(batterId);
@@ -1484,7 +1507,7 @@ export const LiveMatchEngine: React.FC = () => {
         }}
         reviewsRemaining={userReviewsLeft}
         drsAlreadyReviewed={Boolean(lastBallOutcome?.drsReviewed)}
-        lastBallOutcome={lastBallOutcome}
+        lastBallOutcome={currentInnings.ballHistory.length > 0 ? lastBallOutcome : null}
       />
 
       {/* 7. IMPACT PLAYER MODAL (Video 2 at 1:17 - 1:34) */}
