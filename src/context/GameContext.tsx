@@ -4700,6 +4700,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return {
         ...prev,
         currentInningsIndex: 2,
+        lastBallOutcome: null,
+        activeDrsReview: undefined,
         reviewsRemaining: { home: initRevs, away: initRevs },
         hasDew: prev.weather === 'Clear Night' || prev.weather === 'Overcast & Humid',
         status: 'in_progress'

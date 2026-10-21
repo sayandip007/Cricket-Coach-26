@@ -14,10 +14,17 @@ import {
 } from '../data/initialData';
 import { simulateBall } from '../engine/cricketEngine';
 import { calculateDLSTarget, applyDewFactorModifier } from '../engine/dlsEngine';
-import { resolveKitColor, getStadiumTheme } from '../components/match/TacticalStadium2D';
+import { resolveKitColor, getStadiumTheme, UmpireMarkerSvg } from '../components/match/TacticalStadium2D';
 import { CRICBUZZ_2026_INTL_TOURS, buildSeasonCalendarForTeam, safeStorageSet, pruneLegacyCacheKeys } from '../context/GameContext';
 import { checkDrsEligibility, evaluateDrsDeliveryEvidence, getInitialReviewsForFormat } from '../utils/drsRules';
-import { computeAnimationFrame, computeBouncePoint, computeShotTarget } from '../utils/cricketAnimationTimeline';
+import {
+  computeAnimationFrame,
+  computeBouncePoint,
+  computeShotTarget,
+  resolveUmpireSignal,
+  BOWLER_END_UMPIRE_POS,
+  SQUARE_LEG_UMPIRE_POS
+} from '../utils/cricketAnimationTimeline';
 import { InningsData, BallOutcome, Player } from '../types/cricket';
 import {
   FIELD_TEMPLATES,
@@ -571,6 +578,96 @@ runTest('REGRESSION', 'Phase 18: Continuous Match Animation Timeline, Trajectori
   // 15. Scorecard Consistency
   assert.equal(fourBall.runs, 4, 'Authoritative BallOutcome runs remain unaffected by animation visualizer');
   assert.equal(bowledBall.isWicket, true, 'Authoritative BallOutcome wicket state remains canonical');
+});
+
+runTest('REGRESSION', 'Phase 19: Enlarged Circular Stadium, Dual Umpire Markers, Hand Signals & DRS Signal Sync', () => {
+  const dummyField = INITIAL_DEFAULT_FIELD;
+
+  // 1. Verify Both Umpires Appear at Correct Non-Overlapping Positions
+  const restFrame = computeAnimationFrame(1.0, null, dummyField);
+  assert.deepEqual(restFrame.bowlerUmpirePos, BOWLER_END_UMPIRE_POS, 'Bowler-end umpire stands behind bowler-end stumps');
+  assert.deepEqual(restFrame.squareLegUmpirePos, SQUARE_LEG_UMPIRE_POS, 'Square-leg umpire stands at square-leg position');
+  assert.equal(restFrame.bowlerUmpireSignal, 'none', 'Null outcome shows neutral umpire marker');
+  assert.equal(restFrame.squareLegUmpireSignal, 'none', 'Null outcome shows neutral square-leg umpire marker');
+  assert.equal(typeof UmpireMarkerSvg, 'function', 'UmpireMarkerSvg component is defined and exported');
+
+  // Verify bowler, non-striker, and bowler's-end umpire do not overlap
+  const distBowlerToUmp = Math.hypot(
+    restFrame.bowlerPos.x - restFrame.bowlerUmpirePos.x,
+    restFrame.bowlerPos.y - restFrame.bowlerUmpirePos.y
+  );
+  assert.ok(distBowlerToUmp >= 18, 'Bowler marker does not overlap bowler-end umpire');
+
+  const baseOutcome: BallOutcome = {
+    over: 2, ballNumber: 3, bowlerId: 'p1', bowlerName: 'Pandya', strikerId: 'p2', strikerName: 'Rahane',
+    nonStrikerId: 'p3', nonStrikerName: 'Dahiya', runs: 0, isWicket: false, isFour: false, isSix: false,
+    isExtra: false, bowlerSpeedMps: 38, shotAngleDeg: 60, shotDistanceM: 25, commentary: 'Dot ball', tacticalNote: ''
+  };
+
+  // 2. Verify All 6 Active Hand Signals + Normal State
+  // Normal (Dot / Single)
+  const dotSig = resolveUmpireSignal(baseOutcome, { animProgress: 0.8 });
+  assert.equal(dotSig.primarySignal, 'none', 'Dot ball shows no hand signal');
+
+  // FOUR Signal
+  const fourOutcome: BallOutcome = { ...baseOutcome, runs: 4, isFour: true, shotDistanceM: 84 };
+  const fourSig = resolveUmpireSignal(fourOutcome, { animProgress: 0.8 });
+  assert.equal(fourSig.primarySignal, 'four', 'Confirmed Four triggers FOUR signal');
+  assert.equal(fourSig.bowlerEndSignal, 'four', 'Bowler-end umpire signals FOUR');
+  assert.equal(fourSig.squareLegSignal, 'four', 'Square-leg umpire signals FOUR');
+
+  // SIX Signal
+  const sixOutcome: BallOutcome = { ...baseOutcome, runs: 6, isSix: true, shotDistanceM: 94 };
+  const sixSig = resolveUmpireSignal(sixOutcome, { animProgress: 0.8 });
+  assert.equal(sixSig.primarySignal, 'six', 'Confirmed Six triggers SIX signal');
+  assert.equal(sixSig.bowlerEndSignal, 'six', 'Bowler-end umpire raises both arms for SIX');
+  assert.equal(sixSig.squareLegSignal, 'none', 'Square-leg umpire stays neutral on SIX');
+
+  // OUT Signal (Bowled / Caught / LBW / Run-out / Stumped)
+  const outOutcome: BallOutcome = { ...baseOutcome, isWicket: true, wicketType: 'bowled', dismissalText: 'b Pandya' };
+  const outSig = resolveUmpireSignal(outOutcome, { animProgress: 0.8 });
+  assert.equal(outSig.primarySignal, 'out', 'Confirmed dismissal triggers OUT raised-finger signal');
+  assert.equal(outSig.bowlerEndSignal, 'out', 'Bowler-end umpire raises index finger for OUT');
+
+  const stumpedOutcome: BallOutcome = { ...baseOutcome, isWicket: true, wicketType: 'stumped' };
+  const stumpedSig = resolveUmpireSignal(stumpedOutcome, { animProgress: 0.8 });
+  assert.equal(stumpedSig.squareLegSignal, 'out', 'Square-leg umpire signals OUT on stumping');
+
+  // WIDE Signal
+  const wideOutcome: BallOutcome = { ...baseOutcome, runs: 1, isExtra: true, extraType: 'wide' };
+  const wideSig = resolveUmpireSignal(wideOutcome, { animProgress: 0.8 });
+  assert.equal(wideSig.primarySignal, 'wide', 'Wide extra triggers WIDE horizontal arm signal');
+  assert.equal(wideSig.bowlerEndSignal, 'wide');
+
+  // NO-BALL Signal
+  const noBallOutcome: BallOutcome = { ...baseOutcome, runs: 1, isExtra: true, extraType: 'no_ball' };
+  const noBallSig = resolveUmpireSignal(noBallOutcome, { animProgress: 0.25 });
+  assert.equal(noBallSig.primarySignal, 'no_ball', 'No-ball extra triggers NO-BALL diagonal arm signal immediately after release');
+
+  // OVER COMPLETE Signal
+  const overEndOutcome: BallOutcome = { ...baseOutcome, ballNumber: 6, runs: 1 };
+  const overEndSig = resolveUmpireSignal(overEndOutcome, { animProgress: 0.85, isOverComplete: true });
+  assert.equal(overEndSig.primarySignal, 'over_complete', '6th legal ball of over triggers OVER COMPLETE hat signal');
+  assert.equal(overEndSig.bowlerEndSignal, 'over_complete');
+
+  // 3. Verify DRS Coordination (Pending review suppresses OUT; Overturn updates signal)
+  const pendingDrsSig = resolveUmpireSignal(outOutcome, { animProgress: 0.8, isDrsPending: true });
+  assert.equal(pendingDrsSig.primarySignal, 'none', 'Unresolved DRS review must suppress final OUT signal');
+  assert.equal(pendingDrsSig.bowlerEndSignal, 'none');
+
+  // Overturned OUT -> NOT OUT
+  const overturnedToNotOut: BallOutcome = { ...outOutcome, isWicket: false, wicketType: undefined, drsReviewed: true };
+  const overturnedNotOutSig = resolveUmpireSignal(overturnedToNotOut, { animProgress: 0.9, isDrsPending: false });
+  assert.equal(overturnedNotOutSig.primarySignal, 'none', 'Overturned OUT -> NOT OUT clears OUT signal');
+
+  // Overturned NOT OUT -> OUT
+  const overturnedToOut: BallOutcome = { ...baseOutcome, isWicket: true, wicketType: 'lbw', drsReviewed: true };
+  const overturnedOutSig = resolveUmpireSignal(overturnedToOut, { animProgress: 0.9, isDrsPending: false });
+  assert.equal(overturnedOutSig.primarySignal, 'out', 'Overturned NOT OUT -> OUT displays confirmed OUT signal');
+
+  // 4. Verify Signal Clears Before Next Delivery Run-Up
+  const nextBallRunupSig = resolveUmpireSignal(fourOutcome, { animProgress: 0.1 });
+  assert.equal(nextBallRunupSig.primarySignal, 'none', 'Umpire signal clears immediately when next delivery run-up starts');
 });
 
 runTest('SMOKE', 'React Native Architecture: StyleSheet, Platform, Dimensions, AppRegistry & AsyncStorage operate cleanly', () => {

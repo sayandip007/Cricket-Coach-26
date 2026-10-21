@@ -5,6 +5,21 @@ export interface Point2D {
   y: number;
 }
 
+export type UmpireSignalType =
+  | 'none'
+  | 'four'
+  | 'six'
+  | 'out'
+  | 'wide'
+  | 'no_ball'
+  | 'over_complete';
+
+export interface UmpireSignalResolution {
+  bowlerEndSignal: UmpireSignalType;
+  squareLegSignal: UmpireSignalType;
+  primarySignal: UmpireSignalType;
+}
+
 export interface FielderAnimState {
   id: number;
   name: string;
@@ -18,42 +33,49 @@ export interface AnimationFrameState {
   progress: number; // 0.0 to 1.0
   phase: number; // 1 to 10
   phaseName: string;
-  
+
   // Bowler
   bowlerPos: Point2D;
   bowlerArmAngle: number; // degrees
   bowlerPhase: 'runup' | 'stride' | 'release' | 'followThrough' | 'recovery';
-  
+
   // Ball
   ballPos: Point2D;
   ballHeight: number; // Z-axis height offset in pixels
   ballShadowPos: Point2D;
   showBall: boolean;
   ballTrailPoints: Point2D[];
-  
+
   // Visual Effects
   isContactImpact: boolean;
   isTurfDust: boolean;
   isBoundarySplash: boolean;
-  
+
   // Batting
   strikerPos: Point2D;
   strikerBatAngle: number;
   strikerPose: 'stance' | 'backlift' | 'drive' | 'cut' | 'pull' | 'loft' | 'defense' | 'miss' | 'wicket' | 'running';
   nonStrikerPos: Point2D;
-  
+
   // Wicketkeeper
   keeperPos: Point2D;
   keeperAction: 'set' | 'collect' | 'catch' | 'stump' | 'runout';
-  
+
+  // Umpires
+  bowlerUmpirePos: Point2D;
+  squareLegUmpirePos: Point2D;
+  bowlerUmpireSignal: UmpireSignalType;
+  squareLegUmpireSignal: UmpireSignalType;
+  primaryUmpireSignal: UmpireSignalType;
+
   // Wickets & Bails
   bailsDislodged: boolean;
   bailLeftOffset: Point2D;
   bailRightOffset: Point2D;
-  
+
   // Fielders
   fielders: FielderAnimState[];
-  
+
   // Return throw
   throwLine?: {
     from: Point2D;
@@ -67,13 +89,132 @@ const CY = 200;
 const BOUNDARY_R = 163;
 const TOP_CREASE_Y = 168;
 const BOTTOM_CREASE_Y = 232;
-const BOWLER_BASE_Y = 147;
-const KEEPER_BASE_Y = 254;
+const BOWLER_BASE_X = 206;
+const BOWLER_BASE_Y = 161;
+const KEEPER_BASE_Y = 256;
+
+export const BOWLER_END_UMPIRE_POS: Point2D = { x: CX, y: 135 };
+export const SQUARE_LEG_UMPIRE_POS: Point2D = { x: 138, y: 236 };
 
 export function toSvgCoords(fx: number, fy: number): Point2D {
   return {
     x: CX + fx * 1.52,
     y: CY + fy * 1.52,
+  };
+}
+
+export function resolveUmpireSignal(
+  outcome: BallOutcome | null,
+  options?: {
+    isDrsPending?: boolean;
+    isOverComplete?: boolean;
+    animProgress?: number;
+  }
+): UmpireSignalResolution {
+  if (!outcome) {
+    return {
+      bowlerEndSignal: 'none',
+      squareLegSignal: 'none',
+      primarySignal: 'none',
+    };
+  }
+
+  const p = options?.animProgress ?? 1;
+
+  // Clear signal during bowler run-up before ball release
+  if (p < 0.22) {
+    return {
+      bowlerEndSignal: 'none',
+      squareLegSignal: 'none',
+      primarySignal: 'none',
+    };
+  }
+
+  // Between release (0.22) and batter arrival (0.30), only an overstep No-Ball is called immediately
+  if (p < 0.30) {
+    if (outcome.isExtra && outcome.extraType === 'no_ball') {
+      return {
+        bowlerEndSignal: 'no_ball',
+        squareLegSignal: 'none',
+        primarySignal: 'no_ball',
+      };
+    }
+    return {
+      bowlerEndSignal: 'none',
+      squareLegSignal: 'none',
+      primarySignal: 'none',
+    };
+  }
+
+  // While a DRS review is unresolved, never display a final OUT signal
+  if (options?.isDrsPending) {
+    return {
+      bowlerEndSignal: 'none',
+      squareLegSignal: 'none',
+      primarySignal: 'none',
+    };
+  }
+
+  // 1. Confirmed Dismissal (respects DRS overturns where outcome.isWicket was updated)
+  if (outcome.isWicket) {
+    const isSquareLegDecision =
+      outcome.wicketType === 'run out' || outcome.wicketType === 'stumped';
+    return {
+      bowlerEndSignal: 'out',
+      squareLegSignal: isSquareLegDecision ? 'out' : 'none',
+      primarySignal: 'out',
+    };
+  }
+
+  // 2. Confirmed Six
+  if (outcome.isSix) {
+    return {
+      bowlerEndSignal: 'six',
+      squareLegSignal: 'none',
+      primarySignal: 'six',
+    };
+  }
+
+  // 3. Confirmed Four
+  if (outcome.isFour) {
+    return {
+      bowlerEndSignal: 'four',
+      squareLegSignal: 'four',
+      primarySignal: 'four',
+    };
+  }
+
+  // 4. Extra: No-Ball
+  if (outcome.isExtra && outcome.extraType === 'no_ball') {
+    return {
+      bowlerEndSignal: 'no_ball',
+      squareLegSignal: 'none',
+      primarySignal: 'no_ball',
+    };
+  }
+
+  // 5. Extra: Wide
+  if (outcome.isExtra && outcome.extraType === 'wide') {
+    return {
+      bowlerEndSignal: 'wide',
+      squareLegSignal: 'none',
+      primarySignal: 'wide',
+    };
+  }
+
+  // 6. Over Complete (after 6th legal ball of the over completes)
+  if (options?.isOverComplete && !outcome.isExtra) {
+    return {
+      bowlerEndSignal: 'over_complete',
+      squareLegSignal: 'none',
+      primarySignal: 'over_complete',
+    };
+  }
+
+  return {
+    bowlerEndSignal: 'none',
+    squareLegSignal: 'none',
+    primarySignal: 'none',
   };
 }
 
@@ -100,7 +241,6 @@ export function computeBouncePoint(length?: PitchLength, line?: PitchLine): Poin
 }
 
 export function computeShotTarget(outcome: BallOutcome): Point2D {
-  // If dot ball or missed/bowled/lbw without runs, target is near crease or keeper
   if (!outcome.runs && !outcome.isFour && !outcome.isSix && !outcome.isWicket) {
     return { x: CX, y: BOTTOM_CREASE_Y + 12 };
   }
@@ -109,9 +249,9 @@ export function computeShotTarget(outcome: BallOutcome): Point2D {
   let rawDist = Math.max(25, (outcome.shotDistanceM / 82) * BOUNDARY_R);
 
   if (outcome.isSix) {
-    rawDist = BOUNDARY_R + 18; // Over boundary rope
+    rawDist = BOUNDARY_R + 18;
   } else if (outcome.isFour) {
-    rawDist = BOUNDARY_R + 6; // At or beyond rope
+    rawDist = BOUNDARY_R + 6;
   }
 
   return {
@@ -127,9 +267,18 @@ export function computeAnimationFrame(
   plannedLength?: PitchLength,
   plannedLine?: PitchLine,
   strikerHand: 'RHB' | 'LHB' = 'RHB',
-  bowlerRole: string = 'Pace'
+  bowlerRole: string = 'Pace',
+  options?: {
+    isDrsPending?: boolean;
+    isOverComplete?: boolean;
+  }
 ): AnimationFrameState {
   const p = Math.max(0, Math.min(1, progress));
+  const umpireSignals = resolveUmpireSignal(outcome, {
+    isDrsPending: options?.isDrsPending,
+    isOverComplete: options?.isOverComplete,
+    animProgress: p,
+  });
 
   // Default Rest Frame
   if (!outcome) {
@@ -137,7 +286,7 @@ export function computeAnimationFrame(
       progress: 1,
       phase: 10,
       phaseName: 'Setup',
-      bowlerPos: { x: CX, y: BOWLER_BASE_Y },
+      bowlerPos: { x: BOWLER_BASE_X, y: BOWLER_BASE_Y },
       bowlerArmAngle: 0,
       bowlerPhase: 'recovery',
       ballPos: { x: CX, y: TOP_CREASE_Y },
@@ -148,12 +297,17 @@ export function computeAnimationFrame(
       isContactImpact: false,
       isTurfDust: false,
       isBoundarySplash: false,
-      strikerPos: { x: CX - 2, y: BOTTOM_CREASE_Y },
+      strikerPos: { x: CX, y: BOTTOM_CREASE_Y - 4 },
       strikerBatAngle: 0,
       strikerPose: 'stance',
-      nonStrikerPos: { x: CX + 2, y: TOP_CREASE_Y },
-      keeperPos: { x: CX - 4, y: KEEPER_BASE_Y },
+      nonStrikerPos: { x: CX - 5, y: TOP_CREASE_Y + 2 },
+      keeperPos: { x: CX, y: KEEPER_BASE_Y },
       keeperAction: 'set',
+      bowlerUmpirePos: BOWLER_END_UMPIRE_POS,
+      squareLegUmpirePos: SQUARE_LEG_UMPIRE_POS,
+      bowlerUmpireSignal: 'none',
+      squareLegUmpireSignal: 'none',
+      primaryUmpireSignal: 'none',
       bailsDislodged: false,
       bailLeftOffset: { x: 0, y: 0 },
       bailRightOffset: { x: 0, y: 0 },
@@ -183,10 +337,9 @@ export function computeAnimationFrame(
     }
   });
 
-  // Calculate 10-Phase Animation Progression
   let phase = 1;
   let phaseName = 'Run-up';
-  let bowlerPos: Point2D = { x: CX, y: BOWLER_BASE_Y - 24 };
+  let bowlerPos: Point2D = { x: BOWLER_BASE_X, y: BOWLER_BASE_Y - 14 };
   let bowlerArmAngle = 0;
   let bowlerPhase: AnimationFrameState['bowlerPhase'] = 'runup';
 
@@ -199,41 +352,29 @@ export function computeAnimationFrame(
   let isTurfDust = false;
   let isBoundarySplash = false;
 
-  let strikerPos: Point2D = { x: CX - 2, y: BOTTOM_CREASE_Y };
+  let strikerPos: Point2D = { x: CX, y: BOTTOM_CREASE_Y - 4 };
   let strikerBatAngle = 0;
   let strikerPose: AnimationFrameState['strikerPose'] = 'stance';
 
-  let nonStrikerPos: Point2D = { x: CX + 2, y: TOP_CREASE_Y };
+  let nonStrikerPos: Point2D = { x: CX - 5, y: TOP_CREASE_Y + 2 };
 
-  let keeperPos: Point2D = { x: CX - 4, y: KEEPER_BASE_Y };
+  let keeperPos: Point2D = { x: CX, y: KEEPER_BASE_Y };
   let keeperAction: AnimationFrameState['keeperAction'] = 'set';
 
   let bailsDislodged = false;
   let bailLeftOffset = { x: 0, y: 0 };
   let bailRightOffset = { x: 0, y: 0 };
 
-  // Phase Boundaries (0.0 to 1.0)
-  // P1: 0.00 -> 0.18 (Run-up)
-  // P2: 0.18 -> 0.22 (Stride & Release)
-  // P3: 0.22 -> 0.27 (Delivery Flight)
-  // P4: 0.27 -> 0.30 (Pitch Bounce)
-  // P5: 0.22 -> 0.32 (Shot Backlift & Footwork)
-  // P6: 0.30 -> 0.35 (Contact / Impact)
-  // P7: 0.35 -> 0.70 (Ball Flight / Outfield Travel)
-  // P8: 0.35 -> 0.85 (Running Between Wickets)
-  // P9: 0.50 -> 0.90 (Fielding / Catch / Throw / Run-out)
-  // P10: 0.90 -> 1.00 (Resolution / Recovery)
-
   if (p < 0.18) {
-    // PHASE 1: BOWLER RUN-UP
+    // PHASE 1: BOWLER RUN-UP (runs in to the right of bowler's-end umpire)
     phase = 1;
     phaseName = 'Run-up';
     const t = p / 0.18;
-    const runupDist = isSpin ? 14 : 26;
-    bowlerPos = { x: CX, y: (BOWLER_BASE_Y - runupDist) + runupDist * t };
+    const runupDist = isSpin ? 10 : 16;
+    bowlerPos = { x: BOWLER_BASE_X, y: (BOWLER_BASE_Y - runupDist) + runupDist * t };
     bowlerArmAngle = Math.sin(t * Math.PI * 4) * 20;
     bowlerPhase = 'runup';
-    showBall = false; // ball in hand
+    showBall = false;
     strikerPose = 'stance';
     strikerBatAngle = -10;
   } else if (p < 0.22) {
@@ -241,11 +382,11 @@ export function computeAnimationFrame(
     phase = 2;
     phaseName = 'Release';
     const t = (p - 0.18) / 0.04;
-    bowlerPos = { x: CX, y: BOWLER_BASE_Y };
-    bowlerArmAngle = -180 * t; // High arm rotation
+    bowlerPos = { x: BOWLER_BASE_X, y: BOWLER_BASE_Y };
+    bowlerArmAngle = -180 * t;
     bowlerPhase = 'release';
     showBall = true;
-    ballPos = { x: CX, y: BOWLER_BASE_Y - 4 };
+    ballPos = { x: CX + 2, y: TOP_CREASE_Y - 2 };
     ballHeight = 8;
     strikerPose = 'backlift';
     strikerBatAngle = -35;
@@ -253,11 +394,10 @@ export function computeAnimationFrame(
     // PHASE 3 & 4: DELIVERY FLIGHT & PITCH BOUNCE
     const t = (p - 0.22) / 0.08;
     showBall = true;
-    bowlerPos = { x: CX, y: BOWLER_BASE_Y + 4 };
+    bowlerPos = { x: BOWLER_BASE_X, y: BOWLER_BASE_Y + 2 };
     bowlerPhase = 'followThrough';
 
     if (t <= 0.65) {
-      // Pre-bounce delivery flight down pitch
       phase = 3;
       phaseName = 'Delivery Flight';
       const subT = t / 0.65;
@@ -265,9 +405,8 @@ export function computeAnimationFrame(
         x: CX + (bouncePt.x - CX) * subT,
         y: TOP_CREASE_Y + (bouncePt.y - TOP_CREASE_Y) * subT,
       };
-      ballHeight = Math.sin(subT * Math.PI) * 12; // arc in air before bounce
+      ballHeight = Math.sin(subT * Math.PI) * 12;
     } else {
-      // Pitch Bounce
       phase = 4;
       phaseName = 'Pitch Bounce';
       isTurfDust = true;
@@ -279,7 +418,6 @@ export function computeAnimationFrame(
       ballHeight = Math.sin(subT * Math.PI) * 5;
     }
 
-    // Striker shot prep footwork
     strikerPose = plannedLength === 'short' || plannedLength === 'bouncer' ? 'pull' : 'drive';
     strikerBatAngle = -45 + t * 40;
   } else if (p < 0.35) {
@@ -287,12 +425,11 @@ export function computeAnimationFrame(
     phase = 6;
     phaseName = 'Shot Contact';
     const t = (p - 0.30) / 0.05;
-    bowlerPos = { x: CX, y: BOWLER_BASE_Y + 6 };
+    bowlerPos = { x: BOWLER_BASE_X, y: BOWLER_BASE_Y + 2 };
     bowlerPhase = 'recovery';
 
-    isContactImpact = !outcome.isExtra && outcome.runs > 0 || outcome.isFour || outcome.isSix || outcome.wicketType === 'caught';
-    
-    // Position ball near bat / contact point
+    isContactImpact = (!outcome.isExtra && outcome.runs > 0) || outcome.isFour || outcome.isSix || outcome.wicketType === 'caught';
+
     ballPos = {
       x: CX + (shotTarget.x - CX) * (t * 0.15),
       y: BOTTOM_CREASE_Y + (shotTarget.y - BOTTOM_CREASE_Y) * (t * 0.15),
@@ -325,9 +462,8 @@ export function computeAnimationFrame(
     phase = 7;
     phaseName = 'Ball Flight';
     const t = (p - 0.35) / 0.35;
-    bowlerPos = { x: CX, y: BOWLER_BASE_Y + 4 };
+    bowlerPos = { x: BOWLER_BASE_X, y: BOWLER_BASE_Y + 1 };
 
-    // Ball travel to shot target or stumps
     if (outcome.wicketType === 'bowled') {
       ballPos = { x: CX, y: BOTTOM_CREASE_Y + 10 };
       bailsDislodged = true;
@@ -342,19 +478,18 @@ export function computeAnimationFrame(
       };
 
       if (outcome.isSix) {
-        ballHeight = Math.sin(t * Math.PI) * 32; // high lofted six arc
+        ballHeight = Math.sin(t * Math.PI) * 32;
         if (t > 0.85) isBoundarySplash = true;
       } else if (outcome.wicketType === 'caught' && outcome.shotDistanceM > 40) {
-        ballHeight = Math.sin(t * Math.PI) * 22; // catch trajectory
+        ballHeight = Math.sin(t * Math.PI) * 22;
       } else if (outcome.isFour) {
-        ballHeight = Math.sin(t * Math.PI * 2) * 4; // skimmer / bouncing four
+        ballHeight = Math.sin(t * Math.PI * 2) * 4;
         if (t > 0.90) isBoundarySplash = true;
       } else {
-        ballHeight = Math.max(0, (1 - t) * 6); // ground shot rolling to a stop
+        ballHeight = Math.max(0, (1 - t) * 6);
       }
     }
 
-    // Trail recording
     ballTrailPoints.push({ x: ballPos.x, y: ballPos.y });
   } else if (p < 0.90) {
     // PHASE 8 & 9: FIELDING, CATCH, THROW & RUNNING BETWEEN WICKETS
@@ -376,7 +511,6 @@ export function computeAnimationFrame(
       ballPos = catchPos;
       keeperAction = 'catch';
     } else {
-      // Return throw to keeper or bowler end
       const tThrow = Math.min(1, t * 1.4);
       ballPos = {
         x: shotTarget.x + (CX - shotTarget.x) * tThrow,
@@ -392,7 +526,7 @@ export function computeAnimationFrame(
     // PHASE 10: RESOLUTION & CELEBRATION
     phase = 10;
     phaseName = 'Resolution';
-    bowlerPos = { x: CX, y: BOWLER_BASE_Y };
+    bowlerPos = { x: BOWLER_BASE_X, y: BOWLER_BASE_Y };
     bowlerPhase = 'recovery';
     ballPos = outcome.isFour || outcome.isSix ? shotTarget : { x: CX, y: TOP_CREASE_Y };
     showBall = !outcome.isFour && !outcome.isSix;
@@ -426,18 +560,17 @@ export function computeAnimationFrame(
     const evenLeg = currentLeg % 2 === 0;
 
     if (evenLeg) {
-      strikerPos = { x: CX - 2, y: BOTTOM_CREASE_Y - (BOTTOM_CREASE_Y - TOP_CREASE_Y) * legFrac };
-      nonStrikerPos = { x: CX + 2, y: TOP_CREASE_Y + (BOTTOM_CREASE_Y - TOP_CREASE_Y) * legFrac };
+      strikerPos = { x: CX, y: BOTTOM_CREASE_Y - (BOTTOM_CREASE_Y - TOP_CREASE_Y) * legFrac };
+      nonStrikerPos = { x: CX - 5, y: TOP_CREASE_Y + (BOTTOM_CREASE_Y - TOP_CREASE_Y) * legFrac };
     } else {
-      strikerPos = { x: CX - 2, y: TOP_CREASE_Y + (BOTTOM_CREASE_Y - TOP_CREASE_Y) * legFrac };
-      nonStrikerPos = { x: CX + 2, y: BOTTOM_CREASE_Y - (BOTTOM_CREASE_Y - TOP_CREASE_Y) * legFrac };
+      strikerPos = { x: CX, y: TOP_CREASE_Y + (BOTTOM_CREASE_Y - TOP_CREASE_Y) * legFrac };
+      nonStrikerPos = { x: CX - 5, y: BOTTOM_CREASE_Y - (BOTTOM_CREASE_Y - TOP_CREASE_Y) * legFrac };
     }
     strikerPose = 'running';
   } else if (p > 0.88 && runsTaken > 0) {
-    // Final crease swap positions after odd runs
     if (runsTaken % 2 === 1) {
-      strikerPos = { x: CX - 2, y: TOP_CREASE_Y };
-      nonStrikerPos = { x: CX + 2, y: BOTTOM_CREASE_Y };
+      strikerPos = { x: CX, y: TOP_CREASE_Y + 2 };
+      nonStrikerPos = { x: CX - 5, y: BOTTOM_CREASE_Y - 4 };
     }
   }
 
@@ -473,7 +606,6 @@ export function computeAnimationFrame(
     };
   });
 
-  // Calculate Shadow Offset based on Ball Height
   const ballShadowPos = {
     x: ballPos.x + ballHeight * 0.3,
     y: ballPos.y + ballHeight * 0.5,
@@ -500,6 +632,11 @@ export function computeAnimationFrame(
     nonStrikerPos,
     keeperPos,
     keeperAction,
+    bowlerUmpirePos: BOWLER_END_UMPIRE_POS,
+    squareLegUmpirePos: SQUARE_LEG_UMPIRE_POS,
+    bowlerUmpireSignal: umpireSignals.bowlerEndSignal,
+    squareLegUmpireSignal: umpireSignals.squareLegSignal,
+    primaryUmpireSignal: umpireSignals.primarySignal,
     bailsDislodged,
     bailLeftOffset,
     bailRightOffset,

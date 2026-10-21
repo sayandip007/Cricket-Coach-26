@@ -75,8 +75,10 @@ export const LiveMatchEngine: React.FC = () => {
   const [selectedSpeed, setSelectedSpeed] = useState<1 | 2 | 3>(2);
   const [autoPlaySpeed, setAutoPlaySpeed] = useState<number | null>(null); // null = paused/manual, 1, 2, 3
   const [selectedFielderId, setSelectedFielderId] = useState<number | null>(null);
+  const [showOutcomeBanner, setShowOutcomeBanner] = useState<boolean>(false);
 
   const autoPlayRef = useRef<NodeJS.Timeout | null>(null);
+  const lastBannerDeliveryKeyRef = useRef<string>('');
 
   const applyFieldPreset = (presetName: 'auto' | 'off_heavy' | 'attack' | 'death' | 'clear_slips' | 'balanced') => {
     sound.playTap();
@@ -173,6 +175,44 @@ export const LiveMatchEngine: React.FC = () => {
       if (autoPlayRef.current) clearTimeout(autoPlayRef.current);
     };
   }, [autoPlaySpeed, matchLiveState, showTossModal, showOpenersModal, showOpeningBowlerModal, runBallSimulation, settings.matchAnimations]);
+
+  // Temporary top-of-stadium outcome notification lifecycle (non-stacking, clears after 2.4s or on innings reset)
+  useEffect(() => {
+    const curInn = matchLiveState
+      ? (matchLiveState.currentInningsIndex === 1 ? matchLiveState.innings1 : (matchLiveState.innings2 || matchLiveState.innings1))
+      : null;
+    const outcome = matchLiveState?.lastBallOutcome;
+    const isDrsActive = Boolean(matchLiveState?.activeDrsReview?.isActive);
+
+    if (!outcome || !curInn || curInn.ballHistory.length === 0 || isDrsActive) {
+      setShowOutcomeBanner(false);
+      return;
+    }
+
+    const isNotableEvent = outcome.isFour || outcome.isSix || outcome.isWicket;
+    if (!isNotableEvent) {
+      setShowOutcomeBanner(false);
+      return;
+    }
+
+    const key = `${matchLiveState.currentInningsIndex}-${curInn.ballsCompleted}-${outcome.over}.${outcome.ballNumber}-${outcome.runs}-${outcome.isWicket}-${Boolean(outcome.drsReviewed)}`;
+    if (key !== lastBannerDeliveryKeyRef.current) {
+      lastBannerDeliveryKeyRef.current = key;
+      setShowOutcomeBanner(true);
+    }
+
+    const timer = setTimeout(() => {
+      setShowOutcomeBanner(false);
+    }, 2400);
+
+    return () => clearTimeout(timer);
+  }, [
+    matchLiveState?.currentInningsIndex,
+    matchLiveState?.innings1?.ballsCompleted,
+    matchLiveState?.innings2?.ballsCompleted,
+    matchLiveState?.lastBallOutcome,
+    matchLiveState?.activeDrsReview?.isActive
+  ]);
 
   if (!matchLiveState) {
     return (
@@ -667,7 +707,7 @@ export const LiveMatchEngine: React.FC = () => {
       </div>
 
       {/* 3. TACTICAL 2D STADIUM VISUALIZER (Dynamic Team & Home Ground Colors) */}
-      <div className="flex-1 w-full flex items-center justify-center relative p-1 overflow-hidden">
+      <div className="flex-1 w-full flex flex-col items-center justify-center relative px-1 py-0.5 overflow-hidden">
         <TacticalStadium2D
           fielders={bowlingTactics.fielders}
           selectedFielderId={selectedFielderId}
@@ -678,7 +718,7 @@ export const LiveMatchEngine: React.FC = () => {
           onMoveFielder={(id, x, y) => {
             if (!isUserBatting) handleFielderMove(id, x, y);
           }}
-          lastBallOutcome={lastBallOutcome}
+          lastBallOutcome={currentInnings.ballHistory.length > 0 ? lastBallOutcome : null}
           isBallInFlight={isBallInFlight}
           bowlerName={currentBowler.name}
           strikerName={striker.name}
@@ -712,6 +752,14 @@ export const LiveMatchEngine: React.FC = () => {
           pitchType={matchLiveState.pitchType}
           strikerHand={striker.battingHand}
           bowlerRole={currentBowler.role}
+          isDrsPending={Boolean(matchLiveState.activeDrsReview?.isActive)}
+          isOverComplete={
+            currentInnings.ballsCompleted > 0 &&
+            currentInnings.ballsCompleted % 6 === 0 &&
+            Boolean(lastBallOutcome && !lastBallOutcome.isExtra)
+          }
+          inningsIndex={currentInningsIndex}
+          ballsCompleted={currentInnings.ballsCompleted}
           onPitchTargetClick={(length, line) => {
             if (!isUserBatting) {
               sound.playTap();
@@ -720,20 +768,50 @@ export const LiveMatchEngine: React.FC = () => {
           }}
         />
 
-        {/* Big Outcome Banner Overlay */}
-        {lastBallOutcome && (lastBallOutcome.isSix || lastBallOutcome.isFour || lastBallOutcome.isWicket) && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-30">
-            <span className={`text-4xl sm:text-5xl font-black font-display tracking-widest px-6 py-3 rounded-2xl animate-bounce shadow-2xl ${
-              lastBallOutcome.isWicket
-                ? 'bg-rose-600 text-white ring-4 ring-rose-400'
-                : lastBallOutcome.isSix
-                ? 'bg-amber-400 text-black ring-4 ring-amber-300'
-                : 'bg-cyan-400 text-black ring-4 ring-cyan-300'
-            }`}>
-              {lastBallOutcome.isWicket ? 'WICKET!' : lastBallOutcome.isSix ? 'SIX!' : 'FOUR!'}
-            </span>
-          </div>
-        )}
+        {/* Compact Top-of-Stadium Outcome Notification (Non-blocking, never covers pitch or umpire signals) */}
+        {showOutcomeBanner &&
+          lastBallOutcome &&
+          !matchLiveState.activeDrsReview?.isActive &&
+          (lastBallOutcome.isSix || lastBallOutcome.isFour || lastBallOutcome.isWicket) && (
+            <div className="absolute top-2 left-1/2 -translate-x-1/2 pointer-events-none z-30 transition-all duration-200">
+              <div className="bg-[#0d1526]/95 backdrop-blur-md border border-slate-700/80 rounded-2xl px-3.5 py-1.5 shadow-2xl flex items-center gap-2.5 min-w-[124px]">
+                {lastBallOutcome.isWicket ? (
+                  <>
+                    <div className="w-7 h-7 rounded-full bg-gradient-to-br from-rose-500 to-red-700 border border-rose-300/50 flex items-center justify-center shrink-0 shadow-inner relative overflow-hidden">
+                      <div className="w-8 h-0.5 bg-white/80 -rotate-45" />
+                    </div>
+                    <div className="flex flex-col leading-tight">
+                      <span className="text-sm font-black font-display tracking-wider text-white uppercase">
+                        OUT
+                      </span>
+                      <span className="text-[10px] text-slate-300 font-sans truncate max-w-[130px]">
+                        {lastBallOutcome.dismissalText ||
+                          `b ${(lastBallOutcome.bowlerName || currentBowler.name).split(' ').slice(-1)[0]}`}
+                      </span>
+                    </div>
+                  </>
+                ) : lastBallOutcome.isSix ? (
+                  <>
+                    <div className="w-7 h-7 rounded-lg bg-purple-600 border border-purple-400/60 text-white font-black text-base flex items-center justify-center shrink-0 shadow">
+                      6
+                    </div>
+                    <span className="text-sm font-black font-display tracking-wider text-white uppercase pr-1">
+                      SIX
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <div className="w-7 h-7 rounded-lg bg-blue-600 border border-blue-400/60 text-white font-black text-base flex items-center justify-center shrink-0 shadow">
+                      4
+                    </div>
+                    <span className="text-sm font-black font-display tracking-wider text-white uppercase pr-1">
+                      FOUR
+                    </span>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
       </div>
 
       {/* Feature 6.2 & 6.4 & 6.6 Live Tactical Alerts (DLS, Power Surge, Opposition Match-Up Traps) */}
