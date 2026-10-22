@@ -15,8 +15,8 @@ export default defineConfig(() => {
         includeAssets: ['icon.svg', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png', 'pwa-maskable-512x512.png'],
         manifest: {
           id: '/',
-          name: 'Masterstroke: Cricket Manager',
-          short_name: 'Masterstroke',
+          name: 'Cricket Coach 26',
+          short_name: 'Cricket Coach 26',
           description: 'Deep cricket management simulator with live auctions, ball-by-ball tactical pitch engine, 5 franchise leagues, World Cups, Test matches, wagon wheel analysis, and career progression.',
           theme_color: '#070b13',
           background_color: '#070b13',
@@ -46,6 +46,7 @@ export default defineConfig(() => {
           ],
         },
         workbox: {
+          maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
           runtimeCaching: [
             {

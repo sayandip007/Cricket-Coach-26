@@ -319,7 +319,10 @@ export function recordMatchToPlayerStats(
   const bCard = [...(inn1?.batters || []), ...(inn2?.batters || [])].find(b => b.playerId === p.id);
   const bwCards = [...(inn1?.bowlers || []), ...(inn2?.bowlers || [])].filter(bw => bw.playerId === p.id);
 
-  if (!bCard && bwCards.length === 0) {
+  const inHomeXI = Boolean(finishedMatch.homeTeam?.playingXIIds?.includes(p.id));
+  const inAwayXI = Boolean(finishedMatch.awayTeam?.playingXIIds?.includes(p.id));
+
+  if (!bCard && bwCards.length === 0 && !inHomeXI && !inAwayXI) {
     return p; // Player did not participate in this match
   }
 
@@ -329,6 +332,60 @@ export function recordMatchToPlayerStats(
     (p.clubId && p.clubId.startsWith('nat_'))
   );
   const compType: 'ipl' | 'international' = isInternational ? 'international' : 'ipl';
+
+  const didBat = Boolean(
+    bCard &&
+      (bCard.balls > 0 ||
+        bCard.runs > 0 ||
+        (bCard.dismissal &&
+          bCard.dismissal !== 'not out' &&
+          !bCard.dismissal.startsWith('substituted')) ||
+        bCard.isOnStrike ||
+        bCard.playerId === inn1?.currentStrikerId ||
+        bCard.playerId === inn1?.currentNonStrikerId ||
+        bCard.playerId === inn2?.currentStrikerId ||
+        bCard.playerId === inn2?.currentNonStrikerId)
+  );
+  const wasDismissed = Boolean(
+    bCard &&
+      bCard.dismissal &&
+      bCard.dismissal !== 'not out' &&
+      !bCard.dismissal.startsWith('substituted') &&
+      !bCard.dismissal.startsWith('retired hurt')
+  );
+
+  const activeBwCards = bwCards.filter(bw => (bw.overs || 0) > 0 || (bw.ballsInCurrentOver || 0) > 0);
+  const didBowl = activeBwCards.length > 0;
+
+  // Count catches and stumpings credited in this match
+  const isKeeper = isWicketkeeperRole(p.role) || isWicketkeeperRole(p.primaryRole);
+  let matchCatches = 0;
+  let matchStumpings = 0;
+
+  const checkInningsFielding = (inn: typeof inn1) => {
+    if (!inn) return;
+    const isFieldingTeam =
+      inn.bowlingTeamId === p.clubId ||
+      (inn.bowlingTeamId === finishedMatch.homeTeam?.id && inHomeXI) ||
+      (inn.bowlingTeamId === finishedMatch.awayTeam?.id && inAwayXI);
+    if (!isFieldingTeam) return;
+
+    for (const ball of inn.ballHistory || []) {
+      if (!ball.isWicket) continue;
+      if (ball.wicketType === 'stumped' && isKeeper) {
+        matchStumpings += 1;
+      } else if (ball.wicketType === 'caught') {
+        if (
+          ball.fielderName === p.name ||
+          (isKeeper && (ball.fielderName === 'Wicketkeeper' || ball.appealType === 'caught_behind'))
+        ) {
+          matchCatches += 1;
+        }
+      }
+    }
+  };
+  checkInningsFielding(inn1);
+  if (inn2) checkInningsFielding(inn2);
 
   const addRuns = bCard ? bCard.runs : 0;
   const addBalls = bCard ? bCard.balls : 0;
@@ -343,10 +400,30 @@ export function recordMatchToPlayerStats(
       matches: 0, runs: 0, balls: 0, fours: 0, sixes: 0,
       fifties: 0, hundreds: 0, highestScore: 0, wickets: 0,
       oversBowled: 0, runsConceded: 0, maidens: 0, bestBowling: '0/0',
-      economy: 0, average: 0, strikeRate: 0
+      economy: 0, average: 0, strikeRate: 0, innings: 0, dismissals: 0,
+      inningsBowled: 0, catches: 0, stumpings: 0
     };
 
-    const newMatches = (base.matches || 0) + 1;
+    const prevMatches = base.matches || 0;
+    const prevInnings = base.innings !== undefined ? base.innings : prevMatches;
+    const prevDismissals =
+      base.dismissals !== undefined
+        ? base.dismissals
+        : base.runs && base.average && base.average > 0
+        ? Math.max(0, Math.round(base.runs / base.average))
+        : Math.max(0, Math.round(prevMatches * 0.75));
+    const prevInningsBowled =
+      base.inningsBowled !== undefined
+        ? base.inningsBowled
+        : (base.oversBowled || 0) > 0
+        ? Math.max(1, prevMatches)
+        : 0;
+
+    const newMatches = prevMatches + 1;
+    const newInnings = prevInnings + (didBat ? 1 : 0);
+    const newDismissals = prevDismissals + (wasDismissed ? 1 : 0);
+    const newInningsBowled = prevInningsBowled + (didBowl ? 1 : 0);
+
     const newRuns = (base.runs || 0) + addRuns;
     const newBalls = (base.balls || 0) + addBalls;
     const newFours = (base.fours || 0) + addFours;
@@ -354,15 +431,18 @@ export function recordMatchToPlayerStats(
     const newFifties = (base.fifties || 0) + addFifty;
     const newHundreds = (base.hundreds || 0) + addHundred;
     const newHighest = Math.max(base.highestScore || 0, addRuns);
+    const newCatches = (base.catches || 0) + matchCatches;
+    const newStumpings = (base.stumpings || 0) + matchStumpings;
 
     const bowlingAgg = aggregateBowlerMatchStatsIntoCareer(base, bwCards);
 
-    const estDismissals = Math.max(1, Math.round(newMatches * 0.75));
-    const average = newRuns > 0 ? Number((newRuns / estDismissals).toFixed(1)) : 0;
+    const average = newRuns > 0 ? Number((newRuns / Math.max(1, newDismissals)).toFixed(1)) : 0;
     const strikeRate = newBalls > 0 ? Number(((newRuns / newBalls) * 100).toFixed(1)) : 0;
 
     return {
       matches: newMatches,
+      innings: newInnings,
+      dismissals: newDismissals,
       runs: newRuns,
       balls: newBalls,
       fours: newFours,
@@ -371,13 +451,16 @@ export function recordMatchToPlayerStats(
       hundreds: newHundreds,
       highestScore: newHighest,
       wickets: bowlingAgg.wickets,
+      inningsBowled: newInningsBowled,
       oversBowled: bowlingAgg.oversBowled,
       runsConceded: bowlingAgg.runsConceded,
       maidens: bowlingAgg.maidens,
       bestBowling: bowlingAgg.bestBowling,
       average,
       strikeRate,
-      economy: bowlingAgg.economy
+      economy: bowlingAgg.economy,
+      catches: newCatches,
+      stumpings: newStumpings
     };
   };
 
@@ -406,7 +489,9 @@ export function recordMatchToPlayerStats(
     competition: compType,
     runs: addRuns,
     balls: addBalls,
-    isOut: bCard?.dismissal !== 'not out',
+    fours: addFours,
+    sixes: addSixes,
+    isOut: wasDismissed,
     wickets: totalWktsThisMatch,
     overs: bwCards.reduce((sum, bw) => sum + (bw.overs || 0), 0),
     runsConceded: bwCards.reduce((sum, bw) => sum + (bw.runs || 0), 0)

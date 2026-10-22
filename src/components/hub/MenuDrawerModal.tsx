@@ -31,7 +31,8 @@ export const MenuDrawerModal: React.FC<MenuDrawerModalProps> = ({
     saveSlots,
     saveToSlot,
     loadFromSlot,
-    deleteSlot
+    deleteSlot,
+    activeSaveSlot
   } = useGame();
   const [showPitchOptions, setShowPitchOptions] = useState(false);
   const [showSaveSlots, setShowSaveSlots] = useState(false);
@@ -81,6 +82,29 @@ export const MenuDrawerModal: React.FC<MenuDrawerModalProps> = ({
             {notification}
           </div>
         )}
+
+        {/* Game Title Art Banner */}
+        <div className="mb-5 relative rounded-2xl overflow-hidden border border-amber-500/30 bg-[#080d18] shadow-lg">
+          <div className="flex items-center gap-3 p-2.5">
+            <img
+              src="/assets/aistudio/file_000000009f3481faad2d0f6e1e900053_77824179.png"
+              alt="Cricket Coach 26"
+              referrerPolicy="no-referrer"
+              className="w-16 h-12 rounded-xl object-cover border border-amber-500/40 shrink-0"
+            />
+            <div className="min-w-0 flex-1">
+              <div className="text-xs font-black font-display tracking-wider text-white uppercase truncate">
+                CRICKET COACH 26
+              </div>
+              <div className="text-[10px] text-amber-400 font-mono truncate">
+                {userTeam.name.toUpperCase()} · SLOT {activeSaveSlot}
+              </div>
+              <div className="text-[10px] text-slate-400 truncate">
+                Head Coach: {coachProfile.name}
+              </div>
+            </div>
+          </div>
+        </div>
 
         {/* CLUB SECTION */}
         <div className="mb-5">

@@ -8,7 +8,16 @@ import {
   INITIAL_PLAYERS, INITIAL_TEAMS, INITIAL_LEAGUES, INITIAL_NATIONS,
   INITIAL_ACHIEVEMENTS, INITIAL_JOB_OFFERS, INITIAL_COACH_PROFILE, INITIAL_DEFAULT_FIELD, createInitialPlayoffs, createFreshPlayers
 } from '../data/initialData';
-import { simulateBall } from '../engine/cricketEngine';
+import {
+  simulateBall,
+  resolveSingleDeliveryState,
+  createHeadlessMatchState,
+  simulateFullMatchHeadless,
+  getFormatQuotaConfig,
+  selectNextEligibleBowler,
+  buildBowlerScorecardPool,
+  createSeededRng
+} from '../engine/cricketEngine';
 import { calculateDLSTarget } from '../engine/dlsEngine';
 import { checkDrsEligibility, evaluateDrsDeliveryEvidence, getInitialReviewsForFormat } from '../utils/drsRules';
 import {
@@ -1198,214 +1207,53 @@ function simulateAiFixtureScorecard(
   const homeXI = resolveTeamXI(homeTeamObj);
   const awayXI = resolveTeamXI(awayTeamObj);
 
-  const maxOvers = format === 'ODI' ? 50 : format === 'TEST' ? 90 : format === '100BALL' ? 16.4 : 20;
-  const maxBalls = format === '100BALL' ? 100 : Math.round(maxOvers * 6);
-
-  const avgBat = (xi: Player[]) => xi.slice(0, 7).reduce((s, p) => s + (p.ratings.bat || 75), 0) / Math.max(1, Math.min(7, xi.length));
-  const avgBowl = (xi: Player[]) => xi.slice(5, 11).reduce((s, p) => s + (p.ratings.bowl || 75), 0) / Math.max(1, Math.min(6, xi.slice(5, 11).length));
-
-  const homeBatRating = avgBat(homeXI);
-  const awayBowlRating = avgBowl(awayXI);
-  const awayBatRating = avgBat(awayXI);
-  const homeBowlRating = avgBowl(homeXI);
-
-  const pseudoRand = (n: number) => {
-    const x = Math.sin(seed * 97 + n * 31) * 10000;
-    return x - Math.floor(x);
+  const hydratedHome: Team = {
+    ...homeTeamObj,
+    playingXIIds: homeXI.map(p => p.id),
+    squad: homeTeamObj.squad && homeTeamObj.squad.length >= 11 ? homeTeamObj.squad : homeXI
+  };
+  const hydratedAway: Team = {
+    ...awayTeamObj,
+    playingXIIds: awayXI.map(p => p.id),
+    squad: awayTeamObj.squad && awayTeamObj.squad.length >= 11 ? awayTeamObj.squad : awayXI
   };
 
-  const baseTargetRuns = format === 'ODI' ? 265 : format === 'TEST' ? 320 : 168;
-  const spreadRuns = format === 'ODI' ? 60 : format === 'TEST' ? 85 : 46;
-
-  const inn1TotalRuns = Math.max(
-    115,
-    Math.round(baseTargetRuns + (homeBatRating - awayBowlRating) * 1.1 + (pseudoRand(1) - 0.45) * spreadRuns)
-  );
-  const inn1Wickets = Math.min(10, Math.max(2, Math.round(4 + (awayBowlRating - homeBatRating) * 0.1 + pseudoRand(2) * 5)));
-  const inn1Balls = inn1Wickets === 10 ? Math.max(78, maxBalls - Math.floor(pseudoRand(3) * 18)) : maxBalls;
-
-  const rawInn2Runs = Math.max(
-    108,
-    Math.round(baseTargetRuns + (awayBatRating - homeBowlRating) * 1.1 + (pseudoRand(4) - 0.45) * spreadRuns)
-  );
-
-  const awayChased = rawInn2Runs >= inn1TotalRuns + 1;
-  const inn2TotalRuns = awayChased
-    ? inn1TotalRuns + 1 + Math.floor(pseudoRand(5) * 4)
-    : Math.min(inn1TotalRuns - 1, rawInn2Runs);
-  const inn2Wickets = awayChased
-    ? Math.min(9, Math.max(1, Math.round(2 + pseudoRand(6) * 5)))
-    : Math.min(10, Math.max(4, Math.round(5 + pseudoRand(7) * 5)));
-  const inn2Balls = awayChased
-    ? Math.max(72, maxBalls - Math.floor(1 + pseudoRand(8) * 16))
-    : (inn2Wickets === 10 ? Math.max(78, maxBalls - Math.floor(pseudoRand(9) * 14)) : maxBalls);
-
-  const buildInningsData = (
-    batTeam: Team,
-    bowlTeam: Team,
-    batXI: Player[],
-    bowlXI: Player[],
-    totalRuns: number,
-    wicketsFallen: number,
-    ballsComp: number,
-    seedShift: number
-  ): InningsData => {
-    const battersWhoBattedCount = Math.min(11, wicketsFallen + 2);
-    const weights = batXI.slice(0, battersWhoBattedCount).map((p, idx) => {
-      const orderWeight = idx < 3 ? 1.55 : idx < 5 ? 1.2 : idx < 7 ? 0.85 : 0.35;
-      return Math.max(0.1, ((p.ratings.bat || 70) / 80) * orderWeight * (0.65 + pseudoRand(seedShift + idx) * 0.9));
-    });
-    const weightSum = weights.reduce((a, b) => a + b, 0) || 1;
-
-    let remRuns = totalRuns;
-    let remBalls = ballsComp;
-
-    const bowlCandidates = bowlXI.filter(p => p.role === 'Pace' || p.role === 'Spin' || p.role === 'All-rounder');
-    const activeBowlers = (bowlCandidates.length >= 5 ? bowlCandidates : bowlXI).slice(0, 5);
-
-    const batters: BatterInningsScorecard[] = batXI.map((p, idx) => {
-      if (idx >= battersWhoBattedCount) {
-        return {
-          playerId: p.id,
-          name: p.name,
-          runs: 0,
-          balls: 0,
-          fours: 0,
-          sixes: 0,
-          dismissal: 'not out',
-          strikeRate: 0,
-          isOnStrike: false
-        };
-      }
-      const isLastBatter = idx === battersWhoBattedCount - 1;
-      const share = weights[idx] / weightSum;
-      const pRuns = isLastBatter ? Math.max(0, remRuns) : Math.min(remRuns, Math.max(0, Math.round(totalRuns * share)));
-      remRuns = Math.max(0, remRuns - pRuns);
-      const pBalls = isLastBatter
-        ? Math.max(1, remBalls)
-        : Math.min(Math.max(1, remBalls - (battersWhoBattedCount - 1 - idx)), Math.max(1, Math.round(ballsComp * share)));
-      remBalls = Math.max(0, remBalls - pBalls);
-
-      const sixes = Math.floor(pRuns / (16 - Math.min(6, Math.floor((p.ratings.pow || 75) / 18))));
-      const fours = Math.max(0, Math.floor((pRuns - sixes * 6) / 7));
-      const isDismissed = idx < wicketsFallen;
-      const bowlerWhoGot = activeBowlers[(idx + seedShift) % Math.max(1, activeBowlers.length)] || bowlXI[0];
-
-      return {
-        playerId: p.id,
-        name: p.name,
-        runs: pRuns,
-        balls: pBalls,
-        fours,
-        sixes,
-        dismissal: isDismissed ? `b ${bowlerWhoGot?.name.split(' ').pop() || 'Bowler'}` : 'not out',
-        strikeRate: pBalls > 0 ? Number(((pRuns / pBalls) * 100).toFixed(1)) : 0,
-        isOnStrike: !isDismissed
-      };
-    });
-
-    const totalOversInt = Math.floor(ballsComp / 6);
-    const remBallsInLastOver = ballsComp % 6;
-    let wktsLeft = wicketsFallen;
-    let runsConcededLeft = totalRuns;
-
-    const bowlers: BowlerInningsScorecard[] = activeBowlers.map((bw, idx) => {
-      const isLast = idx === activeBowlers.length - 1;
-      const baseOv = Math.floor(totalOversInt / activeBowlers.length) + (idx < (totalOversInt % activeBowlers.length) ? 1 : 0);
-      const bBallsExtra = isLast ? remBallsInLastOver : 0;
-      const floatOv = baseOv + bBallsExtra / 6;
-      const wShare = isLast
-        ? wktsLeft
-        : Math.min(wktsLeft, Math.round((wicketsFallen / activeBowlers.length) * (0.7 + pseudoRand(seedShift + 20 + idx) * 0.7)));
-      wktsLeft = Math.max(0, wktsLeft - wShare);
-
-      const rShare = isLast
-        ? Math.max(0, runsConcededLeft)
-        : Math.min(runsConcededLeft, Math.max(8, Math.round((totalRuns / activeBowlers.length) * (0.85 + pseudoRand(seedShift + 30 + idx) * 0.35))));
-      runsConcededLeft = Math.max(0, runsConcededLeft - rShare);
-
-      return {
-        playerId: bw.id,
-        name: bw.name,
-        overs: Number(`${baseOv}.${bBallsExtra}`),
-        ballsInCurrentOver: bBallsExtra,
-        maidens: rShare < baseOv * 4 && baseOv >= 3 ? 1 : 0,
-        runs: rShare,
-        wickets: wShare,
-        economy: floatOv > 0 ? Number((rShare / floatOv).toFixed(1)) : 0,
-        isCurrentBowler: isLast
-      };
-    });
-
-    return {
-      battingTeamId: batTeam.id,
-      bowlingTeamId: bowlTeam.id,
-      runs: totalRuns,
-      wickets: wicketsFallen,
-      overs: Number(`${Math.floor(ballsComp / 6)}.${ballsComp % 6}`),
-      ballsCompleted: ballsComp,
-      maxOvers,
-      batters,
-      bowlers,
-      currentStrikerId: batters[0]?.playerId || '',
-      currentNonStrikerId: batters[1]?.playerId || '',
-      currentBowlerId: bowlers[0]?.playerId || '',
-      ballHistory: [],
-      fallOfWickets: [],
-      overRuns: []
-    };
-  };
-
-  const innings1 = buildInningsData(homeTeamObj, awayTeamObj, homeXI, awayXI, inn1TotalRuns, inn1Wickets, inn1Balls, 10);
-  const innings2 = buildInningsData(awayTeamObj, homeTeamObj, awayXI, homeXI, inn2TotalRuns, inn2Wickets, inn2Balls, 50);
-
-  const winnerId = awayChased ? awayTeamObj.id : homeTeamObj.id;
-  const loserId = awayChased ? homeTeamObj.id : awayTeamObj.id;
-  const winTeam = awayChased ? awayTeamObj : homeTeamObj;
-  const loseTeam = awayChased ? homeTeamObj : awayTeamObj;
-
-  const marginText = awayChased
-    ? `${Math.max(1, 10 - inn2Wickets)} wkts`
-    : `${Math.max(1, inn1TotalRuns - inn2TotalRuns)} runs`;
-
-  const summary = awayChased
-    ? `${winTeam.shortName} ${inn2TotalRuns}/${inn2Wickets} beat ${loseTeam.shortName} ${inn1TotalRuns}/${inn1Wickets} by ${marginText}`
-    : `${winTeam.shortName} ${inn1TotalRuns}/${inn1Wickets} beat ${loseTeam.shortName} ${inn2TotalRuns}/${inn2Wickets} by ${marginText}`;
-
-  const resultText = `${winTeam.name.toUpperCase()} WON BY ${marginText.toUpperCase()}!`;
-  const nrrDelta = Number(Math.max(0.05, Math.min(0.45, Math.abs(inn1TotalRuns - inn2TotalRuns) * 0.012)).toFixed(2));
-
-  const matchState: MatchLiveState = {
+  const initialMatch = createHeadlessMatchState({
     id: fixtureId,
-    leagueId,
-    format,
-    homeTeam: homeTeamObj,
-    awayTeam: awayTeamObj,
+    homeTeam: hydratedHome,
+    awayTeam: hydratedAway,
     venue,
-    pitchType: 'Natural',
-    weather: 'Clear Night',
-    currentInningsIndex: 2,
-    innings1,
-    innings2,
-    targetRuns: inn1TotalRuns + 1,
-    status: 'finished',
-    winnerTeamId: winnerId,
-    resultText,
-    lastBallOutcome: null,
-    isBallInFlight: false,
-    bowlingTactics: {
-      length: 'good',
-      line: 'outside_off',
-      angle: 'over',
-      variation: 'Stock ball',
-      fielders: INITIAL_DEFAULT_FIELD
-    },
-    battingTactics: {
-      approach: 'balanced',
-      targetSide: 'all',
-      runningRisk: 'normal'
-    }
-  };
+    format,
+    leagueId,
+    playerPool: allPlayers
+  });
+
+  const matchState = simulateFullMatchHeadless(
+    initialMatch,
+    allPlayers,
+    createSeededRng(Math.max(1, Math.floor(seed * 997 + 13)))
+  );
+
+  const inn1 = matchState.innings1;
+  const inn2 = matchState.innings2 || matchState.innings1;
+
+  const winnerId = matchState.winnerTeamId || '';
+  const loserId = winnerId
+    ? winnerId === homeTeamObj.id
+      ? awayTeamObj.id
+      : homeTeamObj.id
+    : '';
+
+  const summary =
+    winnerId === awayTeamObj.id
+      ? `${awayTeamObj.shortName} ${inn2.runs}/${inn2.wickets} beat ${homeTeamObj.shortName} ${inn1.runs}/${inn1.wickets} · ${matchState.resultText || ''}`
+      : winnerId === homeTeamObj.id
+      ? `${homeTeamObj.shortName} ${inn1.runs}/${inn1.wickets} beat ${awayTeamObj.shortName} ${inn2.runs}/${inn2.wickets} · ${matchState.resultText || ''}`
+      : `${homeTeamObj.shortName} ${inn1.runs}/${inn1.wickets} tied ${awayTeamObj.shortName} ${inn2.runs}/${inn2.wickets}`;
+
+  const nrrDelta = winnerId
+    ? Number(Math.max(0.05, Math.min(0.45, Math.abs(inn1.runs - inn2.runs) * 0.012)).toFixed(2))
+    : 0;
 
   return { matchState, summary, winnerId, loserId, nrrDelta };
 }
@@ -2576,6 +2424,16 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             if (!simRes) return om;
 
             updatedStandings = updatedStandings.map(st => {
+              if (!simRes.winnerId && (st.teamId === om.homeTeamId || st.teamId === om.awayTeamId)) {
+                if (st.played >= 18) return st;
+                return {
+                  ...st,
+                  played: st.played + 1,
+                  tied: (st.tied || 0) + 1,
+                  points: st.points + 1,
+                  recentForm: ['T' as const, ...st.recentForm].slice(0, 5)
+                };
+              }
               if (st.teamId === simRes.winnerId) {
                 if (st.played >= 18) return st;
                 return {
@@ -3579,7 +3437,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     sound.playCrowdCheer(0.5);
   }, [players, userTeam.id]);
 
-  // PURE STATE TRANSITION HELPER FOR SINGLE DELIVERY
+  // PURE STATE TRANSITION HELPER FOR SINGLE DELIVERY (Delegates to Authoritative Engine)
   const simulateSingleDeliveryState = useCallback((
     state: MatchLiveState,
     autoRotateBowler: boolean = false
@@ -3590,7 +3448,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     inningsJustBroke: boolean;
     lastOutcome: BallOutcome | null;
   } => {
-    if (!state || state.status === 'finished') {
+    if (!state || state.status === 'finished' || state.activeDrsReview?.isActive) {
       return { nextState: state, matchJustFinished: false, userWon: false, inningsJustBroke: false, lastOutcome: null };
     }
 
@@ -3600,145 +3458,9 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { nextState: state, matchJustFinished: false, userWon: false, inningsJustBroke: false, lastOutcome: null };
     }
 
-    const defaultOvers = state.format === 'TEST' ? 90 : state.format === 'ODI' ? 50 : state.format === '100BALL' ? 16.4 : 20;
-    const maxBalls = state.format === '100BALL'
-      ? 100
-      : Math.round((currentInnings.maxOvers || defaultOvers) * 6);
-    const maxOversPerBowler = state.format === 'TEST' ? 99 : state.format === 'ODI' ? 10 : 4;
+    const quota = getFormatQuotaConfig(state.format, currentInnings.maxOvers);
+    const maxBalls = quota.maxBalls;
 
-    const finalizeInningsOrMatch = (
-      currState: MatchLiveState,
-      currInn: InningsData,
-      lastBall: BallOutcome | null
-    ): {
-      nextState: MatchLiveState;
-      matchJustFinished: boolean;
-      userWon: boolean;
-      inningsJustBroke: boolean;
-      lastOutcome: BallOutcome | null;
-    } => {
-      if (isFirstInnings) {
-        const secondInningsBattingTeam = currInn.battingTeamId === currState.homeTeam.id ? currState.awayTeam : currState.homeTeam;
-        const secondInningsBowlingTeam = currInn.battingTeamId === currState.homeTeam.id ? currState.homeTeam : currState.awayTeam;
-
-        const battingXIPlayers = secondInningsBattingTeam.playingXIIds
-          .map(id => players.find(p => p.id === id))
-          .filter((p): p is Player => Boolean(p));
-        const bowlingXIPlayers = secondInningsBowlingTeam.playingXIIds
-          .map(id => players.find(p => p.id === id))
-          .filter((p): p is Player => Boolean(p));
-        const finalBatters = battingXIPlayers.length >= 2 ? battingXIPlayers : players.filter(p => p.clubId === secondInningsBattingTeam.id).slice(0, 11);
-        const finalBowlers = bowlingXIPlayers.length >= 2 ? bowlingXIPlayers : players.filter(p => p.clubId === secondInningsBowlingTeam.id).slice(0, 11);
-        const bowlerPool = finalBowlers.filter(p => p.role === 'Pace' || p.role === 'Spin' || p.role === 'All-rounder');
-        const activeBowlerPool = bowlerPool.length > 0 ? bowlerPool : finalBowlers;
-
-        const initBatters: BatterInningsScorecard[] = finalBatters.map((p, idx) => ({
-          playerId: p.id,
-          name: p.name,
-          runs: 0,
-          balls: 0,
-          fours: 0,
-          sixes: 0,
-          dismissal: 'not out',
-          strikeRate: 0,
-          isOnStrike: idx === 0
-        }));
-
-        const initBowlers: BowlerInningsScorecard[] = activeBowlerPool.map((p, idx) => ({
-          playerId: p.id,
-          name: p.name,
-          overs: 0,
-          ballsInCurrentOver: 0,
-          maidens: 0,
-          runs: 0,
-          wickets: 0,
-          economy: 0,
-          isCurrentBowler: idx === 0
-        }));
-
-        const inn2MaxOvers = currState.dlsState?.revisedMaxOvers || currState.innings1.maxOvers || defaultOvers;
-        const computedTarget = currState.dlsState?.isInterrupted
-          ? calculateDLSTarget(currInn.runs, currState.dlsState.originalMaxOvers, currState.dlsState.revisedMaxOvers, 0).dlsTargetRuns
-          : currInn.runs + 1;
-
-        const innings2: InningsData = {
-          battingTeamId: secondInningsBattingTeam.id,
-          bowlingTeamId: secondInningsBowlingTeam.id,
-          runs: 0,
-          wickets: 0,
-          overs: 0,
-          ballsCompleted: 0,
-          maxOvers: inn2MaxOvers,
-          currentOverRuns: 0,
-          batters: initBatters,
-          bowlers: initBowlers,
-          currentStrikerId: finalBatters[0]?.id || 'p1',
-          currentNonStrikerId: finalBatters[1]?.id || 'p2',
-          currentBowlerId: initBowlers[0]?.playerId || activeBowlerPool[0]?.id || 'p3',
-          ballHistory: [],
-          fallOfWickets: [],
-          overRuns: []
-        };
-
-        return {
-          nextState: {
-            ...currState,
-            status: 'innings_break',
-            targetRuns: computedTarget,
-            innings1: currInn,
-            innings2
-          },
-          matchJustFinished: false,
-          userWon: false,
-          inningsJustBroke: true,
-          lastOutcome: lastBall
-        };
-      } else {
-        const target = currState.targetRuns || (currState.innings1.runs + 1);
-        const winnerId = currInn.runs >= target
-          ? currInn.battingTeamId
-          : currState.innings1.battingTeamId;
-
-        const winnerTeam = (winnerId === currState.homeTeam.id ? currState.homeTeam : currState.awayTeam)
-          || teams.find(t => t.id === winnerId)
-          || userTeam;
-        const isUserWinner = winnerId === userTeam.id || (winnerTeam.isUserTeam === true);
-
-        let resultText = '';
-        if (winnerId === currInn.battingTeamId) {
-          const wktsRemaining = Math.max(1, 10 - currInn.wickets);
-          resultText = `${winnerTeam.name.toUpperCase()} WON BY ${wktsRemaining} WICKET${wktsRemaining > 1 ? 'S' : ''}${currState.dlsState?.isInterrupted ? ' (DLS)' : ''}!`;
-        } else {
-          const runsDiff = Math.max(1, target - currInn.runs - 1);
-          resultText = `${winnerTeam.name.toUpperCase()} WON BY ${runsDiff} RUN${runsDiff > 1 ? 'S' : ''}${currState.dlsState?.isInterrupted ? ' (DLS)' : ''}!`;
-        }
-
-        return {
-          nextState: {
-            ...currState,
-            status: 'finished',
-            winnerTeamId: winnerId,
-            resultText,
-            innings2: currInn
-          },
-          matchJustFinished: true,
-          userWon: isUserWinner,
-          inningsJustBroke: false,
-          lastOutcome: lastBall
-        };
-      }
-    };
-
-    // Pre-check if innings already ended (e.g. after rain reduction)
-    if (
-      currentInnings.ballsCompleted >= maxBalls ||
-      currentInnings.wickets >= 10 ||
-      (!isFirstInnings && state.targetRuns && currentInnings.runs >= state.targetRuns)
-    ) {
-      return finalizeInningsOrMatch(state, currentInnings, state.lastBallOutcome);
-    }
-
-    // Determine current striker, nonStriker, and bowler strictly by stable player ID
     const bowlingTeam = currentInnings.bowlingTeamId === state.homeTeam.id ? state.homeTeam : state.awayTeam;
     const battingTeam = currentInnings.battingTeamId === state.homeTeam.id ? state.homeTeam : state.awayTeam;
 
@@ -3746,37 +3468,35 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       players.find(p => p.id === currentInnings.currentStrikerId) ||
       battingTeam.squad.find(p => p.id === currentInnings.currentStrikerId) ||
       players[0];
-    const nonStriker =
-      players.find(p => p.id === currentInnings.currentNonStrikerId) ||
-      battingTeam.squad.find(p => p.id === currentInnings.currentNonStrikerId) ||
-      players[1];
     const bowler =
       players.find(p => p.id === currentInnings.currentBowlerId) ||
       bowlingTeam.squad.find(p => p.id === currentInnings.currentBowlerId) ||
-      (currentInnings.bowlers.find(b => b.isCurrentBowler)
-        ? players.find(p => p.id === currentInnings.bowlers.find(b => b.isCurrentBowler)?.playerId)
-        : null) ||
       bowlingTeam.squad[0] ||
       players[2];
 
     const overNum = Math.floor(currentInnings.ballsCompleted / 6);
-    const ballInOver = (currentInnings.ballsCompleted % 6) + 1;
 
-    // Feature 6.4: Compute live Opposition Tactical AI & Match-Up Trap alert
+    // Compute live Opposition Tactical AI & Match-Up Trap alert
     let liveTrapAlert: string | null = null;
-    if (bowler.bowlingArm === 'LAF' && striker.battingHand === 'RHB') {
-      liveTrapAlert = `MATCH-UP TRAP: ${bowler.name} (Left-Arm Pace) targeting ${striker.name}'s incoming off-stump pad!`;
-    } else if ((bowler.bowlingArm === 'LS' || bowler.role === 'Spin') && (striker.ratings.vs || 78) < 77) {
-      liveTrapAlert = `SPIN WEAKNESS TRAP: ${bowler.name} brought on against ${striker.name} (vs Spin ${striker.ratings.vs || 74})!`;
-    } else if ((state.bowlingTactics.length === 'bouncer' || state.bowlingTactics.length === 'short') && (striker.ratings.vp || 78) < 76) {
-      liveTrapAlert = `BOUNCER BARRAGE: Short-pitched trap set for ${striker.name}!`;
+    if (bowler && striker) {
+      if (bowler.bowlingArm === 'LAF' && striker.battingHand === 'RHB') {
+        liveTrapAlert = `MATCH-UP TRAP: ${bowler.name} (Left-Arm Pace) targeting ${striker.name}'s incoming off-stump pad!`;
+      } else if ((bowler.bowlingArm === 'LS' || bowler.role === 'Spin') && (striker.ratings.vs || 78) < 77) {
+        liveTrapAlert = `SPIN WEAKNESS TRAP: ${bowler.name} brought on against ${striker.name} (vs Spin ${striker.ratings.vs || 74})!`;
+      } else if ((state.bowlingTactics.length === 'bouncer' || state.bowlingTactics.length === 'short') && (striker.ratings.vp || 78) < 76) {
+        liveTrapAlert = `BOUNCER BARRAGE: Short-pitched trap set for ${striker.name}!`;
+      }
     }
 
-    // Check who is batting/bowling
-    const isUserBatting = currentInnings.battingTeamId === userTeam.id;
-    const isUserBowling = currentInnings.bowlingTeamId === userTeam.id;
+    const isUserBatting =
+      currentInnings.battingTeamId === userTeam.id ||
+      (Boolean(state.homeTeam.isUserTeam) && currentInnings.battingTeamId === state.homeTeam.id) ||
+      (Boolean(state.awayTeam.isUserTeam) && currentInnings.battingTeamId === state.awayTeam.id);
+    const isUserBowling =
+      currentInnings.bowlingTeamId === userTeam.id ||
+      (Boolean(state.homeTeam.isUserTeam) && currentInnings.bowlingTeamId === state.homeTeam.id) ||
+      (Boolean(state.awayTeam.isUserTeam) && currentInnings.bowlingTeamId === state.awayTeam.id);
 
-    // Use user's batting tactics ONLY when user team is batting; otherwise compute AI batting tactics
     let effectiveBattingTactics = state.battingTactics;
     if (!isUserBatting) {
       const rrr = (!isFirstInnings && state.targetRuns)
@@ -3798,7 +3518,6 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       };
     }
 
-    // Use user's bowling tactics ONLY when user team is bowling; otherwise compute AI bowling tactics
     let effectiveBowlingTactics = state.bowlingTactics;
     if (!isUserBowling) {
       effectiveBowlingTactics = {
@@ -3808,188 +3527,104 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         variation: 'Stock ball',
         intent: overNum >= Math.floor(maxBalls / 6) - 4 ? 'contain' : overNum < 6 ? 'attack' : 'standard',
         effort: 'standard',
-        keeperPos: bowler.role === 'Spin' ? 'stumps' : 'normal',
+        keeperPos: bowler?.role === 'Spin' ? 'stumps' : 'normal',
         speed: 'standard',
         fielders: state.bowlingTactics.fielders
       };
     }
 
-    const ballOutcome = simulateBall({
-      bowler,
-      striker,
-      nonStriker,
-      over: overNum,
-      ballInOver,
-      pitchType: state.pitchType,
-      hasDew: state.hasDew,
-      powerSurgeActive: (state.powerSurgeOversLeft || 0) > 0,
-      format: state.format,
-      pairRunning: effectiveBattingTactics.pairRunning || 'standard',
-      intent: effectiveBowlingTactics.intent || 'standard',
-      effort: effectiveBowlingTactics.effort || 'standard',
-      keeperPos: effectiveBowlingTactics.keeperPos || 'normal',
-      speed: effectiveBowlingTactics.speed || 'standard',
-      bowlingTactics: effectiveBowlingTactics,
-      battingTactics: effectiveBattingTactics
-    });
-
-    const isWicket = ballOutcome.isWicket;
-    const runsThisBall = ballOutcome.runs;
-    const isLegalDelivery = !ballOutcome.isExtra;
-
-    const nextBallsCompleted = isLegalDelivery ? currentInnings.ballsCompleted + 1 : currentInnings.ballsCompleted;
-    const nextOvers = Number(`${Math.floor(nextBallsCompleted / 6)}.${nextBallsCompleted % 6}`);
-    const nextRuns = currentInnings.runs + runsThisBall;
-    const nextWickets = isWicket ? currentInnings.wickets + 1 : currentInnings.wickets;
-
-    // If wicket, bring next batsman
-    let nextStrikerId = currentInnings.currentStrikerId;
-    let nextNonStrikerId = currentInnings.currentNonStrikerId;
-
-    if (isWicket) {
-      const nextUnusedBatter = currentInnings.batters.find(
-        b => b.dismissal === 'not out' && b.playerId !== striker.id && b.playerId !== nonStriker.id
-      );
-      ballOutcome.dismissedPlayerId = striker.id;
-      ballOutcome.dismissedPlayerName = striker.name;
-      ballOutcome.incomingBatterId = nextUnusedBatter?.playerId;
-      if (nextUnusedBatter) {
-        nextStrikerId = nextUnusedBatter.playerId;
-      }
-    } else if (runsThisBall % 2 === 1) {
-      nextStrikerId = nonStriker.id;
-      nextNonStrikerId = striker.id;
-    }
-
-    const isOverComplete = isLegalDelivery && nextBallsCompleted % 6 === 0;
-    if (isOverComplete) {
-      const temp = nextStrikerId;
-      nextStrikerId = nextNonStrikerId;
-      nextNonStrikerId = temp;
-    }
-
-    // Update batters and keep isOnStrike accurate
-    const updatedBatters = currentInnings.batters.map(b => {
-      if (b.playerId === striker.id) {
-        const newRuns = b.runs + (ballOutcome.isExtra ? 0 : runsThisBall);
-        const newBalls = isLegalDelivery ? b.balls + 1 : b.balls;
-        return {
-          ...b,
-          runs: newRuns,
-          balls: newBalls,
-          fours: b.fours + (ballOutcome.isFour ? 1 : 0),
-          sixes: b.sixes + (ballOutcome.isSix ? 1 : 0),
-          dismissal: isWicket ? (ballOutcome.dismissalText || ballOutcome.wicketType || 'out') : b.dismissal,
-          strikeRate: newBalls > 0 ? Number(((newRuns / newBalls) * 100).toFixed(1)) : 0,
-          isOnStrike: b.playerId === nextStrikerId && !isWicket
-        };
-      }
-      return {
-        ...b,
-        isOnStrike: b.playerId === nextStrikerId
-      };
-    });
-
-    // Fall of wickets tracker
-    const updatedFallOfWickets = isWicket
-      ? [...currentInnings.fallOfWickets, { runs: nextRuns, wicketNum: nextWickets, over: nextOvers, batterName: striker.name }]
-      : currentInnings.fallOfWickets;
-
-    // Over runs & maiden tracker
-    const updatedOverRuns = [...currentInnings.overRuns];
-    if (updatedOverRuns[overNum] === undefined) {
-      updatedOverRuns[overNum] = runsThisBall;
-    } else {
-      updatedOverRuns[overNum] += runsThisBall;
-    }
-    // Update bowler figures using canonical bowler math
-    const bowlerUpdate = applyDeliveryToBowlerScorecard({
-      bowlers: currentInnings.bowlers,
-      actualBowler: bowler,
-      outcome: ballOutcome,
-      currentOverBowlerRuns: currentInnings.currentOverRuns || 0
-    });
-    let updatedBowlers = bowlerUpdate.bowlers;
-    const runsInThisOverAfterBall = bowlerUpdate.nextOverBowlerRuns;
-
-    // Automatically rotate AI bowler (or during auto-sim) at the end of an over respecting bowler quota
-    let nextBowlerId = currentInnings.currentBowlerId;
-    const isUserBowlingTeam =
-      currentInnings.bowlingTeamId === userTeam.id ||
-      (Boolean(state.homeTeam.isUserTeam) && currentInnings.bowlingTeamId === state.homeTeam.id) ||
-      (Boolean(state.awayTeam.isUserTeam) && currentInnings.bowlingTeamId === state.awayTeam.id);
-    const isAiBowling = !isUserBowlingTeam;
-    if (isOverComplete && (isAiBowling || autoRotateBowler)) {
-      const eligibleBowlers = updatedBowlers.filter(
-        b => b.playerId !== bowler.id && Math.floor(b.overs) < maxOversPerBowler
-      );
-      const nextBowlerObj = eligibleBowlers[0] || updatedBowlers.find(b => b.playerId !== bowler.id) || updatedBowlers[0];
-      if (nextBowlerObj) {
-        nextBowlerId = nextBowlerObj.playerId;
-        updatedBowlers = updatedBowlers.map(b => ({
-          ...b,
-          isCurrentBowler: b.playerId === nextBowlerId
-        }));
-      }
-    }
-
-    // Swap individual striker/nonStriker batting approaches when strike rotates
-    const strikeRotated = nextStrikerId !== currentInnings.currentStrikerId && !isWicket;
-    const updatedBattingTactics = strikeRotated && state.battingTactics.nonStrikerApproach
-      ? {
-          ...state.battingTactics,
-          approach: state.battingTactics.nonStrikerApproach,
-          nonStrikerApproach: state.battingTactics.approach
-        }
-      : state.battingTactics;
-
-    const updatedInnings: InningsData = {
-      ...currentInnings,
-      runs: nextRuns,
-      wickets: nextWickets,
-      overs: nextOvers,
-      ballsCompleted: nextBallsCompleted,
-      currentOverRuns: isOverComplete ? 0 : runsInThisOverAfterBall,
-      batters: updatedBatters,
-      bowlers: updatedBowlers,
-      currentStrikerId: nextStrikerId,
-      currentNonStrikerId: nextNonStrikerId,
-      currentBowlerId: nextBowlerId,
-      ballHistory: [ballOutcome, ...currentInnings.ballHistory],
-      fallOfWickets: updatedFallOfWickets,
-      overRuns: updatedOverRuns
-    };
-
-    const nextSurgeOvers = isOverComplete && (state.powerSurgeOversLeft || 0) > 0
-      ? Math.max(0, (state.powerSurgeOversLeft || 0) - 1)
-      : state.powerSurgeOversLeft;
-    const nextHundredBalls = state.format === '100BALL'
-      ? Math.max(0, 100 - nextBallsCompleted)
-      : state.ballsRemainingInInnings;
-
-    const nextIntermediateState: MatchLiveState = {
+    const inputStateForDelivery: MatchLiveState = {
       ...state,
-      lastBallOutcome: ballOutcome,
-      isBallInFlight: true,
-      tacticalTrapAlert: liveTrapAlert,
-      powerSurgeOversLeft: nextSurgeOvers,
-      ballsRemainingInInnings: nextHundredBalls,
-      battingTactics: updatedBattingTactics,
-      innings1: isFirstInnings ? updatedInnings : state.innings1,
-      innings2: isFirstInnings ? state.innings2 : updatedInnings
+      battingTactics: effectiveBattingTactics,
+      bowlingTactics: effectiveBowlingTactics
     };
 
-    // Check if this ball completed the innings or won the match
-    if (
-      nextBallsCompleted >= maxBalls ||
-      nextWickets >= 10 ||
-      (!isFirstInnings && state.targetRuns && nextRuns >= state.targetRuns)
-    ) {
-      return finalizeInningsOrMatch(nextIntermediateState, updatedInnings, ballOutcome);
+    const resolved = resolveSingleDeliveryState(inputStateForDelivery, players);
+    const ballOutcome = resolved.lastBallOutcome;
+
+    // Preserve user's selected tactics while swapping striker/non-striker approaches if strike rotated
+    const postInn = isFirstInnings ? resolved.innings1 : resolved.innings2;
+    const strikeRotated =
+      postInn &&
+      postInn.currentStrikerId !== currentInnings.currentStrikerId &&
+      !ballOutcome?.isWicket;
+    const updatedUserBattingTactics =
+      strikeRotated && state.battingTactics.nonStrikerApproach
+        ? {
+            ...state.battingTactics,
+            approach: state.battingTactics.nonStrikerApproach,
+            nonStrikerApproach: state.battingTactics.approach
+          }
+        : state.battingTactics;
+
+    // Check if Innings 1 just transitioned to Innings 2
+    if (isFirstInnings && resolved.currentInningsIndex === 2) {
+      const inn2MaxOvers = state.dlsState?.revisedMaxOvers || state.innings1.maxOvers || quota.maxOvers;
+      const computedTarget = state.dlsState?.isInterrupted
+        ? calculateDLSTarget(
+            resolved.innings1.runs,
+            state.dlsState.originalMaxOvers,
+            state.dlsState.revisedMaxOvers,
+            0
+          ).dlsTargetRuns
+        : resolved.innings1.runs + 1;
+
+      const nextStateInningsBreak: MatchLiveState = {
+        ...resolved,
+        currentInningsIndex: 1,
+        status: 'innings_break',
+        targetRuns: computedTarget,
+        innings2: resolved.innings2
+          ? { ...resolved.innings2, maxOvers: inn2MaxOvers }
+          : null,
+        battingTactics: updatedUserBattingTactics,
+        bowlingTactics: state.bowlingTactics,
+        tacticalTrapAlert: liveTrapAlert,
+        isBallInFlight: true
+      };
+
+      return {
+        nextState: nextStateInningsBreak,
+        matchJustFinished: false,
+        userWon: false,
+        inningsJustBroke: true,
+        lastOutcome: ballOutcome
+      };
+    }
+
+    // Check if Match just finished
+    if (resolved.status === 'finished') {
+      const winnerId = resolved.winnerTeamId;
+      const isUserWinner = Boolean(
+        winnerId &&
+          (winnerId === userTeam.id ||
+            (winnerId === resolved.homeTeam.id && resolved.homeTeam.isUserTeam) ||
+            (winnerId === resolved.awayTeam.id && resolved.awayTeam.isUserTeam))
+      );
+
+      return {
+        nextState: {
+          ...resolved,
+          battingTactics: updatedUserBattingTactics,
+          bowlingTactics: state.bowlingTactics,
+          tacticalTrapAlert: liveTrapAlert,
+          isBallInFlight: true
+        },
+        matchJustFinished: true,
+        userWon: isUserWinner,
+        inningsJustBroke: false,
+        lastOutcome: ballOutcome
+      };
     }
 
     return {
-      nextState: nextIntermediateState,
+      nextState: {
+        ...resolved,
+        battingTactics: updatedUserBattingTactics,
+        bowlingTactics: state.bowlingTactics,
+        tacticalTrapAlert: liveTrapAlert,
+        isBallInFlight: true
+      },
       matchJustFinished: false,
       userWon: false,
       inningsJustBroke: false,
@@ -4087,7 +3722,6 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
 
         let legalBallsSimulated = 0;
-        // Auto-rotate bowler at the end of intermediate overs when simulating multiple overs
         const shouldAutoRotateAtOverEnd = totalOversToSim > 1 && ovIdx < totalOversToSim - 1;
 
         while (legalBallsSimulated < 6 && curr.status === 'in_progress') {
@@ -4101,11 +3735,14 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (res.inningsJustBroke) {
             break;
           }
-          if (res.lastOutcome && !res.lastOutcome.isExtra) {
+          const wasLegal = res.lastOutcome
+            ? isLegalBallForBowler(res.lastOutcome.isExtra, res.lastOutcome.extraType)
+            : true;
+          if (wasLegal) {
             legalBallsSimulated++;
           }
           const activeInn = curr.currentInningsIndex === 1 ? curr.innings1 : curr.innings2;
-          if (activeInn && activeInn.ballsCompleted > 0 && activeInn.ballsCompleted % 6 === 0 && !res.lastOutcome?.isExtra) {
+          if (activeInn && activeInn.ballsCompleted > 0 && activeInn.ballsCompleted % 6 === 0 && wasLegal) {
             break;
           }
         }
@@ -4464,8 +4101,19 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const rr2 = (inn2?.runs || 0) / overs2;
         const rrDiffInnings1Team = (rr1 - rr2) * 0.15;
 
+        const isTiedMatch = !finishedMatch.winnerTeamId;
         const updatedStandings = league.standings.map(row => {
           if (isPlayoffMatch) return row;
+          if (isTiedMatch && (row.teamId === finishedMatch.homeTeam.id || row.teamId === finishedMatch.awayTeam.id)) {
+            if (row.played >= 18) return row;
+            return {
+              ...row,
+              played: row.played + 1,
+              tied: (row.tied || 0) + 1,
+              points: row.points + 1,
+              recentForm: [...row.recentForm, 'T' as const].slice(-5)
+            };
+          }
           if (row.teamId === winnerId) {
             if (row.played >= 18) return row;
             const delta = Math.abs(rrDiffInnings1Team);
@@ -5451,13 +5099,39 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const curInnings = isFirst ? prev.innings1 : prev.innings2;
       if (!curInnings) return prev;
 
+      const quota = getFormatQuotaConfig(prev.format, curInnings.maxOvers);
+      const prevBallBowlerId =
+        curInnings.ballsCompleted > 0 && curInnings.ballsCompleted % 6 === 0
+          ? curInnings.ballHistory[0]?.bowlerId
+          : undefined;
+
+      // Prevent selecting a bowler who just bowled the immediately preceding over or exceeded quota
+      const existingCard = curInnings.bowlers.find(b => b.playerId === bowlerId);
+      const isOverQuota = existingCard ? oversToBalls(existingCard.overs) >= quota.maxBallsPerBowler : false;
+      const isConsecutive = Boolean(prevBallBowlerId && prevBallBowlerId === bowlerId);
+      const hasOtherEligible = curInnings.bowlers.some(
+        b => b.playerId !== bowlerId && b.playerId !== prevBallBowlerId && oversToBalls(b.overs) < quota.maxBallsPerBowler
+      );
+
+      let resolvedBowlerId = bowlerId;
+      if ((isOverQuota || isConsecutive) && hasOtherEligible) {
+        resolvedBowlerId = selectNextEligibleBowler(
+          curInnings.bowlers,
+          prevBallBowlerId || bowlerId,
+          quota.maxBallsPerBowler,
+          Math.floor(curInnings.ballsCompleted / 6),
+          prev.format,
+          players
+        );
+      }
+
       const bowlingTeamSquad = (isFirst ? prev.awayTeam : prev.homeTeam).squad || [];
-      const bowlerPlayer = players.find(p => p.id === bowlerId) || bowlingTeamSquad.find(p => p.id === bowlerId);
+      const bowlerPlayer = players.find(p => p.id === resolvedBowlerId) || bowlingTeamSquad.find(p => p.id === resolvedBowlerId);
       const updatedBowlers = [...curInnings.bowlers];
-      let bScore = updatedBowlers.find(b => b.playerId === bowlerId);
+      let bScore = updatedBowlers.find(b => b.playerId === resolvedBowlerId);
       if (!bScore) {
         bScore = {
-          playerId: bowlerId,
+          playerId: resolvedBowlerId,
           name: bowlerPlayer?.name || 'Bowler',
           overs: 0,
           ballsInCurrentOver: 0,
@@ -5473,12 +5147,12 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       const newBowlers = updatedBowlers.map(b => ({
         ...b,
-        isCurrentBowler: b.playerId === bowlerId
+        isCurrentBowler: b.playerId === resolvedBowlerId
       }));
 
       const newInnings: InningsData = {
         ...curInnings,
-        currentBowlerId: bowlerId,
+        currentBowlerId: resolvedBowlerId,
         bowlers: newBowlers
       };
 

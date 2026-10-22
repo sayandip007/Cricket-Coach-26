@@ -55,6 +55,7 @@ import {
 } from '../data/auctionSets2026';
 import { canRetainPlayerInMega, isOverseasPlayer } from '../utils/auctionSandboxEngine';
 import { runBowlingAndSandboxTests } from './bowlingAndSandbox.test';
+import { runMatchEngineAuditTests } from './matchEngineAudit.test';
 import {
   FIELD_TEMPLATES,
   validateFieldRestrictions,
@@ -1934,6 +1935,13 @@ runTest('REGRESSION', 'Phase 23: Role-Specific Player Career Statistics Cards', 
 
 runTest('REGRESSION', 'Phase 24: Dynamic Player Overview & Career Dashboard', () => {
   runPlayerOverviewDashboardTests();
+});
+
+runTest('REGRESSION', 'Phase 25: Complete Match Engine Audit, Cricket Rules & Batch Realism Verification (18 Suites)', () => {
+  const auditRes = runMatchEngineAuditTests();
+  assert.equal(auditRes.passed, auditRes.total, `Expected all ${auditRes.total} match engine audit tests to pass`);
+  console.log('\n--- BATCH SIMULATION REALISM METRICS ---');
+  console.log(JSON.stringify(auditRes.batchReport, null, 2));
 });
 
 const failed = results.filter(r => !r.passed);

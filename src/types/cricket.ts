@@ -294,6 +294,10 @@ export interface BallOutcome {
   nonStrikerId: string;
   nonStrikerName: string;
   runs: number;
+  batterRuns?: number;
+  extraRuns?: number;
+  bowlerChargedRuns?: number;
+  isLegalDelivery?: boolean;
   isWicket: boolean;
   wicketType?: 'bowled' | 'caught' | 'lbw' | 'run out' | 'stumped';
   fielderName?: string;
@@ -340,6 +344,14 @@ export interface BowlerInningsScorecard {
   isCurrentBowler: boolean;
 }
 
+export interface InningsExtrasBreakdown {
+  total: number;
+  wides: number;
+  noBalls: number;
+  byes: number;
+  legByes: number;
+}
+
 export interface InningsData {
   battingTeamId: string;
   bowlingTeamId: string;
@@ -350,6 +362,7 @@ export interface InningsData {
   ballsCompleted: number;
   maxOvers: number;
   currentOverRuns?: number;
+  extras?: InningsExtrasBreakdown;
   batters: BatterInningsScorecard[];
   bowlers: BowlerInningsScorecard[];
   currentStrikerId: string;

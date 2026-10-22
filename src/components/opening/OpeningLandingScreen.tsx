@@ -28,6 +28,7 @@ export const OpeningLandingScreen: React.FC = () => {
     return empty ? empty.slotNumber : activeSaveSlot;
   });
   const [newCoachName, setNewCoachName] = useState<string>(coachProfile.name || 'Arjun Rao');
+  const [imageError, setImageError] = useState(false);
 
   if (showAchievements) {
     return <AchievementsScreen onBack={() => setShowAchievements(false)} />;
@@ -83,40 +84,66 @@ export const OpeningLandingScreen: React.FC = () => {
 
       {/* Main Browser Widescreen Grid */}
       <div className="relative z-10 max-w-7xl mx-auto w-full px-6 py-6 flex-1 grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
-        {/* Left Column (7 cols): Branding & Stadium Bowl */}
-        <div className="lg:col-span-7 flex flex-col items-center lg:items-start text-center lg:text-left space-y-6">
-          <div>
-            <h1 className="text-4xl sm:text-6xl font-black font-display tracking-wider text-transparent bg-clip-text bg-gradient-to-b from-[#fff2a8] via-[#f5b82e] to-[#c78b17] drop-shadow-[0_4px_12px_rgba(0,0,0,0.8)]">
-              CRICKET COACH
-            </h1>
-            <div className="text-sm sm:text-base font-black font-mono tracking-[0.25em] text-slate-200 uppercase mt-1">
-              26
-            </div>
+        {/* Left Column (7 cols): Official App Artwork Collector's Chassis */}
+        <div className="lg:col-span-7 flex flex-col items-center lg:items-start text-center lg:text-left space-y-3.5">
+          <div className="w-full max-w-[580px] relative group">
+            {/* Ambient Dual-Radiance Backlight Glow (Warm Amber & Stadium Sapphire) */}
+            <div className="absolute -inset-1.5 bg-gradient-to-tr from-amber-500/25 via-amber-400/15 to-blue-600/20 rounded-[34px] blur-2xl opacity-75 group-hover:opacity-100 transition duration-700 pointer-events-none" />
 
-            <div className="flex items-center justify-center lg:justify-start gap-3 mt-3 text-xs font-bold text-amber-400 tracking-wider">
-              <span className="w-8 h-px bg-amber-400/60" />
-              <span>LEAD</span>
-              <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-              <span>PICK</span>
-              <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-              <span>WIN</span>
-              <span className="w-8 h-px bg-amber-400/60" />
+            {/* Main App Cover Art Container - Luxury Chamfered Chassis */}
+            <div className="relative p-2 sm:p-2.5 rounded-[24px] sm:rounded-[30px] bg-gradient-to-b from-amber-500/30 via-slate-800/50 to-[#070b14] border border-amber-500/40 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.95)] backdrop-blur-xl">
+              <div className="relative rounded-[18px] sm:rounded-[22px] overflow-hidden bg-[#050811] ring-1 ring-inset ring-white/10">
+                {!imageError ? (
+                  <>
+                    <img
+                      src="/assets/aistudio/file_000000009f3481faad2d0f6e1e900053_77824179.png"
+                      alt="Cricket Coach 26 - Tactical Cricket Management Simulation"
+                      referrerPolicy="no-referrer"
+                      onError={() => setImageError(true)}
+                      className="w-full h-auto object-cover rounded-[18px] sm:rounded-[22px] transform transition-transform duration-700 ease-out group-hover:scale-[1.015]"
+                    />
+                    {/* Inner Edge Depth Shadow */}
+                    <div className="absolute inset-0 shadow-[inset_0_0_30px_rgba(0,0,0,0.65)] pointer-events-none rounded-[18px] sm:rounded-[22px]" />
+                    
+                    {/* Seamless Bottom Vignette Scrim */}
+                    <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-[#050811]/95 via-[#050811]/45 to-transparent pointer-events-none" />
+
+                    {/* Integrated Chassis Footer Overlay */}
+                    <div className="absolute inset-x-0 bottom-0 px-3.5 sm:px-4 py-2 sm:py-3 flex items-center justify-between text-[10px] sm:text-xs font-mono font-medium tracking-wider text-amber-200/90 pointer-events-none">
+                      <span className="flex items-center gap-1.5 drop-shadow-md">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                        TATA IPL 2026 EDITION
+                      </span>
+                      <span className="text-slate-300 drop-shadow-md">
+                        2D PITCH ENGINE
+                      </span>
+                    </div>
+                  </>
+                ) : (
+                  /* Zero-Broken-Image Fallback Canvas */
+                  <div className="w-full aspect-[3/2] flex flex-col items-center justify-center p-6 bg-gradient-to-b from-slate-900 via-[#070b14] to-slate-950 text-center">
+                    <Trophy className="w-12 h-12 text-amber-400 mb-3" />
+                    <div className="text-xl font-black font-display tracking-widest text-white uppercase">
+                      CRICKET COACH 26
+                    </div>
+                    <div className="text-xs font-mono text-amber-400 mt-1">
+                      TACTICAL CRICKET SIMULATION
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
-          {/* Stadium Bowl & Pitch Oval */}
-          <div className="w-full flex items-center justify-center lg:justify-start py-2">
-            <div className="w-[340px] sm:w-[460px] h-[210px] sm:h-[260px] rounded-[50%] bg-[#081324] border-4 border-[#1e293b]/80 shadow-[0_0_80px_rgba(245,158,11,0.25)] flex items-center justify-center relative overflow-hidden">
-              <div className="absolute inset-0 bg-[radial-gradient(#1e3a8a_1px,transparent_1px)] [background-size:6px_6px] opacity-40" />
-              <div className="w-[280px] sm:w-[380px] h-[165px] sm:h-[210px] rounded-[50%] bg-gradient-to-b from-[#2e6b3b] via-[#24582f] to-[#1a4224] border-2 border-emerald-500/50 flex items-center justify-center shadow-inner relative">
-                <div className="w-[190px] sm:w-[260px] h-[110px] sm:h-[145px] rounded-[50%] border border-dashed border-white/60 flex items-center justify-center">
-                  <div className="w-10 h-20 bg-[#cfb084] rounded-sm border border-[#a18359] shadow-md relative">
-                    <div className="absolute top-2 inset-x-0 h-0.5 bg-white/90" />
-                    <div className="absolute bottom-2 inset-x-0 h-0.5 bg-white/90" />
-                  </div>
-                </div>
-              </div>
-            </div>
+          {/* Clean Unboxed Metadata Feature Strip (Zero-Pill Discipline) */}
+          <div className="flex flex-wrap items-center justify-center lg:justify-start gap-x-2.5 gap-y-1 text-xs font-medium text-slate-400 px-1">
+            <span className="text-amber-400/95 font-semibold tracking-wider">TACTICAL 2D PITCH</span>
+            <span aria-hidden="true" className="text-slate-600">·</span>
+            <span>10 IPL FRANCHISES</span>
+            <span aria-hidden="true" className="text-slate-600">·</span>
+            <span>MEGA AUCTION</span>
+            <span aria-hidden="true" className="text-slate-600">·</span>
+            <span>3 CAREER SLOTS</span>
           </div>
         </div>
 
@@ -287,6 +314,19 @@ export const OpeningLandingScreen: React.FC = () => {
               <button onClick={() => setShowAboutModal(false)} className="text-slate-400 hover:text-white">
                 <X className="w-4 h-4" />
               </button>
+            </div>
+            <div className="relative rounded-2xl overflow-hidden border border-amber-500/40 shadow-xl bg-[#060a12] ring-1 ring-inset ring-white/10">
+              <img
+                src="/assets/aistudio/file_000000009f3481faad2d0f6e1e900053_77824179.png"
+                alt="Cricket Coach 26"
+                referrerPolicy="no-referrer"
+                className="w-full h-auto object-cover"
+              />
+              <div className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-[#060a12]/90 to-transparent pointer-events-none" />
+              <div className="absolute inset-x-0 bottom-0 px-3 py-1.5 flex items-center justify-between text-[10px] font-mono text-amber-300/90 pointer-events-none">
+                <span>OFFICIAL KEY ART</span>
+                <span>TATA IPL 2026</span>
+              </div>
             </div>
             <p className="text-xs text-slate-300 leading-relaxed">
               Cricket Coach 26 is an authentic tactical cricket management simulator featuring ball-by-ball physics, IPL Mega Auctions, dynamic player development, and international ICC rankings.
