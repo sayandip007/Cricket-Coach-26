@@ -19,7 +19,7 @@ import {
   UmpireSignalType,
   resolveUmpireSignal,
 } from '../../utils/cricketAnimationTimeline';
-import { sound } from '../../utils/soundEffects';
+import { sound, checkIsBatContact } from '../../utils/soundEffects';
 
 export { resolveUmpireSignal };
 export type { UmpireSignalType };
@@ -603,7 +603,7 @@ export const TacticalStadium2D: React.FC<TacticalStadium2DProps> = ({
 
       if (p >= 0.24 && !audioPlayedRef.current.hit) {
         audioPlayedRef.current.hit = true;
-        if (lastBallOutcome.runs > 0 || lastBallOutcome.isFour || lastBallOutcome.isSix) {
+        if (checkIsBatContact(lastBallOutcome)) {
           sound.playBatHit(lastBallOutcome.isFour || lastBallOutcome.isSix, lastBallOutcome.isSix);
         }
       }

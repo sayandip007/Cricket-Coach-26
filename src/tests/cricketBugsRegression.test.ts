@@ -12,6 +12,7 @@ import {
   isOverseasPlayer
 } from '../utils/playerStatsHelpers';
 import { oversToBalls } from '../utils/bowlingStats';
+import { checkIsBatContact } from '../utils/soundEffects';
 
 export function runCricketBugsRegressionTests(): { passed: number; total: number; results: string[] } {
   const results: string[] = [];
@@ -370,5 +371,68 @@ export function runCricketBugsRegressionTests(): { passed: number; total: number
     assert.equal(isOverseasPlayer({ isOverseas: true }), true);
   });
 
+  // =========================================================================
+  // AUDIO CONTACT RULES: checkIsBatContact verification
+  // =========================================================================
+  runSubTest('Audio Rules: checkIsBatContact accurately identifies bat hits and suppresses extras/misses', () => {
+    // 1. Runs off the bat (singles, 4s, 6s) -> MUST BE TRUE
+    const singleBall: BallOutcome = {
+      over: 0, ballNumber: 1, bowlerId: 'b1', bowlerName: 'Bowler 1', strikerId: 's1', strikerName: 'Striker 1',
+      nonStrikerId: 's2', nonStrikerName: 'Striker 2', runs: 1, batterRuns: 1, isWicket: false, isFour: false,
+      isSix: false, isExtra: false, bowlerSpeedMps: 38, shotAngleDeg: 45, shotDistanceM: 20, commentary: 'Single to cover.', tacticalNote: ''
+    };
+    assert.equal(checkIsBatContact(singleBall), true, 'Single off bat must trigger bat contact sound');
+
+    const fourBall: BallOutcome = {
+      ...singleBall, runs: 4, batterRuns: 4, isFour: true, commentary: 'Driven past cover for FOUR!'
+    };
+    assert.equal(checkIsBatContact(fourBall), true, 'Four off bat must trigger bat contact sound');
+
+    // 2. Dot ball where batter hit the ball to a fielder -> MUST BE TRUE
+    const dotShotBall: BallOutcome = {
+      ...singleBall, runs: 0, batterRuns: 0, commentary: 'Driven straight to mid-off, no run.'
+    };
+    assert.equal(checkIsBatContact(dotShotBall), true, 'Dot ball shot hit to fielder must trigger bat contact sound');
+
+    // 3. Wicket caught off the bat -> MUST BE TRUE
+    const caughtBall: BallOutcome = {
+      ...singleBall, runs: 0, batterRuns: 0, isWicket: true, wicketType: 'caught', commentary: 'Edged and caught at slip!'
+    };
+    assert.equal(checkIsBatContact(caughtBall), true, 'Catch off the bat must trigger bat contact sound');
+
+    // 4. Extras: Wide, Bye, Leg Bye -> MUST BE SUPPRESSED (FALSE)
+    const wideBall: BallOutcome = {
+      ...singleBall, runs: 1, batterRuns: 0, isExtra: true, extraType: 'wide', commentary: 'Wide ball down the leg side.'
+    };
+    assert.equal(checkIsBatContact(wideBall), false, 'Wide ball must suppress bat contact sound');
+
+    const byeBall: BallOutcome = {
+      ...singleBall, runs: 1, batterRuns: 0, isExtra: true, extraType: 'bye', commentary: 'Passed the batter and keeper for a bye.'
+    };
+    assert.equal(checkIsBatContact(byeBall), false, 'Bye ball must suppress bat contact sound');
+
+    const legByeBall: BallOutcome = {
+      ...singleBall, runs: 1, batterRuns: 0, isExtra: true, extraType: 'leg_bye', commentary: 'Hits the pad and rolls away for leg bye.'
+    };
+    assert.equal(checkIsBatContact(legByeBall), false, 'Leg bye ball must suppress bat contact sound');
+
+    // 5. Play and miss / leave / LBW -> MUST BE SUPPRESSED (FALSE)
+    const playAndMissBall: BallOutcome = {
+      ...singleBall, runs: 0, batterRuns: 0, commentary: 'Beaten! Play and miss outside off stump.'
+    };
+    assert.equal(checkIsBatContact(playAndMissBall), false, 'Play and miss dot ball must suppress bat contact sound');
+
+    const leaveBall: BallOutcome = {
+      ...singleBall, runs: 0, batterRuns: 0, commentary: 'Leaves it alone through to the keeper.'
+    };
+    assert.equal(checkIsBatContact(leaveBall), false, 'Left alone dot ball must suppress bat contact sound');
+
+    const lbwBall: BallOutcome = {
+      ...singleBall, runs: 0, batterRuns: 0, isWicket: true, wicketType: 'lbw', commentary: 'Plumb LBW! Hits the front pad right in front of middle.'
+    };
+    assert.equal(checkIsBatContact(lbwBall), false, 'LBW dismissal must suppress bat contact sound');
+  });
+
   return { passed, total, results };
 }
+

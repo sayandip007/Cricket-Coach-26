@@ -129,13 +129,13 @@ export const AuctionSandboxModal: React.FC<AuctionSandboxModalProps> = ({
       if (mode === 'mega') {
         const validation = canRetainPlayerInMega(currentRetained, candidate);
         if (!validation.allowed) {
-          sound.playBatHit(false, false);
+          sound.playGavel();
           return;
         }
       } else {
         const currentOverseas = currentRetained.filter(p => isOverseasPlayer(p)).length;
         if (isOverseasPlayer(candidate) && currentOverseas >= 8) {
-          sound.playBatHit(false, false);
+          sound.playGavel();
           return;
         }
       }

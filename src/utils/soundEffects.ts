@@ -1,4 +1,4 @@
-import * as Haptics from 'expo-haptics';
+import { BallOutcome } from '../types/cricket';
 
 // Local workspace audio asset paths provided by user
 const AUDIO_ASSETS = {
@@ -6,6 +6,108 @@ const AUDIO_ASSETS = {
   wicketCrash: '/assets/aistudio/ball_hitting_stumps_7b77d6a9.mp3',
   crowdCheer: '/assets/aistudio/crowd-cheering-383111_243af1d3.mp3'
 };
+
+/**
+ * Determines whether a given delivery outcome resulted in actual contact between the bat and the ball.
+ * - Returns true for: runs off the bat (1, 2, 3, 4, 6), catches, hit-to-fielder dot balls, edges onto stumps/field.
+ * - Suppressed (returns false) for: wides, byes, leg byes, leaves, plays and misses, pad hits / LBWs, stumpings off missed balls.
+ */
+export function checkIsBatContact(outcome: BallOutcome | null): boolean {
+  if (!outcome) return false;
+
+  // 1. Explicit Extras with NO bat contact: Wides, Byes, Leg Byes
+  if (outcome.isExtra) {
+    if (
+      outcome.extraType === 'wide' ||
+      outcome.extraType === 'bye' ||
+      outcome.extraType === 'leg_bye'
+    ) {
+      return false;
+    }
+  }
+
+  // 2. Runs scored off the bat
+  if ((outcome.batterRuns ?? 0) > 0) {
+    return true;
+  }
+  if (!outcome.isExtra && outcome.runs > 0) {
+    return true;
+  }
+  if (outcome.isFour || outcome.isSix) {
+    return true;
+  }
+
+  // 3. Wickets
+  if (outcome.isWicket) {
+    // Caught (field catch, caught behind, caught and bowled) is ALWAYS bat contact
+    if (
+      outcome.wicketType === 'caught' ||
+      outcome.wicketType === 'caught_behind' ||
+      outcome.wicketType === 'caught_and_bowled'
+    ) {
+      return true;
+    }
+
+    // Bowled off an edge/deflection
+    if (outcome.wicketType === 'bowled') {
+      const comm = (outcome.commentary || '').toLowerCase();
+      if (
+        comm.includes('edge') ||
+        comm.includes('inside edge') ||
+        comm.includes('bottom edge') ||
+        comm.includes('deflect')
+      ) {
+        return true;
+      }
+      return false; // Clean bowled with no edge
+    }
+
+    // Run out off a hit
+    if (outcome.wicketType === 'run out') {
+      if (
+        outcome.extraType === 'bye' ||
+        outcome.extraType === 'leg_bye' ||
+        outcome.extraType === 'wide'
+      ) {
+        return false;
+      }
+      return true;
+    }
+
+    // LBW & Stumped off a miss/wide have NO bat contact
+    if (outcome.wicketType === 'lbw' || outcome.wicketType === 'stumped') {
+      return false;
+    }
+  }
+
+  // 4. Dot balls and No-Balls with 0 batter runs
+  const comm = (outcome.commentary || '').toLowerCase();
+  const note = (outcome.tacticalNote || '').toLowerCase();
+  const combinedText = `${comm} ${note}`;
+
+  const isNoContactKeyword =
+    combinedText.includes('leaves') ||
+    combinedText.includes('left alone') ||
+    combinedText.includes('play and miss') ||
+    combinedText.includes('plays and misses') ||
+    combinedText.includes('beaten') ||
+    combinedText.includes('misses it') ||
+    combinedText.includes('swings and misses') ||
+    combinedText.includes('whistles past') ||
+    combinedText.includes('padded away') ||
+    combinedText.includes('hits the pad') ||
+    combinedText.includes('thud onto the pad') ||
+    combinedText.includes('struck on the pad') ||
+    combinedText.includes('lbw appeal') ||
+    combinedText.includes('no contact');
+
+  if (isNoContactKeyword) {
+    return false;
+  }
+
+  // Otherwise, for any non-extra delivery where a shot was played (e.g. driven, defended, pushed, cut, pulled, hit to fielder for 0 runs), bat contact WAS made.
+  return true;
+}
 
 class SoundController {
   public enabled = true;
@@ -84,9 +186,6 @@ class SoundController {
    */
   playGavel() {
     this.triggerHaptic(25);
-    if (!this.enabled || this.volume <= 0) return;
-
-    this.playLocalAudio(AUDIO_ASSETS.batHit, 0.6);
   }
 
   /**
@@ -98,3 +197,4 @@ class SoundController {
 }
 
 export const sound = new SoundController();
+

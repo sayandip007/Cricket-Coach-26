@@ -3907,12 +3907,17 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const lbo = outcomeToPlay as BallOutcome;
       if (lbo.isWicket) {
         sound.playWicketCrash();
-      } else if (lbo.isSix) {
-        sound.playBatHit(true, true);
-      } else if (lbo.isFour) {
-        sound.playBatHit(true, false);
       } else {
-        sound.playBatHit(false, false);
+        const isBatContact = (lbo.batterRuns ?? 0) > 0 || (!lbo.isExtra && lbo.runs > 0);
+        if (isBatContact) {
+          if (lbo.isSix) {
+            sound.playBatHit(true, true);
+          } else if (lbo.isFour) {
+            sound.playBatHit(true, false);
+          } else {
+            sound.playBatHit(false, false);
+          }
+        }
       }
     }
 
