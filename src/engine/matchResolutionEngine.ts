@@ -41,18 +41,9 @@ export interface FormatQuotaConfig {
 }
 
 export function getFormatQuotaConfig(
-  format: 'T20' | 'ODI' | 'TEST' | '100BALL',
+  format: 'T20' | 'ODI' | 'TEST',
   customMaxOvers?: number
 ): FormatQuotaConfig {
-  if (format === '100BALL') {
-    return {
-      maxOvers: 16.4,
-      maxBalls: 100,
-      maxOversPerBowler: 4,
-      maxBallsPerBowler: 24, // 4 six-ball overs max per bowler
-      maxWickets: 10
-    };
-  }
   if (format === 'TEST') {
     const maxOvers = customMaxOvers && customMaxOvers > 0 ? customMaxOvers : 90;
     return {
@@ -136,7 +127,7 @@ export function selectNextEligibleBowler(
   justBowledPlayerId: string,
   maxBallsPerBowler: number,
   nextOverNumber: number,
-  format: 'T20' | 'ODI' | 'TEST' | '100BALL',
+  format: 'T20' | 'ODI' | 'TEST',
   playerPool: Player[]
 ): string {
   const nonConsecutiveAndUnderQuota = bowlers.filter(
@@ -154,12 +145,10 @@ export function selectNextEligibleBowler(
 
   const isPowerplay =
     (format === 'T20' && nextOverNumber < 6) ||
-    (format === 'ODI' && nextOverNumber < 10) ||
-    (format === '100BALL' && nextOverNumber < 4);
+    (format === 'ODI' && nextOverNumber < 10);
   const isDeath =
     (format === 'T20' && nextOverNumber >= 15) ||
-    (format === 'ODI' && nextOverNumber >= 40) ||
-    (format === '100BALL' && nextOverNumber >= 13);
+    (format === 'ODI' && nextOverNumber >= 40);
 
   let bestId = candidates[0].playerId;
   let bestScore = -Infinity;
@@ -290,7 +279,6 @@ export function finalizeInningsOrMatchState(
       targetRuns: revisedTarget,
       status: 'in_progress',
       isBallInFlight: false,
-      ballsRemainingInInnings: currState.format === '100BALL' ? 100 : undefined,
       powerSurgeTaken: false,
       powerSurgeOversLeft: 0
     };
@@ -831,10 +819,6 @@ export function resolveSingleDeliveryState(
     isOverComplete && (currState.powerSurgeOversLeft || 0) > 0
       ? Math.max(0, (currState.powerSurgeOversLeft || 0) - 1)
       : currState.powerSurgeOversLeft;
-  const nextHundredBallsLeft =
-    currState.format === '100BALL'
-      ? Math.max(0, 100 - newBallsCompleted)
-      : currState.ballsRemainingInInnings;
 
   const nextState: MatchLiveState = {
     ...currState,
@@ -843,8 +827,7 @@ export function resolveSingleDeliveryState(
     lastBallOutcome: ballOutcome,
     isBallInFlight: false,
     hasDew: nextDewState,
-    powerSurgeOversLeft: nextPowerSurgeLeft,
-    ballsRemainingInInnings: nextHundredBallsLeft
+    powerSurgeOversLeft: nextPowerSurgeLeft
   };
 
   // Step 9: Check Innings / Match Termination Conditions immediately
@@ -870,7 +853,7 @@ export function createHeadlessMatchState(params: {
   homeTeam: Team;
   awayTeam: Team;
   venue: string;
-  format: 'T20' | 'ODI' | 'TEST' | '100BALL';
+  format: 'T20' | 'ODI' | 'TEST';
   leagueId: string;
   playerPool: Player[];
   pitchType?: MatchLiveState['pitchType'];
@@ -980,7 +963,6 @@ export function createHeadlessMatchState(params: {
     dlsState: null,
     hasDew,
     tacticalTrapAlert: null,
-    ballsRemainingInInnings: format === '100BALL' ? 100 : undefined,
     powerSurgeTaken: false,
     powerSurgeOversLeft: 0,
     bowlingTactics: bowlingTactics || {

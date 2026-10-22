@@ -113,7 +113,7 @@ export const HubScreen: React.FC = () => {
     'Pandey', 'U. Malik', 'Saurabh', 'Ramandeep', 'Ranjan'
   ]);
   const [isDataPortabilityOpen, setIsDataPortabilityOpen] = useState(false);
-  const [selectedMatchFormat, setSelectedMatchFormat] = useState<'T20' | '100BALL' | 'TEST'>('T20');
+  const [selectedMatchFormat, setSelectedMatchFormat] = useState<'T20' | 'ODI' | 'TEST'>('T20');
   const [scheduleFilter, setScheduleFilter] = useState<'all' | 'my_team' | 'other_teams' | 'intl_tours'>('all');
   const [doubleXpClaimed, setDoubleXpClaimed] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -1450,7 +1450,7 @@ export const HubScreen: React.FC = () => {
               FRANCHISE SUITE &amp; RULE FORMAT
             </span>
             <div className="flex items-center gap-1 bg-slate-900 p-0.5 rounded-lg border border-slate-800 text-[10px] font-mono font-bold">
-              {(['T20', '100BALL', 'TEST'] as const).map(fmt => (
+              {(['T20', 'ODI', 'TEST'] as const).map(fmt => (
                 <button
                   key={fmt}
                   onClick={() => {
@@ -1461,7 +1461,7 @@ export const HubScreen: React.FC = () => {
                     selectedMatchFormat === fmt ? 'bg-amber-400 text-black' : 'text-slate-400 hover:text-white'
                   }`}
                 >
-                  {fmt === '100BALL' ? '100-BALL' : fmt}
+                  {fmt}
                 </button>
               ))}
             </div>

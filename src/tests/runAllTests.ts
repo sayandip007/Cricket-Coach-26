@@ -434,7 +434,6 @@ runTest('REGRESSION', 'Phase 16: DRS Review Engine - Production Eligibility, Det
   assert.equal(getInitialReviewsForFormat('TEST'), 3, 'TEST format must grant 3 reviews per team');
   assert.equal(getInitialReviewsForFormat('T20'), 2, 'T20 format must grant 2 reviews per team');
   assert.equal(getInitialReviewsForFormat('ODI'), 2, 'ODI format must grant 2 reviews per team');
-  assert.equal(getInitialReviewsForFormat('100BALL'), 1, '100BALL format must grant 1 review per team');
 
   const wideDrs = checkDrsEligibility(wideBall, true, 2);
   assert.equal(wideDrs.canReview, false, 'Wide delivery must not be reviewable');

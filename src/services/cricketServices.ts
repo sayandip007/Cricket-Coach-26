@@ -183,7 +183,7 @@ export const FIELD_TEMPLATES: FieldTemplatePreset[] = [
 
 export function validateFieldRestrictions(
   fielders: FielderPosition[],
-  format: 'T20' | 'ODI' | 'TEST' | '100BALL',
+  format: 'T20' | 'ODI' | 'TEST',
   currentOver: number
 ): {
   valid: boolean;

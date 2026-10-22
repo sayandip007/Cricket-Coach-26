@@ -112,7 +112,7 @@ export interface DeliveryInput {
   bowler: Player;
   pitchType: PitchType;
   weather?: string;
-  format?: 'T20' | 'ODI' | 'TEST' | '100BALL';
+  format?: 'T20' | 'ODI' | 'TEST';
   hasDew?: boolean;
   powerSurgeActive?: boolean;
   matchSituation?: MatchSituationContext;
@@ -268,7 +268,7 @@ export function calculateEffectiveBowlingSkill(
   weather: string,
   hasDew?: boolean,
   over: number = 0,
-  format: 'T20' | 'ODI' | 'TEST' | '100BALL' = 'T20'
+  format: 'T20' | 'ODI' | 'TEST' = 'T20'
 ): number {
   const isPace = isPaceBowler(bowler);
   const baseBowl = bowler.ratings.bowl || 70;
@@ -278,8 +278,7 @@ export function calculateEffectiveBowlingSkill(
 
   const isDeathOvers =
     (format === 'T20' && over >= 15) ||
-    (format === 'ODI' && over >= 40) ||
-    (format === '100BALL' && over >= 13);
+    (format === 'ODI' && over >= 40);
   const isNewBall = over < 6;
 
   let effective = isDeathOvers
@@ -517,12 +516,10 @@ export function calculateDeliveryProbabilities(input: DeliveryInput): DeliveryPr
   const isPace = isPaceBowler(bowler);
   const isDeathOvers =
     (format === 'T20' && over >= 15) ||
-    (format === 'ODI' && over >= 40) ||
-    (format === '100BALL' && over >= 13);
+    (format === 'ODI' && over >= 40);
   const isPowerplay =
     (format === 'T20' && over < 6) ||
     (format === 'ODI' && over < 10) ||
-    (format === '100BALL' && over < 4) ||
     Boolean(powerSurgeActive);
 
   const effectiveBat = calculateEffectiveBattingSkill(
@@ -547,7 +544,7 @@ export function calculateDeliveryProbabilities(input: DeliveryInput): DeliveryPr
   // Positive skillDiff favors batter; negative favors bowler
   const skillDiff = clamp(effectiveBat - effectiveBowl, -28, 28);
 
-  // 1. Format Baselines (calibrated for realistic scorecards across T20, ODI, TEST, 100BALL)
+  // 1. Format Baselines (calibrated for realistic scorecards across T20, ODI, TEST)
   let baseWicket = 0.046;
   let baseDot = 0.35;
   let baseSingle = 0.36;
@@ -569,13 +566,6 @@ export function calculateDeliveryProbabilities(input: DeliveryInput): DeliveryPr
     baseTwoThree = 0.042;
     baseFour = 0.048;
     baseSix = 0.005;
-  } else if (format === '100BALL') {
-    baseWicket = 0.050;
-    baseDot = 0.34;
-    baseSingle = 0.355;
-    baseTwoThree = 0.068;
-    baseFour = 0.118;
-    baseSix = 0.052;
   }
 
   // 2. Extras probabilities (Wide, No-Ball, Bye/Leg-Bye)

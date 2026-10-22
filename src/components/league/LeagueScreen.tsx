@@ -386,7 +386,7 @@ export const LeagueScreen: React.FC = () => {
               >
                 <span>{l.name}</span>
                 <span className="text-[10px] font-mono opacity-80">
-                  {l.rules.overs === 100 ? '100-Ball' : l.rules.powerSurge ? 'T20 · Surge' : 'T20'}
+                  {l.rules.powerSurge ? 'T20 · Surge' : 'T20'}
                 </span>
               </button>
             ))}

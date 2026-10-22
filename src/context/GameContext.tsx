@@ -1113,9 +1113,9 @@ interface GameContextType {
   replyToInboxMessage: (messageId: string, replyOption: 'promise_game_time' | 'demand_nets' | 'back_current_xi') => void;
   // Match Engine
   matchLiveState: MatchLiveState | null;
-  startMatch: (opponentTeamId?: string, format?: 'T20' | 'ODI' | 'TEST' | '100BALL', isAwayMatch?: boolean, fixtureId?: string) => void;
-  createFranchiseMatchState: (homeTeamObj: Team, awayTeamObj: Team, leagueId: string, format: 'T20' | 'ODI' | 'TEST' | '100BALL', playoffStage?: 'q1' | 'eliminator' | 'q2' | 'final', fixtureId?: string) => MatchLiveState;
-  startInternationalMatch: (homeCountry?: string, awayCountry?: string, venue?: string, format?: 'T20' | 'ODI' | 'TEST' | '100BALL') => void;
+  startMatch: (opponentTeamId?: string, format?: 'T20' | 'ODI' | 'TEST', isAwayMatch?: boolean, fixtureId?: string) => void;
+  createFranchiseMatchState: (homeTeamObj: Team, awayTeamObj: Team, leagueId: string, format: 'T20' | 'ODI' | 'TEST', playoffStage?: 'q1' | 'eliminator' | 'q2' | 'final', fixtureId?: string) => MatchLiveState;
+  startInternationalMatch: (homeCountry?: string, awayCountry?: string, venue?: string, format?: 'T20' | 'ODI' | 'TEST') => void;
   playPlayoffMatch: (leagueId: string, stage: 'q1' | 'eliminator' | 'q2' | 'final') => void;
   simPlayoffMatch: (leagueId: string, stage: 'q1' | 'eliminator' | 'q2' | 'final') => void;
   resetPlayoffBracket: (leagueId: string) => void;
@@ -1180,7 +1180,7 @@ function simulateAiFixtureScorecard(
   homeTeamObj: Team,
   awayTeamObj: Team,
   venue: string,
-  format: 'T20' | 'ODI' | 'TEST' | '100BALL',
+  format: 'T20' | 'ODI' | 'TEST',
   leagueId: string,
   allPlayers: Player[],
   seed: number = 1
@@ -3006,7 +3006,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // START MATCH
   const startMatch = useCallback((
     opponentTeamId?: string,
-    format: 'T20' | 'ODI' | 'TEST' | '100BALL' = 'T20',
+    format: 'T20' | 'ODI' | 'TEST' = 'T20',
     isAwayMatch: boolean = false,
     fixtureId?: string
   ) => {
@@ -3041,7 +3041,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const initBowlers: BowlerInningsScorecard[] = buildBowlerScorecardPool(finalOppXI);
 
-    const maxOversForFormat = format === 'TEST' ? 90 : format === 'ODI' ? 50 : format === '100BALL' ? 16.4 : 20;
+    const maxOversForFormat = format === 'TEST' ? 90 : format === 'ODI' ? 50 : 20;
 
     const innings1: InningsData = {
       battingTeamId: userTeam.id,
@@ -3114,7 +3114,6 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       dlsState: null,
       hasDew: false,
       tacticalTrapAlert: null,
-      ballsRemainingInInnings: format === '100BALL' ? 100 : undefined,
       powerSurgeTaken: false,
       powerSurgeOversLeft: 0,
       bowlingTactics: {
@@ -3140,7 +3139,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     homeCountry: string = 'South Africa',
     awayCountry: string = 'India',
     venue: string = 'SuperSport Park, Centurion',
-    format: 'T20' | 'ODI' | 'TEST' | '100BALL' = 'T20'
+    format: 'T20' | 'ODI' | 'TEST' = 'T20'
   ) => {
     const coachedNation = coachProfile.nationalTeamId
       ? nations.find(n => n.id === coachProfile.nationalTeamId)
@@ -3234,7 +3233,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const initBowlers: BowlerInningsScorecard[] = buildBowlerScorecardPool(firstBowlXI);
 
-    const maxOversForFormat = format === 'TEST' ? 90 : format === 'ODI' ? 50 : format === '100BALL' ? 16.4 : 20;
+    const maxOversForFormat = format === 'TEST' ? 90 : format === 'ODI' ? 50 : 20;
 
     const innings1: InningsData = {
       battingTeamId: firstBatTeam.id,
@@ -3277,7 +3276,6 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       dlsState: null,
       hasDew: false,
       tacticalTrapAlert: null,
-      ballsRemainingInInnings: format === '100BALL' ? 100 : undefined,
       powerSurgeTaken: false,
       powerSurgeOversLeft: 0,
       bowlingTactics: {
@@ -3886,7 +3884,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const delta = isWin ? 3 : -2;
           return {
             ...n,
-            ratingT20: finishedMatch.format === 'T20' || finishedMatch.format === '100BALL' ? Math.max(150, n.ratingT20 + delta) : n.ratingT20,
+            ratingT20: finishedMatch.format === 'T20' ? Math.max(150, n.ratingT20 + delta) : n.ratingT20,
             ratingODI: finishedMatch.format === 'ODI' ? Math.max(50, n.ratingODI + delta) : n.ratingODI,
             ratingTest: finishedMatch.format === 'TEST' ? Math.max(40, n.ratingTest + delta) : n.ratingTest
           };
@@ -4429,7 +4427,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     homeTeamObj: Team,
     awayTeamObj: Team,
     leagueId: string,
-    format: 'T20' | 'ODI' | 'TEST' | '100BALL',
+    format: 'T20' | 'ODI' | 'TEST',
     playoffStage?: 'q1' | 'eliminator' | 'q2' | 'final',
     fixtureId?: string
   ): MatchLiveState => {
@@ -4461,7 +4459,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const initBowlers: BowlerInningsScorecard[] = buildBowlerScorecardPool(finalAwayXI);
 
-    const maxOversForFormat = format === 'TEST' ? 90 : format === 'ODI' ? 50 : format === '100BALL' ? 16.4 : 20;
+    const maxOversForFormat = format === 'TEST' ? 90 : format === 'ODI' ? 50 : 20;
 
     const innings1: InningsData = {
       battingTeamId: homeTeamObj.id,
@@ -4506,7 +4504,6 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       dlsState: null,
       hasDew: false,
       tacticalTrapAlert: null,
-      ballsRemainingInInnings: format === '100BALL' ? 100 : undefined,
       powerSurgeTaken: false,
       powerSurgeOversLeft: 0,
       bowlingTactics: {
@@ -4548,7 +4545,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const homeTeamObj = allTeamsPool.find(t => t.id === homeId) || teams[0];
     const awayTeamObj = allTeamsPool.find(t => t.id === awayId) || teams[1];
-    const format: 'T20' | '100BALL' = league.rules.overs === 100 ? '100BALL' : 'T20';
+    const format: 'T20' = 'T20';
 
     return { homeTeamObj, awayTeamObj, format };
   }, [leagues, teams]);
@@ -5287,7 +5284,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         wickets: 0,
         overs: 0,
         ballsCompleted: 0,
-        maxOvers: prev.innings1.maxOvers || (prev.format === 'TEST' ? 90 : prev.format === 'ODI' ? 50 : prev.format === '100BALL' ? 16.4 : 20),
+        maxOvers: prev.innings1.maxOvers || (prev.format === 'TEST' ? 90 : prev.format === 'ODI' ? 50 : 20),
         currentOverRuns: 0,
         batters: initBatters,
         bowlers: initBowlers,

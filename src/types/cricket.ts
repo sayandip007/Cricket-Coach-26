@@ -182,7 +182,7 @@ export interface CalendarMatchFixture {
   completedMatchState?: MatchLiveState;
   isInternational?: boolean;
   seriesName?: string;
-  format?: 'T20' | 'ODI' | 'TEST' | '100BALL';
+  format?: 'T20' | 'ODI' | 'TEST';
 }
 
 export interface TeamSeasonRecord {
@@ -385,7 +385,7 @@ export interface MatchLiveState {
   dateStr?: string;
   homeTeamShort?: string;
   awayTeamShort?: string;
-  format: 'T20' | 'ODI' | 'TEST' | '100BALL';
+  format: 'T20' | 'ODI' | 'TEST';
   homeTeam: Team;
   awayTeam: Team;
   venue: string;
@@ -431,7 +431,6 @@ export interface MatchLiveState {
   // Feature 6.4: Match-up trap warning
   tacticalTrapAlert?: string | null;
   // Feature 6.6: Multi-Format mechanics
-  ballsRemainingInInnings?: number; // The Hundred
   powerSurgeTaken?: boolean; // BBL
   powerSurgeOversLeft?: number;
 }

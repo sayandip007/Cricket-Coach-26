@@ -41,7 +41,7 @@ export interface ApproachAuditRow {
 }
 
 export interface FormatAuditSummary {
-  format: 'T20' | 'ODI' | '100BALL' | 'TEST';
+  format: 'T20' | 'ODI' | 'TEST';
   matchesSimulated: number;
   inningsCount: number;
   avgRuns: number;
@@ -76,9 +76,6 @@ export interface BatchMetricsReport {
   odiAvgRuns: number;
   odiAvgWickets: number;
   odiAvgRunRate: number;
-  hundredBallAvgRuns: number;
-  hundredBallAvgWickets: number;
-  hundredBallAvgRunRate: number;
   testAvgRuns: number;
   testAvgWickets: number;
   testAvgRunRate: number;
@@ -105,7 +102,7 @@ export interface BatchMetricsReport {
     deathOvers5BalancedRuns: number;
     deathOvers5SmashRuns: number;
   };
-  formatAudits1000: Record<'T20' | 'ODI' | '100BALL' | 'TEST', FormatAuditSummary>;
+  formatAudits1000: Record<'T20' | 'ODI' | 'TEST', FormatAuditSummary>;
 }
 
 function computePercentile(sorted: number[], pct: number): number {
@@ -139,7 +136,7 @@ export function runMatchEngineAuditTests(): {
   const homeTeam: Team = hydratedTeams[0];
   const awayTeam: Team = hydratedTeams[1];
 
-  const makeFreshMatch = (format: 'T20' | 'ODI' | 'TEST' | '100BALL' = 'T20') =>
+  const makeFreshMatch = (format: 'T20' | 'ODI' | 'TEST' = 'T20') =>
     createHeadlessMatchState({
       id: `audit_${format}_1`,
       homeTeam,
@@ -363,8 +360,8 @@ export function runMatchEngineAuditTests(): {
     );
   });
 
-  // 8. Bowler rotation prevents consecutive overs and enforces T20 (4-over), ODI (10-over), 100BALL (24-ball), and shortened-innings quotas
-  runTest('8. Bowler rotation prevents consecutive overs and enforces T20, ODI, 100BALL & shortened-innings quotas', () => {
+  // 8. Bowler rotation prevents consecutive overs and enforces T20 (4-over), ODI (10-over), and shortened-innings quotas
+  runTest('8. Bowler rotation prevents consecutive overs and enforces T20, ODI & shortened-innings quotas', () => {
     let state = makeFreshMatch('T20');
     let previousOverBowler = '';
 
@@ -387,9 +384,6 @@ export function runMatchEngineAuditTests(): {
 
     const odiQuota = getFormatQuotaConfig('ODI');
     assert(odiQuota.maxOversPerBowler === 10 && odiQuota.maxBalls === 300, 'ODI quota must be 10 overs / 300 balls');
-
-    const hundredQuota = getFormatQuotaConfig('100BALL');
-    assert(hundredQuota.maxOversPerBowler === 4 && hundredQuota.maxBallsPerBowler === 24 && hundredQuota.maxBalls === 100, '100BALL quota must be 100 balls / 24 max per bowler');
 
     // Shortened 10-over rain-reduced T20 innings -> max 2 overs (12 balls) per bowler!
     const shortenedQuota = getFormatQuotaConfig('T20', 10);
@@ -523,8 +517,8 @@ export function runMatchEngineAuditTests(): {
 
     // Verify format review allocations and bowling LBW appeal eligibility
     assert(getInitialReviewsForFormat('T20') === 2, 'T20 must grant 2 reviews per innings');
+    assert(getInitialReviewsForFormat('ODI') === 2, 'ODI must grant 2 reviews per innings');
     assert(getInitialReviewsForFormat('TEST') === 3, 'TEST must grant 3 reviews per innings');
-    assert(getInitialReviewsForFormat('100BALL') === 1, '100BALL must grant 1 review per innings');
 
     let state = makeFreshMatch('T20');
     state = resolveSingleDeliveryState(state, INITIAL_PLAYERS, {
@@ -1094,14 +1088,14 @@ export function runMatchEngineAuditTests(): {
     );
   });
 
-  // 18. Section 5 Audit: 1,000+ Matches per Limited-Overs Format (T20, ODI, 100BALL) + TEST Sample & Team-Strength Win Rate Audit
-  const formatAudits1000 = {} as Record<'T20' | 'ODI' | '100BALL' | 'TEST', FormatAuditSummary>;
+  // 18. Section 5 Audit: 1,000+ Matches per Limited-Overs Format (T20, ODI) + TEST Sample & Team-Strength Win Rate Audit
+  const formatAudits1000 = {} as Record<'T20' | 'ODI' | 'TEST', FormatAuditSummary>;
   let strongVsWeakWinRatePct = 0;
   let evenTeamsHomeWinRatePct = 0;
 
-  runTest('18. Large-scale 1,000-match simulation audit per limited-overs format (T20, ODI, 100BALL) + TEST & team-strength audit', () => {
+  runTest('18. Large-scale 1,000-match simulation audit per limited-overs format (T20, ODI) + TEST & team-strength audit', () => {
     const runFormatBatch = (
-      format: 'T20' | 'ODI' | '100BALL' | 'TEST',
+      format: 'T20' | 'ODI' | 'TEST',
       matchCount: number,
       seedBase: number
     ): FormatAuditSummary => {
@@ -1211,11 +1205,10 @@ export function runMatchEngineAuditTests(): {
 
     formatAudits1000.T20 = runFormatBatch('T20', 1000, 100000);
     formatAudits1000.ODI = runFormatBatch('ODI', 1000, 200000);
-    formatAudits1000['100BALL'] = runFormatBatch('100BALL', 1000, 300000);
     formatAudits1000.TEST = runFormatBatch('TEST', 50, 400000);
 
-    // Assert zero invalid states or quota violations across all 3,050 simulated matches (6,100 innings)
-    for (const fmt of ['T20', 'ODI', '100BALL', 'TEST'] as const) {
+    // Assert zero invalid states or quota violations across all simulated matches
+    for (const fmt of ['T20', 'ODI', 'TEST'] as const) {
       assert(
         formatAudits1000[fmt].invalidStatesDetected === 0,
         `Detected ${formatAudits1000[fmt].invalidStatesDetected} invalid states in ${fmt} batch`
@@ -1314,9 +1307,6 @@ export function runMatchEngineAuditTests(): {
     odiAvgRuns: formatAudits1000.ODI.avgRuns,
     odiAvgWickets: formatAudits1000.ODI.avgWickets,
     odiAvgRunRate: formatAudits1000.ODI.avgRunRate,
-    hundredBallAvgRuns: formatAudits1000['100BALL'].avgRuns,
-    hundredBallAvgWickets: formatAudits1000['100BALL'].avgWickets,
-    hundredBallAvgRunRate: formatAudits1000['100BALL'].avgRunRate,
     testAvgRuns: formatAudits1000.TEST.avgRuns,
     testAvgWickets: formatAudits1000.TEST.avgWickets,
     testAvgRunRate: formatAudits1000.TEST.avgRunRate,

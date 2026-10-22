@@ -26,12 +26,10 @@ export interface DrsDeliveryEvidence {
 /**
  * Get initial reviews count based on match format rules:
  * - TEST: 3 reviews per team per innings
- * - 100BALL: 1 review per team per innings
  * - T20 / ODI / Default: 2 reviews per team per innings
  */
 export function getInitialReviewsForFormat(format?: string): number {
   if (format === 'TEST') return 3;
-  if (format === '100BALL') return 1;
   return 2;
 }
 

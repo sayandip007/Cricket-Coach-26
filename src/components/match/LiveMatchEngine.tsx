@@ -424,9 +424,7 @@ export const LiveMatchEngine: React.FC = () => {
   );
 
   // Required Run Rate for 2nd innings
-  const maxBallsInInnings = matchLiveState.format === '100BALL'
-    ? 100
-    : Math.round((currentInnings.maxOvers || 20) * 6);
+  const maxBallsInInnings = Math.round((currentInnings.maxOvers || 20) * 6);
   const ballsRemaining = Math.max(1, maxBallsInInnings - currentInnings.ballsCompleted);
   const requiredRunRate = currentInningsIndex === 2 && targetRuns
     ? Math.max(0, ((targetRuns - currentInnings.runs) / ballsRemaining) * 6)
@@ -492,11 +490,6 @@ export const LiveMatchEngine: React.FC = () => {
             </div>
             <div className="text-[11px] text-slate-400 font-sans flex items-center gap-1.5 leading-tight">
               <span>{venueCityLabel} · {matchLiveState.format || 'T20'}</span>
-              {matchLiveState.format === '100BALL' && (
-                <span className="text-amber-400 font-mono font-bold">
-                  · {matchLiveState.ballsRemainingInInnings ?? Math.max(0, 100 - currentInnings.ballsCompleted)} BALLS LEFT
-                </span>
-              )}
             </div>
           </div>
         </div>
