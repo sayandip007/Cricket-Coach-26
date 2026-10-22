@@ -467,7 +467,12 @@ export const LiveMatchEngine: React.FC = () => {
     return '•';
   });
 
-  const displayShort = (s: string) => (s === 'PBKS' ? 'PUN' : s);
+  const displayShort = (s: string) => {
+    if (s === 'PBKS') return 'PUN';
+    if (s === 'BLR') return 'RCB';
+    if (s === 'KOL') return 'KKR';
+    return s;
+  };
   const venueCityLabel = (matchLiveState.venue.split(',')[1] || homeTeam.city || matchLiveState.venue.split(',')[0]).trim();
 
   return (
@@ -539,7 +544,7 @@ export const LiveMatchEngine: React.FC = () => {
               className="rounded-lg shadow"
             />
             <div className="flex items-baseline gap-1.5">
-              <span className="text-sm font-black text-white tracking-wide">{displayShort(battingTeam.shortName || 'KOL')}</span>
+              <span className="text-sm font-black text-white tracking-wide">{displayShort(battingTeam.shortName || 'KKR')}</span>
               <span className="text-[10px] text-slate-400 font-mono font-semibold">CRR</span>
               <span className="text-xs font-mono font-bold text-slate-200">{runRate}</span>
               {currentInningsIndex === 2 && requiredRunRate !== null && (

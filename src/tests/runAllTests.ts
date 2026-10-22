@@ -252,7 +252,8 @@ runTest('UNIT', 'Cricket Physics Engine (simulateBall) handles all tactical inpu
 // ============================================================================
 
 runTest('REGRESSION', 'Phase 16: Stadium & Kit Palettes dynamically adapt across all 10 IPL franchises & 8 Nations', () => {
-  assert.equal(resolveKitColor('KOL'), '#7c3aed');
+  assert.equal(resolveKitColor('KKR'), '#7c3aed');
+  assert.equal(resolveKitColor('RCB'), '#dc2626');
   assert.equal(resolveKitColor('PUN'), '#ef4444');
   assert.equal(resolveKitColor('CSK'), '#eab308');
   assert.equal(resolveKitColor('MI'), '#2563eb');
@@ -262,7 +263,7 @@ runTest('REGRESSION', 'Phase 16: Stadium & Kit Palettes dynamically adapt across
   assert.equal(resolveKitColor('AUS'), '#eab308');
   assert.equal(resolveKitColor('SA'), '#16a34a');
 
-  const edenTheme = getStadiumTheme('Eden Gardens, Kolkata', 'KOL', '#3A225D', '#F2A900', 'Flat Belter');
+  const edenTheme = getStadiumTheme('Eden Gardens, Kolkata', 'KKR', '#3A225D', '#F2A900', 'Flat Belter');
   const chepaukTheme = getStadiumTheme('MA Chidambaram Stadium, Chennai', 'CSK', '#F9CD05', '#00539F', 'Dry & Turning');
   const wankhedeTheme = getStadiumTheme('Wankhede Stadium, Mumbai', 'MI', '#004BA0', '#D4AF37', 'Green Seamer');
 
@@ -1121,22 +1122,22 @@ runTest('REGRESSION', 'Step 5.4: Batter-Bowler Analytics, Tactical Scenario Simu
   const optimalXI = selectOptimalAiPlayingXI(mi, CSV_PLAYERS, 'Dry & Turning');
   assert.equal(optimalXI.length, 11, 'AI Tactical Intelligence must select a valid 11-player lineup');
 
-  const h2hEmpty = computeHeadToHead('KOL', 'MUM', []);
-  assert.equal(h2hEmpty.teamAShort, 'KOL');
+  const h2hEmpty = computeHeadToHead('KKR', 'MUM', []);
+  assert.equal(h2hEmpty.teamAShort, 'KKR');
   assert.equal(h2hEmpty.teamBShort, 'MUM');
 
   // Test with CompletedMatchRecord where homeTeam and awayTeam are strings (as saved in completedMatchesHistory)
   const mockCompletedRecord: any = {
     id: 'm_test_1',
     dateStr: 'TODAY',
-    homeTeam: 'KOL',
+    homeTeam: 'KKR',
     awayTeam: 'MUM',
-    summary: 'KOL 182/4 vs MUM 175/8 · KOL won by 7 runs',
+    summary: 'KKR 182/4 vs MUM 175/8 · KKR won by 7 runs',
     playerOfMatch: 'Andre Russell',
     innings1: { team: 'KOLKATA KNIGHT RIDERS', runs: 182, wickets: 4, overs: '20.0', batters: [], bowlers: [] },
     innings2: { team: 'MUMBAI INDIANS', runs: 175, wickets: 8, overs: '20.0', batters: [], bowlers: [] }
   };
-  const h2hPopulated = computeHeadToHead('KOL', 'MUM', [mockCompletedRecord]);
+  const h2hPopulated = computeHeadToHead('KKR', 'MUM', [mockCompletedRecord]);
   assert.equal(h2hPopulated.totalPlayed, 1);
   assert.equal(h2hPopulated.teamAWins, 1);
   assert.equal(h2hPopulated.teamBWins, 0);
@@ -1153,7 +1154,7 @@ runTest('REGRESSION', 'Step 5.4: Batter-Bowler Analytics, Tactical Scenario Simu
     { id: 'corrupt_4', homeTeam: 12345, awayTeam: false },
     mockCompletedRecord
   ];
-  const resilientH2H = computeHeadToHead('KOL', 'MUM', corruptedHistory);
+  const resilientH2H = computeHeadToHead('KKR', 'MUM', corruptedHistory);
   assert.ok(resilientH2H.totalPlayed >= 1, 'Must safely parse mixed/corrupted match histories without throwing');
 
   // Verify generateCricketDirectorBriefing runs cleanly with corrupted history and missing teams
@@ -1463,8 +1464,8 @@ runTest('REGRESSION', 'Phase 21: TATA IPL 2026 Auction Audit — 350 PDF Players
     evaluateAiCounterBid({
       lot: p1,
       currentBidCr: 2.0,
-      currentBidderShort: 'KOL',
-      userTeamShort: 'KOL',
+      currentBidderShort: 'KKR',
+      userTeamShort: 'KKR',
       aiTeams: brokeAiSnapshots
     }),
     null,
@@ -1474,7 +1475,7 @@ runTest('REGRESSION', 'Phase 21: TATA IPL 2026 Auction Audit — 350 PDF Players
     lot: p1,
     startingBidCr: p1.basePriceCr,
     startingBidderShort: null,
-    userTeamShort: 'KOL',
+    userTeamShort: 'KKR',
     aiTeams: brokeAiSnapshots
   });
   assert.equal(unsoldSettlement.status, 'unsold', 'Lot must go unsold when no AI team can afford the reserve price');

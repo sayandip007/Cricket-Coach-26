@@ -195,7 +195,7 @@ const NationFlagBadge: React.FC<{ flag?: string; country?: string; size?: 'sm' |
 // ============================================================================
 
 const ROSTER_NAMES_BY_TEAM: Record<string, { batters: string[]; bowlers: string[]; fullName: string; teamId: string }> = {
-  BLR: {
+  RCB: {
     fullName: 'BENGALURU',
     teamId: 'team_blr',
     batters: ['Kohli', 'Salt', 'Padikkal', 'Patidar', 'J. Sharma', 'V. Iyer', 'David', 'K. Pandya', 'B. Kumar', 'Duffy', 'Hazlewood', 'Dayal'],
@@ -207,7 +207,7 @@ const ROSTER_NAMES_BY_TEAM: Record<string, { batters: string[]; bowlers: string[
     batters: ['Rohit', 'Rickelton', 'Varma', 'Jacks', 'S. Yadav', 'H. Pandya', 'S. Thakur', 'Boult', 'D. Chahar', 'Bumrah', 'Ghazanfar'],
     bowlers: ['Bumrah', 'Boult', 'D. Chahar', 'H. Pandya', 'Ghazanfar', 'S. Thakur', 'Jacks']
   },
-  KOL: {
+  KKR: {
     fullName: 'KOLKATA',
     teamId: 'team_kol',
     batters: ['Allen', 'Narine', 'Raghuvanshi', 'Rahane', 'Rinku', 'Ramandeep', 'A. Roy', 'H. Rana', 'Green', 'Pandey', 'Chakravarthy', 'Pathirana'],
@@ -270,12 +270,12 @@ function buildDetailedScorecard(
   potmName: string,
   customFlags?: { firstFlag?: string; secondFlag?: string; firstFull?: string; secondFull?: string }
 ): { innings1: ScorecardInningsData; innings2: ScorecardInningsData } {
-  // Exact match templates from user's screenshots for MUM v BLR, MUM v KOL, CHE v LKO, ENG v BAN
+  // Exact match templates from user's screenshots for MUM v RCB, MUM v KKR, CHE v LKO, ENG v BAN
   if (matchId === 'ipl_1') {
-    // 1 Apr: BLR v MUM -> MUM 178/3 beat BLR 177/9 by 7 wkts (Screenshot 5 exact match!)
+    // 1 Apr: RCB v MUM -> MUM 178/3 beat RCB 177/9 by 7 wkts (Screenshot 5 exact match!)
     return {
       innings1: {
-        teamShort: 'BLR',
+        teamShort: 'RCB',
         teamName: 'BENGALURU',
         teamId: 'team_blr',
         totalRuns: 177,
@@ -373,10 +373,10 @@ function buildDetailedScorecard(
   }
 
   if (matchId === 'ipl_28') {
-    // 24 Apr: MUM v KOL -> MUM 95/0 beat KOL 92/8 by 10 wkts (Video 00:08 exact match!)
+    // 24 Apr: MUM v KKR -> MUM 95/0 beat KKR 92/8 by 10 wkts (Video 00:08 exact match!)
     return {
       innings1: {
-        teamShort: 'KOL',
+        teamShort: 'KKR',
         teamName: 'KOLKATA',
         teamId: 'team_kol',
         totalRuns: 92,
@@ -773,79 +773,79 @@ interface RawLeagueFixture {
 }
 
 const IPL_2026_RAW_FIXTURES: RawLeagueFixture[] = [
-  { id: 'ipl_1', date: '1 Apr', home: 'BLR', away: 'MUM', firstBat: 'BLR', firstRuns: 177, firstWkts: 9, secondBat: 'MUM', secondRuns: 178, secondWkts: 3, margin: 'by 7 wkts', potm: 'Jacks' },
+  { id: 'ipl_1', date: '1 Apr', home: 'RCB', away: 'MUM', firstBat: 'RCB', firstRuns: 177, firstWkts: 9, secondBat: 'MUM', secondRuns: 178, secondWkts: 3, margin: 'by 7 wkts', potm: 'Jacks' },
   { id: 'ipl_2', date: '2 Apr', home: 'HYD', away: 'CHE', firstBat: 'HYD', firstRuns: 186, firstWkts: 9, secondBat: 'CHE', secondRuns: 184, secondWkts: 8, margin: 'by 2 runs', potm: 'Klaasen' },
   { id: 'ipl_3', date: '3 Apr', home: 'DEL', away: 'LKO', firstBat: 'LKO', firstRuns: 192, firstWkts: 5, secondBat: 'DEL', secondRuns: 172, secondWkts: 10, margin: 'by 20 runs', potm: 'Pooran' },
-  { id: 'ipl_4', date: '4 Apr', home: 'KOL', away: 'PUN', firstBat: 'PUN', firstRuns: 196, firstWkts: 7, secondBat: 'KOL', secondRuns: 109, secondWkts: 10, margin: 'by 87 runs', potm: 'S. Iyer' },
+  { id: 'ipl_4', date: '4 Apr', home: 'KKR', away: 'PUN', firstBat: 'PUN', firstRuns: 196, firstWkts: 7, secondBat: 'KKR', secondRuns: 109, secondWkts: 10, margin: 'by 87 runs', potm: 'S. Iyer' },
   { id: 'ipl_5', date: '4 Apr', home: 'RAJ', away: 'GUJ', firstBat: 'GUJ', firstRuns: 162, firstWkts: 8, secondBat: 'RAJ', secondRuns: 163, secondWkts: 7, margin: 'by 3 wkts', potm: 'Jaiswal' },
-  { id: 'ipl_6', date: '5 Apr', home: 'MUM', away: 'BLR', firstBat: 'BLR', firstRuns: 160, firstWkts: 7, secondBat: 'MUM', secondRuns: 163, secondWkts: 3, margin: 'by 7 wkts', potm: 'S. Yadav' },
+  { id: 'ipl_6', date: '5 Apr', home: 'MUM', away: 'RCB', firstBat: 'RCB', firstRuns: 160, firstWkts: 7, secondBat: 'MUM', secondRuns: 163, secondWkts: 3, margin: 'by 7 wkts', potm: 'S. Yadav' },
   { id: 'ipl_7', date: '5 Apr', home: 'DEL', away: 'CHE', firstBat: 'DEL', firstRuns: 159, firstWkts: 5, secondBat: 'CHE', secondRuns: 160, secondWkts: 6, margin: 'by 4 wkts', potm: 'Gaikwad' },
   { id: 'ipl_8', date: '6 Apr', home: 'HYD', away: 'PUN', firstBat: 'PUN', firstRuns: 234, firstWkts: 3, secondBat: 'HYD', secondRuns: 205, secondWkts: 9, margin: 'by 29 runs', potm: 'Prabhsimran' },
   { id: 'ipl_9', date: '7 Apr', home: 'LKO', away: 'RAJ', firstBat: 'RAJ', firstRuns: 167, firstWkts: 9, secondBat: 'LKO', secondRuns: 156, secondWkts: 9, margin: 'by 11 runs', potm: 'Archer' },
-  { id: 'ipl_10', date: '8 Apr', home: 'GUJ', away: 'KOL', firstBat: 'GUJ', firstRuns: 164, firstWkts: 8, secondBat: 'KOL', secondRuns: 165, secondWkts: 3, margin: 'by 7 wkts', potm: 'Narine' },
+  { id: 'ipl_10', date: '8 Apr', home: 'GUJ', away: 'KKR', firstBat: 'GUJ', firstRuns: 164, firstWkts: 8, secondBat: 'KKR', secondRuns: 165, secondWkts: 3, margin: 'by 7 wkts', potm: 'Narine' },
   { id: 'ipl_11', date: '9 Apr', home: 'LKO', away: 'MUM', firstBat: 'LKO', firstRuns: 142, firstWkts: 6, secondBat: 'MUM', secondRuns: 144, secondWkts: 4, margin: 'by 6 wkts', potm: 'Bumrah' },
   { id: 'ipl_12', date: '10 Apr', home: 'DEL', away: 'RAJ', firstBat: 'RAJ', firstRuns: 241, firstWkts: 7, secondBat: 'DEL', secondRuns: 179, secondWkts: 8, margin: 'by 62 runs', potm: 'Parag' },
-  { id: 'ipl_13', date: '11 Apr', home: 'KOL', away: 'CHE', firstBat: 'KOL', firstRuns: 174, firstWkts: 8, secondBat: 'CHE', secondRuns: 150, secondWkts: 10, margin: 'by 24 runs', potm: 'Chakravarthy' },
+  { id: 'ipl_13', date: '11 Apr', home: 'KKR', away: 'CHE', firstBat: 'KKR', firstRuns: 174, firstWkts: 8, secondBat: 'CHE', secondRuns: 150, secondWkts: 10, margin: 'by 24 runs', potm: 'Chakravarthy' },
   { id: 'ipl_14', date: '11 Apr', home: 'GUJ', away: 'PUN', firstBat: 'GUJ', firstRuns: 139, firstWkts: 7, secondBat: 'PUN', secondRuns: 149, secondWkts: 10, margin: 'by 10 runs', potm: 'Arshdeep' },
-  { id: 'ipl_15', date: '12 Apr', home: 'HYD', away: 'BLR', firstBat: 'BLR', firstRuns: 228, firstWkts: 5, secondBat: 'HYD', secondRuns: 142, secondWkts: 10, margin: 'by 86 runs', potm: 'Kohli' },
+  { id: 'ipl_15', date: '12 Apr', home: 'HYD', away: 'RCB', firstBat: 'RCB', firstRuns: 228, firstWkts: 5, secondBat: 'HYD', secondRuns: 142, secondWkts: 10, margin: 'by 86 runs', potm: 'Kohli' },
   { id: 'ipl_16', date: '12 Apr', home: 'RAJ', away: 'DEL', firstBat: 'RAJ', firstRuns: 238, firstWkts: 7, secondBat: 'DEL', secondRuns: 123, secondWkts: 10, margin: 'by 115 runs', potm: 'Jaiswal' },
-  { id: 'ipl_17', date: '13 Apr', home: 'KOL', away: 'LKO', firstBat: 'LKO', firstRuns: 93, firstWkts: 10, secondBat: 'KOL', secondRuns: 97, secondWkts: 2, margin: 'by 8 wkts', potm: 'H. Rana' },
+  { id: 'ipl_17', date: '13 Apr', home: 'KKR', away: 'LKO', firstBat: 'LKO', firstRuns: 93, firstWkts: 10, secondBat: 'KKR', secondRuns: 97, secondWkts: 2, margin: 'by 8 wkts', potm: 'H. Rana' },
   { id: 'ipl_18', date: '14 Apr', home: 'MUM', away: 'HYD', firstBat: 'HYD', firstRuns: 204, firstWkts: 5, secondBat: 'MUM', secondRuns: 207, secondWkts: 2, margin: 'by 8 wkts', potm: 'Rohit' },
   { id: 'ipl_19', date: '15 Apr', home: 'GUJ', away: 'CHE', firstBat: 'GUJ', firstRuns: 143, firstWkts: 8, secondBat: 'CHE', secondRuns: 147, secondWkts: 4, margin: 'by 6 wkts', potm: 'Dube' },
-  { id: 'ipl_20', date: '16 Apr', home: 'PUN', away: 'BLR', firstBat: 'PUN', firstRuns: 184, firstWkts: 8, secondBat: 'BLR', secondRuns: 180, secondWkts: 5, margin: 'by 4 runs', potm: 'Chahal' },
-  { id: 'ipl_21', date: '17 Apr', home: 'DEL', away: 'KOL', abandoned: true, firstBat: 'DEL', firstRuns: 0, firstWkts: 0, secondBat: 'KOL', secondRuns: 0, secondWkts: 0, margin: '', potm: '' },
+  { id: 'ipl_20', date: '16 Apr', home: 'PUN', away: 'RCB', firstBat: 'PUN', firstRuns: 184, firstWkts: 8, secondBat: 'RCB', secondRuns: 180, secondWkts: 5, margin: 'by 4 runs', potm: 'Chahal' },
+  { id: 'ipl_21', date: '17 Apr', home: 'DEL', away: 'KKR', abandoned: true, firstBat: 'DEL', firstRuns: 0, firstWkts: 0, secondBat: 'KKR', secondRuns: 0, secondWkts: 0, margin: '', potm: '' },
   { id: 'ipl_22', date: '18 Apr', home: 'GUJ', away: 'LKO', firstBat: 'LKO', firstRuns: 54, firstWkts: 2, secondBat: 'GUJ', secondRuns: 56, secondWkts: 0, margin: 'by 10 wkts', potm: 'Gill' },
   { id: 'ipl_23', date: '18 Apr', home: 'PUN', away: 'MUM', firstBat: 'MUM', firstRuns: 176, firstWkts: 7, secondBat: 'PUN', secondRuns: 166, secondWkts: 9, margin: 'by 10 runs', potm: 'Bumrah' },
-  { id: 'ipl_24', date: '19 Apr', home: 'BLR', away: 'HYD', firstBat: 'BLR', firstRuns: 207, firstWkts: 4, secondBat: 'HYD', secondRuns: 204, secondWkts: 5, margin: 'by 3 runs', potm: 'Salt' },
+  { id: 'ipl_24', date: '19 Apr', home: 'RCB', away: 'HYD', firstBat: 'RCB', firstRuns: 207, firstWkts: 4, secondBat: 'HYD', secondRuns: 204, secondWkts: 5, margin: 'by 3 runs', potm: 'Salt' },
   { id: 'ipl_25', date: '19 Apr', home: 'CHE', away: 'RAJ', firstBat: 'RAJ', firstRuns: 180, firstWkts: 8, secondBat: 'CHE', secondRuns: 95, secondWkts: 10, margin: 'by 85 runs', potm: 'Hasaranga' },
   { id: 'ipl_26', date: '20 Apr', home: 'LKO', away: 'DEL', firstBat: 'DEL', firstRuns: 191, firstWkts: 7, secondBat: 'LKO', secondRuns: 192, secondWkts: 4, margin: 'by 6 wkts', potm: 'Pant' },
-  { id: 'ipl_27', date: '21 Apr', home: 'CHE', away: 'KOL', firstBat: 'KOL', firstRuns: 129, firstWkts: 9, secondBat: 'CHE', secondRuns: 118, secondWkts: 10, margin: 'by 11 runs', potm: 'Narine' },
+  { id: 'ipl_27', date: '21 Apr', home: 'CHE', away: 'KKR', firstBat: 'KKR', firstRuns: 129, firstWkts: 9, secondBat: 'CHE', secondRuns: 118, secondWkts: 10, margin: 'by 11 runs', potm: 'Narine' },
   { id: 'ipl_28_pre', date: '22 Apr', home: 'PUN', away: 'RAJ', firstBat: 'RAJ', firstRuns: 186, firstWkts: 9, secondBat: 'PUN', secondRuns: 137, secondWkts: 10, margin: 'by 49 runs', potm: 'Archer' },
   { id: 'ipl_29_pre', date: '23 Apr', home: 'HYD', away: 'GUJ', firstBat: 'GUJ', firstRuns: 189, firstWkts: 7, secondBat: 'HYD', secondRuns: 136, secondWkts: 10, margin: 'by 53 runs', potm: 'Rashid' },
-  { id: 'ipl_28', date: '24 Apr', home: 'MUM', away: 'KOL', firstBat: 'KOL', firstRuns: 92, firstWkts: 8, secondBat: 'MUM', secondRuns: 95, secondWkts: 0, margin: 'by 10 wkts', potm: 'Rohit' },
-  { id: 'ipl_29', date: '25 Apr', home: 'BLR', away: 'DEL', firstBat: 'DEL', firstRuns: 162, firstWkts: 6, secondBat: 'BLR', secondRuns: 166, secondWkts: 4, margin: 'by 6 wkts', potm: 'Patidar' },
+  { id: 'ipl_28', date: '24 Apr', home: 'MUM', away: 'KKR', firstBat: 'KKR', firstRuns: 92, firstWkts: 8, secondBat: 'MUM', secondRuns: 95, secondWkts: 0, margin: 'by 10 wkts', potm: 'Rohit' },
+  { id: 'ipl_29', date: '25 Apr', home: 'RCB', away: 'DEL', firstBat: 'DEL', firstRuns: 162, firstWkts: 6, secondBat: 'RCB', secondRuns: 166, secondWkts: 4, margin: 'by 6 wkts', potm: 'Patidar' },
   { id: 'ipl_30', date: '25 Apr', home: 'HYD', away: 'RAJ', firstBat: 'RAJ', firstRuns: 174, firstWkts: 8, secondBat: 'HYD', secondRuns: 167, secondWkts: 7, margin: 'by 7 runs', potm: 'Sandeep' },
   { id: 'ipl_31', date: '26 Apr', home: 'PUN', away: 'GUJ', firstBat: 'GUJ', firstRuns: 155, firstWkts: 6, secondBat: 'PUN', secondRuns: 159, secondWkts: 5, margin: 'by 5 wkts', potm: 'Shashank' },
   { id: 'ipl_32', date: '26 Apr', home: 'CHE', away: 'LKO', firstBat: 'LKO', firstRuns: 161, firstWkts: 8, secondBat: 'CHE', secondRuns: 164, secondWkts: 5, margin: 'by 5 wkts', potm: 'Shahbaz' },
   { id: 'ipl_33', date: '27 Apr', home: 'MUM', away: 'DEL', firstBat: 'DEL', firstRuns: 91, firstWkts: 0, secondBat: 'MUM', secondRuns: 96, secondWkts: 2, margin: 'by 8 wkts', potm: 'Boult' },
-  { id: 'ipl_34', date: '28 Apr', home: 'KOL', away: 'BLR', firstBat: 'KOL', firstRuns: 170, firstWkts: 6, secondBat: 'BLR', secondRuns: 173, secondWkts: 5, margin: 'by 5 wkts', potm: 'Kohli' },
+  { id: 'ipl_34', date: '28 Apr', home: 'KKR', away: 'RCB', firstBat: 'KKR', firstRuns: 170, firstWkts: 6, secondBat: 'RCB', secondRuns: 173, secondWkts: 5, margin: 'by 5 wkts', potm: 'Kohli' },
   { id: 'ipl_35', date: '29 Apr', home: 'RAJ', away: 'LKO', firstBat: 'RAJ', firstRuns: 190, firstWkts: 8, secondBat: 'LKO', secondRuns: 156, secondWkts: 9, margin: 'by 34 runs', potm: 'Hetmyer' },
   { id: 'ipl_36', date: '30 Apr', home: 'MUM', away: 'GUJ', firstBat: 'MUM', firstRuns: 181, firstWkts: 5, secondBat: 'GUJ', secondRuns: 182, secondWkts: 4, margin: 'by 6 wkts', potm: 'Buttler' },
   { id: 'ipl_37', date: '1 May', home: 'CHE', away: 'PUN', firstBat: 'PUN', firstRuns: 146, firstWkts: 5, secondBat: 'CHE', secondRuns: 149, secondWkts: 6, margin: 'by 4 wkts', potm: 'Noor' },
   { id: 'ipl_38', date: '2 May', home: 'DEL', away: 'HYD', firstBat: 'HYD', firstRuns: 200, firstWkts: 6, secondBat: 'DEL', secondRuns: 167, secondWkts: 8, margin: 'by 33 runs', potm: 'Head' },
-  { id: 'ipl_39', date: '2 May', home: 'BLR', away: 'RAJ', firstBat: 'RAJ', firstRuns: 220, firstWkts: 9, secondBat: 'BLR', secondRuns: 163, secondWkts: 10, margin: 'by 57 runs', potm: 'Jaiswal' },
+  { id: 'ipl_39', date: '2 May', home: 'RCB', away: 'RAJ', firstBat: 'RAJ', firstRuns: 220, firstWkts: 9, secondBat: 'RCB', secondRuns: 163, secondWkts: 10, margin: 'by 57 runs', potm: 'Jaiswal' },
   { id: 'ipl_40', date: '3 May', home: 'LKO', away: 'CHE', firstBat: 'LKO', firstRuns: 140, firstWkts: 5, secondBat: 'CHE', secondRuns: 144, secondWkts: 5, margin: 'by 5 wkts', potm: 'Gaikwad' },
   { id: 'ipl_41', date: '3 May', home: 'GUJ', away: 'MUM', firstBat: 'MUM', firstRuns: 178, firstWkts: 8, secondBat: 'GUJ', secondRuns: 173, secondWkts: 5, margin: 'by 5 runs', potm: 'H. Pandya' },
-  { id: 'ipl_42', date: '4 May', home: 'KOL', away: 'HYD', firstBat: 'KOL', firstRuns: 173, firstWkts: 6, secondBat: 'HYD', secondRuns: 177, secondWkts: 5, margin: 'by 5 wkts', potm: 'Abhishek' },
-  { id: 'ipl_43', date: '5 May', home: 'BLR', away: 'PUN', firstBat: 'PUN', firstRuns: 205, firstWkts: 10, secondBat: 'BLR', secondRuns: 67, secondWkts: 10, margin: 'by 138 runs', potm: 'Arshdeep' },
-  { id: 'ipl_44', date: '6 May', home: 'KOL', away: 'DEL', firstBat: 'DEL', firstRuns: 99, firstWkts: 6, secondBat: 'KOL', secondRuns: 115, secondWkts: 3, margin: 'by 7 wkts', potm: 'Rinku' },
+  { id: 'ipl_42', date: '4 May', home: 'KKR', away: 'HYD', firstBat: 'KKR', firstRuns: 173, firstWkts: 6, secondBat: 'HYD', secondRuns: 177, secondWkts: 5, margin: 'by 5 wkts', potm: 'Abhishek' },
+  { id: 'ipl_43', date: '5 May', home: 'RCB', away: 'PUN', firstBat: 'PUN', firstRuns: 205, firstWkts: 10, secondBat: 'RCB', secondRuns: 67, secondWkts: 10, margin: 'by 138 runs', potm: 'Arshdeep' },
+  { id: 'ipl_44', date: '6 May', home: 'KKR', away: 'DEL', firstBat: 'DEL', firstRuns: 99, firstWkts: 6, secondBat: 'KKR', secondRuns: 115, secondWkts: 3, margin: 'by 7 wkts', potm: 'Rinku' },
   { id: 'ipl_45', date: '7 May', home: 'HYD', away: 'MUM', firstBat: 'HYD', firstRuns: 132, firstWkts: 10, secondBat: 'MUM', secondRuns: 133, secondWkts: 2, margin: 'by 8 wkts', potm: 'Bumrah' },
   { id: 'ipl_46', date: '8 May', home: 'LKO', away: 'GUJ', firstBat: 'GUJ', firstRuns: 203, firstWkts: 10, secondBat: 'LKO', secondRuns: 194, secondWkts: 6, margin: 'by 9 runs', potm: 'Sai Sudharsan' },
   { id: 'ipl_47', date: '9 May', home: 'PUN', away: 'DEL', firstBat: 'PUN', firstRuns: 172, firstWkts: 9, secondBat: 'DEL', secondRuns: 79, secondWkts: 10, margin: 'by 93 runs', potm: 'Chahal' },
-  { id: 'ipl_48', date: '9 May', home: 'CHE', away: 'BLR', firstBat: 'CHE', firstRuns: 79, firstWkts: 10, secondBat: 'BLR', secondRuns: 84, secondWkts: 1, margin: 'by 9 wkts', potm: 'Hazlewood' },
+  { id: 'ipl_48', date: '9 May', home: 'CHE', away: 'RCB', firstBat: 'CHE', firstRuns: 79, firstWkts: 10, secondBat: 'RCB', secondRuns: 84, secondWkts: 1, margin: 'by 9 wkts', potm: 'Hazlewood' },
   { id: 'ipl_49', date: '10 May', home: 'RAJ', away: 'HYD', firstBat: 'RAJ', firstRuns: 200, firstWkts: 7, secondBat: 'HYD', secondRuns: 199, secondWkts: 2, margin: 'by 1 run', potm: 'Sandeep' },
-  { id: 'ipl_50', date: '10 May', home: 'LKO', away: 'KOL', firstBat: 'LKO', firstRuns: 95, firstWkts: 10, secondBat: 'KOL', secondRuns: 155, secondWkts: 7, margin: 'by 60 runs', potm: 'Narine' },
+  { id: 'ipl_50', date: '10 May', home: 'LKO', away: 'KKR', firstBat: 'LKO', firstRuns: 95, firstWkts: 10, secondBat: 'KKR', secondRuns: 155, secondWkts: 7, margin: 'by 60 runs', potm: 'Narine' },
   { id: 'ipl_51', date: '11 May', home: 'CHE', away: 'MUM', firstBat: 'CHE', firstRuns: 171, firstWkts: 7, secondBat: 'MUM', secondRuns: 177, secondWkts: 1, margin: 'by 9 wkts', potm: 'Rickelton' },
-  { id: 'ipl_52', date: '12 May', home: 'BLR', away: 'GUJ', firstBat: 'BLR', firstRuns: 197, firstWkts: 6, secondBat: 'GUJ', secondRuns: 203, secondWkts: 3, margin: 'by 7 wkts', potm: 'Gill' },
+  { id: 'ipl_52', date: '12 May', home: 'RCB', away: 'GUJ', firstBat: 'RCB', firstRuns: 197, firstWkts: 6, secondBat: 'GUJ', secondRuns: 203, secondWkts: 3, margin: 'by 7 wkts', potm: 'Gill' },
   { id: 'ipl_53', date: '13 May', home: 'DEL', away: 'PUN', firstBat: 'DEL', firstRuns: 145, firstWkts: 3, secondBat: 'PUN', secondRuns: 148, secondWkts: 5, margin: 'by 5 wkts', potm: 'Stoinis' },
-  { id: 'ipl_54', date: '14 May', home: 'KOL', away: 'RAJ', firstBat: 'RAJ', firstRuns: 132, firstWkts: 7, secondBat: 'KOL', secondRuns: 135, secondWkts: 4, margin: 'by 6 wkts', potm: 'Rahane' },
+  { id: 'ipl_54', date: '14 May', home: 'KKR', away: 'RAJ', firstBat: 'RAJ', firstRuns: 132, firstWkts: 7, secondBat: 'KKR', secondRuns: 135, secondWkts: 4, margin: 'by 6 wkts', potm: 'Rahane' },
   { id: 'ipl_55', date: '15 May', home: 'HYD', away: 'LKO', firstBat: 'HYD', firstRuns: 188, firstWkts: 5, secondBat: 'LKO', secondRuns: 189, secondWkts: 4, margin: 'by 6 wkts', potm: 'Pooran' },
   { id: 'ipl_56', date: '16 May', home: 'MUM', away: 'PUN', firstBat: 'MUM', firstRuns: 89, firstWkts: 7, secondBat: 'PUN', secondRuns: 91, secondWkts: 8, margin: 'by 2 wkts', potm: 'Jansen' },
-  { id: 'ipl_57', date: '16 May', home: 'GUJ', away: 'BLR', firstBat: 'GUJ', firstRuns: 127, firstWkts: 10, secondBat: 'BLR', secondRuns: 130, secondWkts: 3, margin: 'by 7 wkts', potm: 'Salt' },
+  { id: 'ipl_57', date: '16 May', home: 'GUJ', away: 'RCB', firstBat: 'GUJ', firstRuns: 127, firstWkts: 10, secondBat: 'RCB', secondRuns: 130, secondWkts: 3, margin: 'by 7 wkts', potm: 'Salt' },
   { id: 'ipl_58', date: '17 May', home: 'RAJ', away: 'CHE', abandoned: true, firstBat: 'RAJ', firstRuns: 0, firstWkts: 0, secondBat: 'CHE', secondRuns: 0, secondWkts: 0, margin: '', potm: '' },
-  { id: 'ipl_59', date: '18 May', home: 'BLR', away: 'KOL', firstBat: 'BLR', firstRuns: 118, firstWkts: 10, secondBat: 'KOL', secondRuns: 120, secondWkts: 2, margin: 'by 8 wkts', potm: 'Chakravarthy' },
+  { id: 'ipl_59', date: '18 May', home: 'RCB', away: 'KKR', firstBat: 'RCB', firstRuns: 118, firstWkts: 10, secondBat: 'KKR', secondRuns: 120, secondWkts: 2, margin: 'by 8 wkts', potm: 'Chakravarthy' },
   { id: 'ipl_60', date: '19 May', home: 'CHE', away: 'DEL', firstBat: 'DEL', firstRuns: 116, firstWkts: 10, secondBat: 'CHE', secondRuns: 146, secondWkts: 10, margin: 'by 30 runs', potm: 'Ellis' },
   { id: 'ipl_61', date: '20 May', home: 'GUJ', away: 'HYD', firstBat: 'GUJ', firstRuns: 171, firstWkts: 7, secondBat: 'HYD', secondRuns: 137, secondWkts: 6, margin: 'by 34 runs', potm: 'Rashid' },
   { id: 'ipl_62', date: '21 May', home: 'RAJ', away: 'MUM', firstBat: 'MUM', firstRuns: 138, firstWkts: 5, secondBat: 'RAJ', secondRuns: 137, secondWkts: 10, margin: 'by 1 run', potm: 'Bumrah' },
   { id: 'ipl_63', date: '22 May', home: 'PUN', away: 'LKO', firstBat: 'PUN', firstRuns: 134, firstWkts: 2, secondBat: 'LKO', secondRuns: 133, secondWkts: 10, margin: 'by 1 run', potm: 'Arshdeep' },
-  { id: 'ipl_64', date: '23 May', home: 'RAJ', away: 'KOL', upcoming: true, firstBat: 'KOL', firstRuns: 185, firstWkts: 3, secondBat: 'RAJ', secondRuns: 125, secondWkts: 10, margin: 'by 60 runs', potm: 'Narine' },
+  { id: 'ipl_64', date: '23 May', home: 'RAJ', away: 'KKR', upcoming: true, firstBat: 'KKR', firstRuns: 185, firstWkts: 3, secondBat: 'RAJ', secondRuns: 125, secondWkts: 10, margin: 'by 60 runs', potm: 'Narine' },
   { id: 'ipl_65', date: '23 May', home: 'DEL', away: 'GUJ', upcoming: true, firstBat: 'DEL', firstRuns: 165, firstWkts: 7, secondBat: 'GUJ', secondRuns: 158, secondWkts: 5, margin: 'by 7 runs', potm: 'KL Rahul' },
   { id: 'ipl_66', date: '24 May', home: 'MUM', away: 'CHE', upcoming: true, firstBat: 'MUM', firstRuns: 162, firstWkts: 5, secondBat: 'CHE', secondRuns: 153, secondWkts: 9, margin: 'by 9 runs', potm: 'S. Yadav' },
-  { id: 'ipl_67', date: '24 May', home: 'LKO', away: 'BLR', upcoming: true, firstBat: 'BLR', firstRuns: 207, firstWkts: 4, secondBat: 'LKO', secondRuns: 176, secondWkts: 5, margin: 'by 31 runs', potm: 'Kohli' },
+  { id: 'ipl_67', date: '24 May', home: 'LKO', away: 'RCB', upcoming: true, firstBat: 'RCB', firstRuns: 207, firstWkts: 4, secondBat: 'LKO', secondRuns: 176, secondWkts: 5, margin: 'by 31 runs', potm: 'Kohli' },
   { id: 'ipl_68', date: '25 May', home: 'PUN', away: 'HYD', upcoming: true, firstBat: 'PUN', firstRuns: 230, firstWkts: 7, secondBat: 'HYD', secondRuns: 92, secondWkts: 10, margin: 'by 138 runs', potm: 'S. Iyer' },
   { id: 'ipl_69', date: '27 May', home: 'TBD', away: 'TBD', upcoming: true, firstBat: 'MUM', firstRuns: 144, firstWkts: 4, secondBat: 'PUN', secondRuns: 141, secondWkts: 8, margin: 'by 6 wkts', potm: 'Rohit' },
-  { id: 'ipl_70', date: '28 May', home: 'TBD', away: 'TBD', upcoming: true, firstBat: 'RAJ', firstRuns: 128, firstWkts: 7, secondBat: 'KOL', secondRuns: 129, secondWkts: 5, margin: 'by 5 wkts', potm: 'Rinku' },
-  { id: 'ipl_71', date: '30 May', home: 'TBD', away: 'TBD', upcoming: true, firstBat: 'PUN', firstRuns: 0, firstWkts: 0, secondBat: 'KOL', secondRuns: 0, secondWkts: 0, margin: '', potm: '' },
+  { id: 'ipl_70', date: '28 May', home: 'TBD', away: 'TBD', upcoming: true, firstBat: 'RAJ', firstRuns: 128, firstWkts: 7, secondBat: 'KKR', secondRuns: 129, secondWkts: 5, margin: 'by 5 wkts', potm: 'Rinku' },
+  { id: 'ipl_71', date: '30 May', home: 'TBD', away: 'TBD', upcoming: true, firstBat: 'PUN', firstRuns: 0, firstWkts: 0, secondBat: 'KKR', secondRuns: 0, secondWkts: 0, margin: '', potm: '' },
   { id: 'ipl_72', date: '2 Jun', home: 'TBD', away: 'TBD', upcoming: true, firstBat: 'MUM', firstRuns: 0, firstWkts: 0, secondBat: 'TBD', secondRuns: 0, secondWkts: 0, margin: '', potm: '' }
 ];
 
@@ -1856,14 +1856,21 @@ export const SeasonScheduleModal: React.FC<SeasonScheduleModalProps> = ({
   const iplFixtures: ScheduleMatchItem[] = useMemo(() => {
     const liveMatches: ScheduleMatchItem[] = [];
 
+    const normTeamCode = (raw?: string, fallback: string = 'KKR') => {
+      const code = (raw || fallback).toUpperCase();
+      if (code === 'BLR') return 'RCB';
+      if (code === 'KOL') return 'KKR';
+      return code;
+    };
+
     calendarDays.forEach((d) => {
       // 1. Primary fixture on this day (match or playoff)
       if ((d.type === 'match' || d.type === 'playoff') && d.matchFixture && !d.matchFixture.isInternational) {
         const fix = d.matchFixture;
-        const homeCode = (fix.homeShortName || 'KOL').toUpperCase();
-        const awayCode = (fix.awayShortName || 'MUM').toUpperCase();
-        const homeFullName = ROSTER_NAMES_BY_TEAM[homeCode]?.fullName || fix.homeShortName || homeCode;
-        const awayFullName = ROSTER_NAMES_BY_TEAM[awayCode]?.fullName || fix.awayShortName || awayCode;
+        const homeCode = normTeamCode(fix.homeShortName, 'KKR');
+        const awayCode = normTeamCode(fix.awayShortName, 'MUM');
+        const homeFullName = ROSTER_NAMES_BY_TEAM[homeCode]?.fullName || homeCode;
+        const awayFullName = ROSTER_NAMES_BY_TEAM[awayCode]?.fullName || awayCode;
 
         const histRecord = completedMatchesHistory.find(
           m => m.id === fix.id ||
@@ -1919,10 +1926,10 @@ export const SeasonScheduleModal: React.FC<SeasonScheduleModalProps> = ({
 
       // 2. Concurrent other team matches on this day
       (d.otherMatches || []).forEach((om) => {
-        const homeCode = (om.homeShortName || 'KOL').toUpperCase();
-        const awayCode = (om.awayShortName || 'MUM').toUpperCase();
-        const homeFullName = ROSTER_NAMES_BY_TEAM[homeCode]?.fullName || om.homeShortName || homeCode;
-        const awayFullName = ROSTER_NAMES_BY_TEAM[awayCode]?.fullName || om.awayShortName || awayCode;
+        const homeCode = normTeamCode(om.homeShortName, 'KKR');
+        const awayCode = normTeamCode(om.awayShortName, 'MUM');
+        const homeFullName = ROSTER_NAMES_BY_TEAM[homeCode]?.fullName || homeCode;
+        const awayFullName = ROSTER_NAMES_BY_TEAM[awayCode]?.fullName || awayCode;
 
         const histRecord = completedMatchesHistory.find(
           m => m.id === om.id ||
@@ -2134,7 +2141,8 @@ export const SeasonScheduleModal: React.FC<SeasonScheduleModalProps> = ({
 
   if (!isOpen) return null;
 
-  const userShort = (userTeam.shortName || 'KOL').toUpperCase();
+  const rawUserShort = (userTeam.shortName || 'KKR').toUpperCase();
+  const userShort = rawUserShort === 'BLR' ? 'RCB' : rawUserShort === 'KOL' ? 'KKR' : rawUserShort;
 
   // Render helper for "HOME v AWAY" highlighting user's team in gold
   const renderMatchupText = (homeCode: string, awayCode: string) => {

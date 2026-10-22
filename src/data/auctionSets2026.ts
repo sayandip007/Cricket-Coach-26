@@ -139,7 +139,7 @@ export const INITIAL_AUCTION_CLUBS: AuctionClubReleaseData[] = [
   {
     teamId: 'team_blr',
     teamName: 'Royal Challengers Bengaluru',
-    shortName: 'BLR',
+    shortName: 'RCB',
     aliases: ['RCB', 'BLR', 't_blr', 'team_blr'],
     logo: '👑',
     primaryColor: '#DA1818',
@@ -152,7 +152,7 @@ export const INITIAL_AUCTION_CLUBS: AuctionClubReleaseData[] = [
   {
     teamId: 'team_kol',
     teamName: 'Kolkata Knight Riders',
-    shortName: 'KOL',
+    shortName: 'KKR',
     aliases: ['KKR', 'KOL', 't_kol', 'team_kol'],
     logo: '⚔️',
     primaryColor: '#3A225D',

@@ -184,6 +184,23 @@ export interface CalendarMatchFixture {
   format?: 'T20' | 'ODI' | 'TEST' | '100BALL';
 }
 
+export interface TeamSeasonRecord {
+  seasonYear: string;
+  leagueName: string;
+  country: string;
+  rank: number;
+  wonTitle: boolean;
+  played: number;
+  won: number;
+  lost: number;
+  tied: number;
+  nrr: number;
+  mostRunsPlayerName?: string;
+  mostRunsValue?: number;
+  mostWicketsPlayerName?: string;
+  mostWicketsValue?: number;
+}
+
 export interface League {
   id: string;
   name: string;
@@ -195,6 +212,7 @@ export interface League {
   teams: Team[];
   standings: LeagueStanding[];
   playoffs?: LeaguePlayoffs;
+  teamSeasonHistory?: Record<string, TeamSeasonRecord[]>;
   currentDateIndex: number;
   calendarDates: {
     id?: string;
@@ -202,7 +220,7 @@ export interface League {
     dayOfWeek: string;
     dayNumber: number;
     month: string;
-    type?: 'match' | 'training' | 'rest' | 'international';
+    type?: 'match' | 'training' | 'rest' | 'international' | 'playoff';
     eventType?: string;
     title?: string;
     isHome?: boolean;

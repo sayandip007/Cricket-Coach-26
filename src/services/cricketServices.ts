@@ -1260,15 +1260,41 @@ function safeUpper(val: any): string {
   return '';
 }
 
+function normalizeCanonicalShort(code: string): string {
+  const c = safeUpper(code);
+  if (c === 'KOL' || c === 'KOLKATA' || c === 'KOLKATA KNIGHT RIDERS') return 'KKR';
+  if (c === 'BLR' || c === 'BENGALURU' || c === 'ROYAL CHALLENGERS BENGALURU') return 'RCB';
+  return c;
+}
+
 function resolveTeamShort(teamInput: any): string {
   if (!teamInput) return '';
-  if (typeof teamInput === 'string') return safeUpper(teamInput);
+  if (typeof teamInput === 'string') return normalizeCanonicalShort(teamInput);
   if (typeof teamInput === 'object') {
     const rawId = typeof teamInput.id === 'string' ? teamInput.id.replace('team_', '') : '';
     const cand = teamInput.shortName || rawId || teamInput.name || teamInput.code || teamInput.teamCode || '';
-    return safeUpper(cand);
+    return normalizeCanonicalShort(cand);
   }
-  return safeUpper(teamInput);
+  return normalizeCanonicalShort(teamInput);
+}
+
+function doesTextMatchTeamShort(text: string, shortCode: string, fallbackName: string = ''): boolean {
+  const t = safeUpper(text);
+  const s = safeUpper(shortCode);
+  if (!t || !s) return false;
+  if (t.includes(s)) return true;
+  if (fallbackName && t.includes(safeUpper(fallbackName))) return true;
+  if ((s === 'KKR' || s === 'KOL') && (t.includes('KOLKATA') || t.includes('KNIGHT RIDERS') || t.includes('KOL'))) return true;
+  if ((s === 'RCB' || s === 'BLR') && (t.includes('BENGALURU') || t.includes('CHALLENGERS') || t.includes('BLR'))) return true;
+  if ((s === 'CSK' || s === 'CHE') && (t.includes('CHENNAI') || t.includes('SUPER KINGS'))) return true;
+  if ((s === 'MI' || s === 'MUM') && (t.includes('MUMBAI') || t.includes('INDIANS'))) return true;
+  if ((s === 'SRH' || s === 'HYD') && (t.includes('HYDERABAD') || t.includes('SUNRISERS'))) return true;
+  if ((s === 'DC' || s === 'DEL') && (t.includes('DELHI') || t.includes('CAPITALS'))) return true;
+  if ((s === 'RR' || s === 'RAJ') && (t.includes('RAJASTHAN') || t.includes('ROYALS'))) return true;
+  if ((s === 'GT' || s === 'GUJ') && (t.includes('GUJARAT') || t.includes('TITANS'))) return true;
+  if ((s === 'LSG' || s === 'LKO') && (t.includes('LUCKNOW') || t.includes('SUPER GIANTS'))) return true;
+  if ((s === 'PUN' || s === 'PBKS') && (t.includes('PUNJAB') || t.includes('KINGS'))) return true;
+  return false;
 }
 
 function resolveTeamName(teamInput: any): string {
@@ -1286,8 +1312,8 @@ export function computeHeadToHead(
   teamBShort: string = '',
   completedMatches: CompletedMatchRecord[] = []
 ): HeadToHeadSummary {
-  const a = safeUpper(teamAShort);
-  const b = safeUpper(teamBShort);
+  const a = normalizeCanonicalShort(teamAShort);
+  const b = normalizeCanonicalShort(teamBShort);
 
   if (!a || !b || !Array.isArray(completedMatches)) {
     return {
@@ -1342,7 +1368,7 @@ export function computeHeadToHead(
       const r1 = m.innings1.runs || 0;
       const r2 = m.innings2.runs || 0;
       const inn1Team = safeUpper(m.innings1.team || (m.innings1 as any)?.battingTeamId || '');
-      const inn1IsA = (a && inn1Team.includes(a)) || (Boolean(hShort === a && hName) && inn1Team.includes(hName));
+      const inn1IsA = doesTextMatchTeamShort(inn1Team, a, hShort === a ? hName : awName);
       if (r1 > r2) {
         if (inn1IsA) aWins++;
         else bWins++;
@@ -1355,7 +1381,7 @@ export function computeHeadToHead(
     [m.innings1, m.innings2].forEach(inn => {
       if (!inn) return;
       const innTeam = safeUpper(inn.team || (inn as any)?.battingTeamId || '');
-      const isTeamA = (a && innTeam.includes(a)) || (Boolean(hShort === a && hName) && innTeam.includes(hName));
+      const isTeamA = doesTextMatchTeamShort(innTeam, a, hShort === a ? hName : awName);
       const runs = inn.runs || 0;
       const wickets = typeof inn.wickets === 'number' ? inn.wickets : 0;
 

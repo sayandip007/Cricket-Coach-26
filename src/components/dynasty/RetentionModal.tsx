@@ -19,7 +19,7 @@ const RETENTION_TIERS = [
 ];
 
 export const RetentionModal: React.FC<RetentionModalProps> = ({ isOpen, onClose, onSeasonAdvance }) => {
-  const { userTeam, players, setPlayers, setTeams, coachProfile, updateCoachProfile } = useGame();
+  const { userTeam, players, setPlayers, setTeams, coachProfile, leagues, currentLeagueId, startNewSeason } = useGame();
   const [selectedRetentionIds, setSelectedRetentionIds] = useState<string[]>(() => {
     // Default: captain and top 2 players
     const teamSquad = players.filter(p => p.clubId === userTeam.id);
@@ -29,7 +29,8 @@ export const RetentionModal: React.FC<RetentionModalProps> = ({ isOpen, onClose,
     return initial;
   });
 
-  const [currentSeasonYear, setCurrentSeasonYear] = useState<number>(2026);
+  const currentLeague = leagues.find(l => l.id === currentLeagueId) || leagues[0];
+  const currentSeasonYear = parseInt(String(currentLeague?.seasonName || '2026').replace(/\D/g, ''), 10) || 2026;
   const [stage, setStage] = useState<'trophy' | 'retention' | 'progression'>('trophy');
 
   if (!isOpen) return null;
@@ -57,47 +58,21 @@ export const RetentionModal: React.FC<RetentionModalProps> = ({ isOpen, onClose,
 
   const handleFinalizeSeason = () => {
     sound.playCrowdCheer(1.0);
+    const nextYear = currentSeasonYear + 1;
 
-    // Apply Progression Curves and release unretained user team players into the open auction pool
-    const updatedPlayers = players.map(p => {
+    // Archive completed season, progress players, and advance league calendar to nextYear
+    startNewSeason(userTeam.id, coachProfile.nationalTeamId, nextYear);
+
+    // Release unretained user team players into the open auction pool & update user franchise purse
+    setPlayers(prev => prev.map(p => {
       const isUnretainedUserPlayer =
         p.clubId === userTeam.id && !selectedRetentionIds.includes(p.id);
-      const nextClubId = isUnretainedUserPlayer ? 'free_agent' : p.clubId;
+      return isUnretainedUserPlayer ? { ...p, clubId: 'free_agent' } : p;
+    }));
 
-      if (p.age <= 23) {
-        return {
-          ...p,
-          clubId: nextClubId,
-          age: p.age + 1,
-          ratings: {
-            ...p.ratings,
-            bat: Math.min(99, p.ratings.bat + 2),
-            pow: Math.min(99, p.ratings.pow + 3),
-            tec: Math.min(99, (p.ratings.tec || 75) + 2),
-            tmp: Math.min(99, p.ratings.tmp + 3)
-          }
-        };
-      } else if (p.age >= 34) {
-        return {
-          ...p,
-          clubId: nextClubId,
-          age: p.age + 1,
-          ratings: {
-            ...p.ratings,
-            tmp: Math.min(99, p.ratings.tmp + 1), // veteran poise
-            fit: Math.max(70, (p.ratings.fit || 85) - 2)
-          }
-        };
-      }
-      return { ...p, clubId: nextClubId, age: p.age + 1 };
-    });
-
-    setPlayers(updatedPlayers);
-
-    // Update user franchise purse and retained squad for the upcoming mega auction
     setTeams(prev => prev.map(t => {
       if (t.id === userTeam.id) {
-        const retainedSquad = updatedPlayers.filter(p => p.clubId === userTeam.id);
+        const retainedSquad = t.squad.filter(p => selectedRetentionIds.includes(p.id));
         return {
           ...t,
           purseCr: remainingPurseCr,
@@ -108,17 +83,7 @@ export const RetentionModal: React.FC<RetentionModalProps> = ({ isOpen, onClose,
       return t;
     }));
 
-    updateCoachProfile({
-      domesticTitles: (coachProfile.domesticTitles || 0) + 1,
-      domesticStats: {
-        ...coachProfile.domesticStats,
-        seasons: (coachProfile.domesticStats?.seasons || 1) + 1,
-        titles: (coachProfile.domesticStats?.titles || 0) + 1
-      }
-    });
-
-    setCurrentSeasonYear(prev => prev + 1);
-    if (onSeasonAdvance) onSeasonAdvance(currentSeasonYear + 1);
+    if (onSeasonAdvance) onSeasonAdvance(nextYear);
     onClose();
   };
 

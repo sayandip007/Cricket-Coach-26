@@ -55,6 +55,7 @@ export const HubScreen: React.FC = () => {
   } = useGame();
 
   const currentLeague = leagues.find(l => l.id === currentLeagueId) || leagues[0];
+  const activeSeasonYear = parseInt(String(currentLeague?.seasonName || '2026').replace(/\D/g, ''), 10) || 2026;
   const calendarDays = currentLeague.calendarDates || [];
   const presentDayIndex = Math.min(
     Math.max(0, currentLeague.currentDateIndex || 0),
@@ -304,7 +305,7 @@ export const HubScreen: React.FC = () => {
                 {userTeam.name}
               </h1>
               <span className="text-[11px] text-slate-400 font-mono">
-                {activeDay.month} 2026 · {currentLeague.name}
+                {activeDay.month} {activeSeasonYear} · {currentLeague.name}
               </span>
             </div>
           </div>
@@ -1605,7 +1606,7 @@ export const HubScreen: React.FC = () => {
           const idx = sorted.findIndex(s => s.teamId === userTeam.id);
           return idx >= 0 ? idx + 1 : 4;
         })()}
-        seasonYear={2026}
+        seasonYear={activeSeasonYear}
       />
 
       {/* 2. Set Up Your Next Season (Offers) (Screenshot_2026_1019_234400_00e753b3.jpg) */}
@@ -1626,18 +1627,19 @@ export const HubScreen: React.FC = () => {
         isOpen={isSeasonTransitionOpen}
         onClose={() => setIsSeasonTransitionOpen(false)}
         onSelectMiniAuction={() => {
-          startNewSeason(pendingNextClubId, pendingNextCountryId);
+          startNewSeason(pendingNextClubId, pendingNextCountryId, activeSeasonYear + 1);
           setSimToSeasonEndReady(false);
           setIsSeasonTransitionOpen(false);
           setIsTradeWindowOpen(true);
         }}
         onSelectContinueSquads={() => {
-          startNewSeason(pendingNextClubId, pendingNextCountryId);
+          const nextYr = activeSeasonYear + 1;
+          startNewSeason(pendingNextClubId, pendingNextCountryId, nextYr);
           setSimToSeasonEndReady(false);
           setIsSeasonTransitionOpen(false);
-          showToast('Season 2027 started! Standings & schedule reset, and squad progression applied.');
+          showToast(`Season ${nextYr} started! Standings & schedule reset, and squad progression applied.`);
         }}
-        nextSeasonYear={2027}
+        nextSeasonYear={activeSeasonYear + 1}
       />
 
       {/* 4. Trade Window Modal (Screenshot_2026_1019_234527_238b6681.jpg) */}

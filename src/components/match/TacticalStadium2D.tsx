@@ -113,7 +113,7 @@ export function getStadiumTheme(
   let pitchBorderColor = '#a18359';
   let pitchWearColor = 'rgba(168, 131, 88, 0.4)';
 
-  if (v.includes('eden') || v.includes('kolkata') || h === 'KOL') {
+  if (v.includes('eden') || v.includes('kolkata') || h === 'KKR' || h === 'KOL') {
     roofRingColor = '#3b0764';
     ledPerimeterColor = '#6d28d9';
     boundaryBoardColor = '#f59e0b';

@@ -389,13 +389,13 @@ export function runBowlingAndSandboxTests() {
 
   // Test 17: Squad Retention Verification - Full squad is NOT shown; only retained players remain
   const kolTeam = sandbox.updatedTeams.find(t => t.id === 'team_kol');
-  assert(kolTeam !== undefined, 'KOL franchise found in sandbox teams');
+  assert(kolTeam !== undefined, 'KKR franchise found in sandbox teams');
   const kolSquadPlayerIds = kolTeam!.squad.map(p => p.id);
   assert(kolSquadPlayerIds.includes('c1') && kolSquadPlayerIds.includes('u1'), 'Retained players c1 and u1 are in squad');
   assert(!kolSquadPlayerIds.includes('c2'), 'Un-retained player c2 is NOT in the sandbox team squad');
 
   const kolEffectivePlayers = sandbox.updatedPlayers.filter(p => p.clubId === 'team_kol');
-  assert(kolEffectivePlayers.length === 2, `Effective players for KOL must be exactly 2 retained players (got ${kolEffectivePlayers.length})`);
+  assert(kolEffectivePlayers.length === 2, `Effective players for KKR must be exactly 2 retained players (got ${kolEffectivePlayers.length})`);
   const releasedC2 = sandbox.updatedPlayers.find(p => p.id === 'c2');
   assert(releasedC2?.clubId === '', 'Un-retained player c2 clubId must be cleared to empty string');
 

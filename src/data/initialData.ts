@@ -44,7 +44,7 @@ export const INITIAL_TEAMS: Team[] = [
   {
     id: 'team_kol',
     name: 'Kolkata Knight Riders',
-    shortName: 'KOL',
+    shortName: 'KKR',
     city: 'Kolkata',
     leagueId: 'pt20',
     primaryColor: '#3A225D',
@@ -92,7 +92,7 @@ export const INITIAL_TEAMS: Team[] = [
   {
     id: 'team_blr',
     name: 'Royal Challengers Bengaluru',
-    shortName: 'BLR',
+    shortName: 'RCB',
     city: 'Bengaluru',
     leagueId: 'pt20',
     primaryColor: '#DA1818',

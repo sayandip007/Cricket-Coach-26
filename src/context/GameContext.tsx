@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useMemo, useCall
 import {
   Player, Team, League, Nation, Achievement, JobOffer, CoachProfile,
   MatchLiveState, InningsData, AuctionLot, BatterInningsScorecard, BowlerInningsScorecard, FielderPosition, BallOutcome,
-  CompletedMatchRecord, InboxMessage, TournamentHonor
+  CompletedMatchRecord, InboxMessage, TournamentHonor, TeamSeasonRecord
 } from '../types/cricket';
 import {
   INITIAL_PLAYERS, INITIAL_TEAMS, INITIAL_LEAGUES, INITIAL_NATIONS,
@@ -53,6 +53,36 @@ export interface AuctionSandboxSessionState {
 }
 
 const INITIAL_COMPLETED_MATCHES: CompletedMatchRecord[] = [];
+
+export function normalizeSeasonYear(raw?: string | number): string {
+  if (raw === undefined || raw === null) return '2026';
+  const str = String(raw).trim();
+  if (!str || str.includes('2025/26') || str === 'Season 2025' || str === 'Season 2024' || str === '2025' || str === '2024') {
+    return '2026';
+  }
+  const match = str.match(/20\d{2}/);
+  if (match) {
+    const yr = parseInt(match[0], 10);
+    return yr < 2026 ? '2026' : String(yr);
+  }
+  return '2026';
+}
+
+export function sanitizeTournamentHonors(honors?: TournamentHonor[]): TournamentHonor[] {
+  if (!Array.isArray(honors)) return [];
+  return honors
+    .filter(h => {
+      const yStr = String(h?.year || '');
+      if (yStr.includes('2024') || yStr.includes('2025')) return false;
+      const match = yStr.match(/20\d{2}/);
+      if (match && parseInt(match[0], 10) < 2026) return false;
+      return Boolean(h && h.championTeamName);
+    })
+    .map(h => ({
+      ...h,
+      year: normalizeSeasonYear(h.year)
+    }));
+}
 
 /**
  * Central DRS Review Trigger State Handler
@@ -850,8 +880,8 @@ export function buildSeasonCalendarForTeam(
     const dInfo = nextDate();
     const playoffFixtureRecord = {
       id: `fix_playoff_${ps.stage}`,
-      homeTeamId: null,
-      awayTeamId: null,
+      homeTeamId: '',
+      awayTeamId: '',
       homeShortName: 'TBD',
       awayShortName: 'TBD',
       homeLogo: '🏆',
@@ -1464,12 +1494,22 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length >= 10) {
-          return parsed.map((team: Team) => ({
-            ...team,
-            squad: team.squad && team.squad.length > 5
-              ? team.squad
-              : freshPlayers.filter(p => p.clubId === team.id)
-          }));
+          const normalized = parsed.map((team: Team) => {
+            const normShort = team.id === 'team_blr' || team.shortName === 'BLR'
+              ? 'RCB'
+              : team.id === 'team_kol' || team.shortName === 'KOL'
+              ? 'KKR'
+              : team.shortName;
+            return {
+              ...team,
+              shortName: normShort,
+              squad: team.squad && team.squad.length > 5
+                ? team.squad
+                : freshPlayers.filter(p => p.clubId === team.id)
+            };
+          });
+          safeStorageSet('ms_teams_v6', JSON.stringify(normalized.map((t: Team) => ({ ...t, squad: [] }))));
+          return normalized;
         }
       } catch {}
     }
@@ -1500,13 +1540,40 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (iplLeagues.length > 0 && iplLeagues[0].standings && iplLeagues[0].standings.length > 0) {
           const result = iplLeagues.map(l => {
             const hasFullSchedule = l.calendarDates && l.calendarDates.length >= 45;
+            const normYear = normalizeSeasonYear(l.seasonName || l.seasonYear);
+            const cleanedHistory: Record<string, TeamSeasonRecord[]> = {};
+            if (l.teamSeasonHistory && typeof l.teamSeasonHistory === 'object') {
+              Object.entries(l.teamSeasonHistory).forEach(([tId, records]) => {
+                if (Array.isArray(records)) {
+                  cleanedHistory[tId] = records.filter(r => parseInt(String(r.seasonYear), 10) >= 2026);
+                }
+              });
+            }
             return {
               ...l,
+              seasonName: normYear,
+              seasonYear: parseInt(normYear, 10) || 2026,
+              teamSeasonHistory: cleanedHistory,
               playoffs: l.playoffs || createInitialPlayoffs(l.standings),
               currentDateIndex: hasFullSchedule ? l.currentDateIndex : 0,
               calendarDates: hasFullSchedule
-                ? l.calendarDates
-                : buildSeasonCalendarForTeam(activeUserTeamId, INITIAL_TEAMS, false, 2026)
+                ? l.calendarDates.map(cd => {
+                    const normShort = (s?: string) => s === 'BLR' ? 'RCB' : s === 'KOL' ? 'KKR' : s;
+                    return {
+                      ...cd,
+                      matchFixture: cd.matchFixture ? {
+                        ...cd.matchFixture,
+                        homeShortName: normShort(cd.matchFixture.homeShortName) || cd.matchFixture.homeShortName,
+                        awayShortName: normShort(cd.matchFixture.awayShortName) || cd.matchFixture.awayShortName
+                      } : undefined,
+                      otherMatches: (cd.otherMatches || []).map(om => ({
+                        ...om,
+                        homeShortName: normShort(om.homeShortName) || om.homeShortName,
+                        awayShortName: normShort(om.awayShortName) || om.awayShortName
+                      }))
+                    };
+                  })
+                : buildSeasonCalendarForTeam(activeUserTeamId, INITIAL_TEAMS, false, parseInt(normYear, 10) || 2026)
             };
           });
           safeStorageSet('ms_leagues_v6', JSON.stringify(result));
@@ -1516,6 +1583,9 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
     const seededLeagues = INITIAL_LEAGUES.map(l => ({
       ...l,
+      seasonName: '2026',
+      seasonYear: 2026,
+      teamSeasonHistory: {},
       currentDateIndex: 0,
       calendarDates: buildSeasonCalendarForTeam(activeUserTeamId, INITIAL_TEAMS, false, 2026)
     }));
@@ -1593,13 +1663,14 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed)) {
+          const cleaned = sanitizeTournamentHonors(parsed);
+          safeStorageSet('ms_tournament_honors_v6', JSON.stringify(cleaned));
+          return cleaned;
+        }
       } catch {}
     }
-    return [
-      { year: 'Season 2025', tournamentName: 'Indian Premier League', championTeamId: 'team_kol', championTeamName: 'Kolkata Knight Riders', championLogo: '⚔️' },
-      { year: 'Season 2024', tournamentName: 'Indian Premier League', championTeamId: 'team_che', championTeamName: 'Chennai Super Kings', championLogo: '🦁' }
-    ];
+    return [];
   });
 
   const userTeam = useMemo(() => {
@@ -1679,13 +1750,15 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (raw) {
         try {
           const parsed = JSON.parse(raw);
+          const rawSlotShort = parsed.teamShortName || userTeam.shortName;
+          const normSlotShort = rawSlotShort === 'BLR' ? 'RCB' : rawSlotShort === 'KOL' ? 'KKR' : rawSlotShort;
           slots.push({
             slotNumber: slotNum,
             hasSave: true,
             teamName: parsed.teamName || userTeam.name,
-            teamShortName: parsed.teamShortName || userTeam.shortName,
+            teamShortName: normSlotShort,
             logoEmoji: parsed.logoEmoji || userTeam.logoEmoji || '🏏',
-            seasonName: parsed.seasonName || 'Season 2025/26',
+            seasonName: normalizeSeasonYear(parsed.seasonName),
             savedAt: parsed.savedAt || 'Saved'
           });
           continue;
@@ -1763,12 +1836,14 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // 3. Keep latest 10 completed matches for historical archive
     const compactHistory = (snap.completedMatchesHistory || []).slice(0, 10);
 
+    const normSeason = normalizeSeasonYear(snap.seasonName);
+
     const payload = {
       slotNumber,
       teamName: snap.team.name,
       teamShortName: snap.team.shortName,
       logoEmoji: snap.team.logoEmoji || '🏏',
-      seasonName: snap.seasonName || 'Season 2025/26',
+      seasonName: normSeason,
       savedAt: nowStr,
       coachProfile: snap.coach,
       teams: compactTeams,
@@ -1783,7 +1858,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       inboxMessages: (snap.inboxMessages || []).slice(0, 8),
       nationalSquadIds: snap.nationalSquadIds,
       internationalSeries: snap.internationalSeries,
-      tournamentHonors: snap.tournamentHonors
+      tournamentHonors: sanitizeTournamentHonors(snap.tournamentHonors)
     };
 
     const serialized = JSON.stringify(payload);
@@ -1797,7 +1872,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             teamName: snap.team.name,
             teamShortName: snap.team.shortName,
             logoEmoji: snap.team.logoEmoji || '🏏',
-            seasonName: snap.seasonName || 'Season 2025/26',
+            seasonName: normSeason,
             savedAt: nowStr
           }
         : s
@@ -1809,7 +1884,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setActiveSaveSlot(slotNumber);
     writeSlotSnapshot(slotNumber, {
       team: userTeam,
-      seasonName: activeLeague?.seasonName || 'Season 2025/26',
+      seasonName: normalizeSeasonYear(activeLeague?.seasonName),
       coach: coachProfile,
       teams,
       players,
@@ -1847,18 +1922,42 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (Array.isArray(parsed.players)) setPlayers(loadedPlayers);
 
       if (Array.isArray(parsed.teams)) {
-        const hydratedTeams = parsed.teams.map((t: Team) => ({
-          ...t,
-          squad: t.squad && t.squad.length > 5
-            ? t.squad
-            : loadedPlayers.filter(p => p.clubId === t.id)
-        }));
+        const hydratedTeams = parsed.teams.map((t: Team) => {
+          const normShort = t.id === 'team_blr' || t.shortName === 'BLR'
+            ? 'RCB'
+            : t.id === 'team_kol' || t.shortName === 'KOL'
+            ? 'KKR'
+            : t.shortName;
+          return {
+            ...t,
+            shortName: normShort,
+            squad: t.squad && t.squad.length > 5
+              ? t.squad
+              : loadedPlayers.filter(p => p.clubId === t.id)
+          };
+        });
         setTeams(hydratedTeams);
       }
       if (Array.isArray(parsed.leagues)) {
-        const filteredLeagues = parsed.leagues.filter(
-          (l: League) => l.id === 'pt20' || l.id === 'league_ipl' || l.name?.toLowerCase().includes('indian premier')
-        );
+        const filteredLeagues = parsed.leagues
+          .filter((l: League) => l.id === 'pt20' || l.id === 'league_ipl' || l.name?.toLowerCase().includes('indian premier'))
+          .map((l: League) => {
+            const normYr = normalizeSeasonYear(l.seasonName || l.seasonYear);
+            const cleanedHistory: Record<string, TeamSeasonRecord[]> = {};
+            if (l.teamSeasonHistory && typeof l.teamSeasonHistory === 'object') {
+              Object.entries(l.teamSeasonHistory).forEach(([tId, records]) => {
+                if (Array.isArray(records)) {
+                  cleanedHistory[tId] = records.filter(r => parseInt(String(r.seasonYear), 10) >= 2026);
+                }
+              });
+            }
+            return {
+              ...l,
+              seasonName: normYr,
+              seasonYear: parseInt(normYr, 10) || 2026,
+              teamSeasonHistory: cleanedHistory
+            };
+          });
         if (filteredLeagues.length > 0) setLeagues(filteredLeagues);
       }
       if (Array.isArray(parsed.nations)) setNations(parsed.nations);
@@ -1870,10 +1969,9 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (Array.isArray(parsed.inboxMessages)) setInboxMessages(parsed.inboxMessages);
       if (Array.isArray(parsed.nationalSquadIds)) setNationalSquadIds(parsed.nationalSquadIds);
       if (parsed.internationalSeries) setInternationalSeries(parsed.internationalSeries);
-      if (Array.isArray(parsed.tournamentHonors)) {
-        setTournamentHonors(parsed.tournamentHonors);
-        localStorage.setItem('ms_tournament_honors_v6', JSON.stringify(parsed.tournamentHonors));
-      }
+      const cleanedHonors = sanitizeTournamentHonors(parsed.tournamentHonors);
+      setTournamentHonors(cleanedHonors);
+      localStorage.setItem('ms_tournament_honors_v6', JSON.stringify(cleanedHonors));
       sound.playCrowdCheer(0.7);
       return true;
     } catch {
@@ -1978,7 +2076,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const activeLeague = leagues.find(l => l.id === currentLeagueId) || leagues[0];
       writeSlotSnapshot(activeSaveSlot, {
         team: userTeam,
-        seasonName: activeLeague?.seasonName || 'Season 2025/26',
+        seasonName: normalizeSeasonYear(activeLeague?.seasonName),
         coach: coachProfile,
         teams,
         players,
@@ -2056,7 +2154,9 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const freshLeagues: League[] = INITIAL_LEAGUES.map(l => ({
       ...l,
-      seasonName: 'Season 2025/26',
+      seasonName: '2026',
+      seasonYear: 2026,
+      teamSeasonHistory: {},
       standings: freshStandings,
       playoffs: createInitialPlayoffs(freshStandings),
       currentDateIndex: 0,
@@ -2147,12 +2247,14 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setInboxMessages(freshInbox);
     setInternationalSeries(freshIntlSeries);
     setNationalSquadIds(freshNatSquadIds);
+    setTournamentHonors([]);
+    safeStorageSet('ms_tournament_honors_v6', JSON.stringify([]));
     setSquadStamina(100);
     setHomePitch('Natural');
 
     writeSlotSnapshot(slotToUse, {
       team: chosenTeam,
-      seasonName: 'Season 2025/26',
+      seasonName: '2026',
       coach: freshCoach,
       teams: freshTeams,
       players: freshPlayers,
@@ -2166,9 +2268,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       inboxMessages: freshInbox,
       nationalSquadIds: freshNatSquadIds,
       internationalSeries: freshIntlSeries,
-      tournamentHonors: [
-        { year: 'Season 2025', tournamentName: 'Indian Premier League', championTeamId: 'team_kol', championTeamName: 'Kolkata Knight Riders', championLogo: '⚔️' }
-      ]
+      tournamentHonors: []
     });
 
     sound.playTap();
@@ -2422,6 +2522,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const simulatedOtherMap = new Map<string, { summary: string; winnerId: string; loserId: string; nrrDelta: number; matchState: MatchLiveState }>();
     const simulatedIntlMap = new Map<string, { summary: string; matchState: MatchLiveState }>();
 
+    const activeSeasonKey = normalizeSeasonYear(activeLeague?.seasonName);
+
     if (curDayObj) {
       (curDayObj.otherMatches || []).forEach((om, omIdx) => {
         if (om.completed) return;
@@ -2437,7 +2539,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           workingPlayers,
           curDayIdx * 17 + omIdx * 11 + 3
         );
-        workingPlayers = applyMatchToPlayerList(workingPlayers, simRes.matchState);
+        workingPlayers = applyMatchToPlayerList(workingPlayers, simRes.matchState, activeSeasonKey);
         simulatedOtherMap.set(om.id, simRes);
       });
 
@@ -2455,7 +2557,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           workingPlayers,
           curDayIdx * 23 + imIdx * 13 + 7
         );
-        workingPlayers = applyMatchToPlayerList(workingPlayers, simRes.matchState);
+        workingPlayers = applyMatchToPlayerList(workingPlayers, simRes.matchState, activeSeasonKey);
         simulatedIntlMap.set(im.id, { summary: simRes.summary, matchState: simRes.matchState });
       });
     }
@@ -2582,7 +2684,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           injuryDays: wp.injuryDays,
           isInjured: wp.isInjured,
           form: wp.form,
-          stats: wp.stats ? { ...wp.stats } : p.stats
+          stats: wp.stats ? { ...wp.stats } : p.stats,
+          competitionStats: wp.competitionStats ? { ...wp.competitionStats } : p.competitionStats
         };
       });
     });
@@ -2597,7 +2700,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           injuryDays: fp.injuryDays,
           isInjured: fp.isInjured,
           form: fp.form,
-          stats: fp.stats ? { ...fp.stats } : sp.stats
+          stats: fp.stats ? { ...fp.stats } : sp.stats,
+          competitionStats: fp.competitionStats ? { ...fp.competitionStats } : sp.competitionStats
         };
       })
     })));
@@ -2804,12 +2908,51 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }));
   }, []);
 
-  // Transition to a new season: apply aging/progression, reset standings & calendar, and update club/national contracts
-  const startNewSeason = useCallback((selectedClubId?: string, selectedNationId?: string | null, nextYear: number = 2027) => {
+  // Transition to a new season: archive completed season records for all teams, apply aging/progression, reset standings & calendar, and update club/national contracts
+  const startNewSeason = useCallback((selectedClubId?: string, selectedNationId?: string | null, nextYear?: number) => {
+    const activeLeague = leagues.find(l => l.id === currentLeagueId) || leagues[0];
+    const outgoingYearStr = normalizeSeasonYear(activeLeague?.seasonName || activeLeague?.seasonYear);
+    const outgoingYearNum = parseInt(outgoingYearStr, 10) || 2026;
+    const resolvedNextYear = nextYear && nextYear > outgoingYearNum ? nextYear : outgoingYearNum + 1;
+
     const targetClubId = selectedClubId || userTeam.id;
     const targetClubObj = teams.find(t => t.id === targetClubId) || userTeam;
 
-    // 1. Age and progress all players while preserving dynamic career stats
+    // 1. Archive outgoing season performance for every franchise before resetting standings
+    if (activeLeague) {
+      const sortedStandings = [...(activeLeague.standings || [])].sort((a, b) => b.points - a.points || b.nrr - a.nrr);
+      const playoffs = activeLeague.playoffs;
+      const finalCompleted = Boolean(playoffs?.final?.completed);
+      const champId = finalCompleted
+        ? (playoffs?.championTeamId || playoffs?.final?.winnerTeamId || sortedStandings[0]?.teamId)
+        : sortedStandings[0]?.teamId;
+
+      if (champId && sortedStandings.some(s => s.played > 0)) {
+        const champTeamObj = teams.find(t => t.id === champId);
+        if (champTeamObj) {
+          setTournamentHonors(prev => {
+            const cleaned = sanitizeTournamentHonors(prev);
+            if (cleaned.some(h => normalizeSeasonYear(h.year) === outgoingYearStr && h.tournamentName === activeLeague.name)) {
+              return cleaned;
+            }
+            const nextHonors = [
+              {
+                year: outgoingYearStr,
+                tournamentName: activeLeague.name || 'Indian Premier League',
+                championTeamId: champTeamObj.id,
+                championTeamName: champTeamObj.name,
+                championLogo: champTeamObj.logoEmoji || '🏆'
+              },
+              ...cleaned
+            ];
+            safeStorageSet('ms_tournament_honors_v6', JSON.stringify(nextHonors));
+            return nextHonors;
+          });
+        }
+      }
+    }
+
+    // 2. Age and progress all players while preserving dynamic career stats
     const progressedPlayers = players.map(p => {
       const nextAge = p.age + 1;
       const isYoung = p.age <= 24;
@@ -2837,7 +2980,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     setPlayers(progressedPlayers);
 
-    // 2. Sync teams with progressed players and active user team selection
+    // 3. Sync teams with progressed players and active user team selection
     const updatedTeams = teams.map(t => ({
       ...t,
       isUserTeam: t.id === targetClubId,
@@ -2845,16 +2988,16 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }));
     setTeams(updatedTeams);
 
-    // 3. Update CoachProfile (club, optional national team, seasons count, and separate clubStints)
+    // 4. Update CoachProfile (club, optional national team, seasons count, and separate clubStints)
     setCoachProfile(prev => {
       const prevStints = prev.clubStints && prev.clubStints.length > 0
         ? prev.clubStints
         : [
             {
-              id: `stint_${prev.clubTeamId}_${nextYear - 1}`,
+              id: `stint_${prev.clubTeamId}_${outgoingYearNum}`,
               teamId: prev.clubTeamId,
               teamName: userTeam.city || userTeam.name,
-              period: `${nextYear - 1}–present`,
+              period: `${outgoingYearNum}–present`,
               seasons: prev.domesticStats?.seasons || 1,
               matches: prev.domesticStats?.matches || 0,
               wins: prev.domesticStats?.wins || 0,
@@ -2875,14 +3018,14 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         updatedStints = [
           ...updatedStints.map((s, idx) =>
             idx === updatedStints.length - 1
-              ? { ...s, period: s.period.replace('–present', `–${nextYear - 1}`) }
+              ? { ...s, period: s.period.replace('–present', `–${outgoingYearNum}`) }
               : s
           ),
           {
-            id: `stint_${targetClubId}_${nextYear}`,
+            id: `stint_${targetClubId}_${resolvedNextYear}`,
             teamId: targetClubId,
             teamName: targetClubObj.city || targetClubObj.name,
-            period: `${nextYear}–present`,
+            period: `${resolvedNextYear}–present`,
             seasons: 1,
             matches: 0,
             wins: 0,
@@ -2912,9 +3055,68 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       })));
     }
 
-    // 4. Reset IPL standings, playoffs, and rebuild calendar for the new season starting at Day 0
+    // 5. Archive each team's completed season record & reset IPL standings, playoffs, and calendar for resolvedNextYear
     setLeagues(prev => prev.map(l => {
       if (l.id === 'pt20') {
+        const sortedStandings = [...(l.standings || [])].sort((a, b) => b.points - a.points || b.nrr - a.nrr);
+        const existingHistory: Record<string, TeamSeasonRecord[]> = { ...(l.teamSeasonHistory || {}) };
+        const pf = l.playoffs;
+        const pfDone = Boolean(pf?.final?.completed);
+        const champTeamId = pfDone ? (pf?.championTeamId || pf?.final?.winnerTeamId) : null;
+
+        sortedStandings.forEach((stRow, idx) => {
+          const teamId = stRow.teamId;
+          let finalRank = idx + 1;
+          const wonTitle = Boolean(champTeamId && champTeamId === teamId);
+          if (pfDone && pf) {
+            if (wonTitle) finalRank = 1;
+            else if (pf.final?.loserTeamId === teamId) finalRank = 2;
+            else if (pf.q2?.completed && pf.q2.loserTeamId === teamId) finalRank = 3;
+            else if (pf.eliminator?.completed && pf.eliminator.loserTeamId === teamId) finalRank = 4;
+          }
+
+          const teamPlayers = players.filter(p => p.clubId === teamId);
+          const isFirstSeason = (existingHistory[teamId] || []).length === 0;
+          const getSeasonPlayerStats = (p: Player) => {
+            const sMap = p.competitionStats?.iplSeasons || {};
+            return (
+              sMap[outgoingYearStr] ||
+              sMap[`Season ${outgoingYearStr}`] ||
+              (outgoingYearStr === '2026' ? sMap['Season 2025/26'] : undefined) ||
+              (isFirstSeason ? p.stats : undefined)
+            );
+          };
+
+          const battersSorted = [...teamPlayers]
+            .map(p => ({ name: p.name, runs: getSeasonPlayerStats(p)?.runs || 0 }))
+            .filter(x => x.runs > 0)
+            .sort((a, b) => b.runs - a.runs);
+          const bowlersSorted = [...teamPlayers]
+            .map(p => ({ name: p.name, wickets: getSeasonPlayerStats(p)?.wickets || 0 }))
+            .filter(x => x.wickets > 0)
+            .sort((a, b) => b.wickets - a.wickets);
+
+          const record: TeamSeasonRecord = {
+            seasonYear: outgoingYearStr,
+            leagueName: l.name || 'Indian Premier League',
+            country: l.country || 'India',
+            rank: finalRank,
+            wonTitle,
+            played: stRow.played,
+            won: stRow.won,
+            lost: stRow.lost,
+            tied: stRow.tied || 0,
+            nrr: stRow.nrr,
+            mostRunsPlayerName: battersSorted[0]?.name,
+            mostRunsValue: battersSorted[0]?.runs,
+            mostWicketsPlayerName: bowlersSorted[0]?.name,
+            mostWicketsValue: bowlersSorted[0]?.wickets
+          };
+
+          const prevTeamRecords = (existingHistory[teamId] || []).filter(r => r.seasonYear !== outgoingYearStr);
+          existingHistory[teamId] = [record, ...prevTeamRecords];
+        });
+
         const freshStandings = l.standings.map(st => ({
           ...st,
           played: 0,
@@ -2927,11 +3129,13 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }));
         return {
           ...l,
-          seasonName: `Season ${nextYear}`,
+          seasonName: String(resolvedNextYear),
+          seasonYear: resolvedNextYear,
+          teamSeasonHistory: existingHistory,
           standings: freshStandings,
           playoffs: createInitialPlayoffs(freshStandings),
           currentDateIndex: 0,
-          calendarDates: buildSeasonCalendarForTeam(targetClubId, updatedTeams, false, nextYear)
+          calendarDates: buildSeasonCalendarForTeam(targetClubId, updatedTeams, false, resolvedNextYear)
         };
       }
       return l;
@@ -2939,7 +3143,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     setSquadStamina(99);
     sound.playCrowdCheer(0.9);
-  }, [players, teams, userTeam]);
+  }, [players, teams, userTeam, leagues, currentLeagueId]);
 
   // START MATCH
   const startMatch = useCallback((
@@ -4040,7 +4244,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // 1. Update participating players' season & career stats
     const activeLeague = leagues.find(l => l.id === currentLeagueId) || leagues[0];
-    const currentActiveSeasonKey = activeLeague?.seasonName || 'Season 2026';
+    const currentActiveSeasonKey = normalizeSeasonYear(activeLeague?.seasonName);
     const applyStatsToPlayer = (p: Player): Player => recordMatchToPlayerStats(p, finishedMatch, currentActiveSeasonKey);
 
     setPlayers(prev => prev.map(applyStatsToPlayer));
@@ -4222,10 +4426,11 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             updatedPlayoffs.championTeamId = winnerId;
 
             const champTeamObj = winnerId === finishedMatch.homeTeam.id ? finishedMatch.homeTeam : finishedMatch.awayTeam;
-            const seasonYr = activeLeague?.seasonName || 'Season 2026';
+            const seasonYr = normalizeSeasonYear(activeLeague?.seasonName);
             setTournamentHonors(prev => {
-              const exists = prev.some(h => h.year === seasonYr && h.tournamentName === activeLeague.name);
-              if (exists) return prev;
+              const cleaned = sanitizeTournamentHonors(prev);
+              const exists = cleaned.some(h => normalizeSeasonYear(h.year) === seasonYr && h.tournamentName === activeLeague.name);
+              if (exists) return cleaned;
               const nextHonors = [
                 {
                   year: seasonYr,
@@ -4234,7 +4439,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   championTeamName: champTeamObj.name,
                   championLogo: champTeamObj.logoEmoji || '🏆'
                 },
-                ...prev
+                ...cleaned
               ];
               localStorage.setItem('ms_tournament_honors_v6', JSON.stringify(nextHonors));
               return nextHonors;
