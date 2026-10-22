@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import {
   Mail, Calendar as CalendarIcon, Menu, Dumbbell, Moon, Cloud, Play, FastForward,
   PlayCircle, Search, Binoculars, Trophy, Database, Clock, MapPin, Globe, BookOpen,
@@ -17,12 +17,15 @@ import { NextSeasonSetupModal } from '../dynasty/NextSeasonSetupModal';
 import { SeasonTransitionModal } from '../dynasty/SeasonTransitionModal';
 import { TradeWindowModal } from '../dynasty/TradeWindowModal';
 import { MiniAuctionReleasesModal } from '../dynasty/MiniAuctionReleasesModal';
+import { InternationalSquadModal } from '../dynasty/InternationalSquadModal';
+import { SquadConfirmationModal } from '../dynasty/SquadConfirmationModal';
 import { AuctionHallScreen } from '../auction/AuctionHallScreen';
 import { DataPortabilityModal } from '../data/DataPortabilityModal';
 import { TeamLogo } from '../common/TeamLogo';
 import { MatchAnalysisModal } from '../match/MatchAnalysisModal';
 import { TacticalCommandSuiteModal } from './TacticalCommandSuiteModal';
-import { MatchLiveState } from '../../types/cricket';
+import { MatchLiveState, LeaguePlayoffs } from '../../types/cricket';
+import { createHeadlessMatchState, simulateFullMatchHeadless } from '../../engine/cricketEngine';
 
 export const HubScreen: React.FC = () => {
   const {
@@ -50,8 +53,17 @@ export const HubScreen: React.FC = () => {
     claimDoubleTrainingXp,
     selectOpeners,
     createFranchiseMatchState,
+    playPlayoffMatch,
+    simPlayoffMatch,
     startNewSeason,
-    boostTeamMorale
+    boostTeamMorale,
+    careerPhase,
+    setCareerPhase,
+    careerBoardReview,
+    setCareerBoardReview,
+    selectUserTeam,
+    releasePlayersForAuction,
+    setNationalSquadIds
   } = useGame();
 
   const currentLeague = leagues.find(l => l.id === currentLeagueId) || leagues[0];
@@ -122,6 +134,116 @@ export const HubScreen: React.FC = () => {
   const [tacticalSuiteTab, setTacticalSuiteTab] = useState<'director' | 'field' | 'matchups' | 'simulator' | 'infrastructure'>('director');
   const [pendingNextClubId, setPendingNextClubId] = useState<string>(userTeam.id);
   const [pendingNextCountryId, setPendingNextCountryId] = useState<string | null>(null);
+
+  const sortedStandings = useMemo(() => {
+    return [...(currentLeague.standings || [])].sort((a, b) => b.points - a.points || b.nrr - a.nrr);
+  }, [currentLeague.standings]);
+
+  const top4Standings = useMemo(() => sortedStandings.slice(0, 4), [sortedStandings]);
+
+  const [playoffState, setPlayoffState] = useState<LeaguePlayoffs>(() => {
+    if (currentLeague.playoffs) return currentLeague.playoffs;
+    const t1 = top4Standings[0]?.teamId || teams[0]?.id || 'team_kol';
+    const t2 = top4Standings[1]?.teamId || teams[1]?.id || 'team_che';
+    const t3 = top4Standings[2]?.teamId || teams[2]?.id || 'team_mum';
+    const t4 = top4Standings[3]?.teamId || teams[3]?.id || 'team_blr';
+    return {
+      q1: { stage: 'q1', title: 'Qualifier 1 (1st vs 2nd)', homeTeamId: t1, awayTeamId: t2, winnerTeamId: null, loserTeamId: null, completed: false },
+      eliminator: { stage: 'eliminator', title: 'Eliminator (3rd vs 4th)', homeTeamId: t3, awayTeamId: t4, winnerTeamId: null, loserTeamId: null, completed: false },
+      q2: { stage: 'q2', title: 'Qualifier 2 (Loser Q1 vs Winner Elim)', homeTeamId: null, awayTeamId: null, winnerTeamId: null, loserTeamId: null, completed: false },
+      final: { stage: 'final', title: 'TATA IPL Final', homeTeamId: null, awayTeamId: null, winnerTeamId: null, loserTeamId: null, completed: false }
+    };
+  });
+
+  useEffect(() => {
+    if (currentLeague.playoffs) {
+      setPlayoffState(currentLeague.playoffs);
+    }
+  }, [currentLeague.playoffs]);
+
+  const getPlayoffDateStr = useCallback((stageKey: 'q1' | 'eliminator' | 'q2' | 'final') => {
+    const calDay = calendarDays.find(d => d.id === `cal_playoff_${stageKey}`);
+    if (calDay) {
+      return `${calDay.month} ${calDay.dayNumber}, ${activeSeasonYear}`;
+    }
+    return `May ${activeSeasonYear}`;
+  }, [calendarDays, activeSeasonYear]);
+
+  const isLeagueStageCompleted = useMemo(() => {
+    const leagueMatches = calendarDays.filter(d => d.type === 'match' && d.matchFixture);
+    if (leagueMatches.length > 0) {
+      return leagueMatches.every(d => Boolean(d.matchFixture?.completed));
+    }
+    return (currentLeague.standings?.length ?? 0) > 0 && currentLeague.standings.every(s => s.played >= 18);
+  }, [calendarDays, currentLeague.standings]);
+
+  const shouldShowPlayoffs = careerPhase === 'playoffs' || careerPhase === 'season_final' || (isLeagueStageCompleted && (currentLeague.standings?.length ?? 0) > 0);
+
+  const handleSimulatePlayoffMatch = (stageKey: 'q1' | 'eliminator' | 'q2' | 'final') => {
+    sound.playCrowdCheer(0.8);
+    const matchObj = (currentLeague.playoffs || playoffState)[stageKey];
+    if (!matchObj || !matchObj.homeTeamId || !matchObj.awayTeamId) return;
+
+    simPlayoffMatch(currentLeague.id, stageKey);
+
+    const homeT = teams.find(t => t.id === matchObj.homeTeamId) || teams[0];
+    const awayT = teams.find(t => t.id === matchObj.awayTeamId) || teams[1];
+
+    const headlessState = createHeadlessMatchState({
+      id: `match_playoff_${stageKey}`,
+      leagueId: currentLeagueId,
+      homeTeam: homeT,
+      awayTeam: awayT,
+      playerPool: players,
+      format: 'T20',
+      venue: 'Narendra Modi Stadium, Ahmedabad'
+    });
+
+    const outcome = simulateFullMatchHeadless(headlessState, players);
+    const winnerId = outcome.winnerTeamId || (outcome.innings1.runs >= (outcome.innings2?.runs || 0) ? homeT.id : awayT.id);
+    const loserId = winnerId === homeT.id ? awayT.id : homeT.id;
+    const winnerShort = winnerId === homeT.id ? homeT.shortName : awayT.shortName;
+    const marginStr = outcome.resultText || `${winnerShort} won match`;
+
+    setPlayoffState(prev => {
+      const next = { ...prev };
+      next[stageKey] = {
+        ...next[stageKey],
+        completed: true,
+        winnerTeamId: winnerId,
+        loserTeamId: loserId,
+        resultSummary: marginStr
+      };
+
+      if (stageKey === 'q1' || stageKey === 'eliminator') {
+        if (next.q1.completed && next.eliminator.completed) {
+          next.q2 = {
+            ...next.q2,
+            homeTeamId: next.q1.loserTeamId,
+            awayTeamId: next.eliminator.winnerTeamId
+          };
+        }
+      }
+      if (stageKey === 'q2') {
+        if (next.q1.completed && next.q2.completed) {
+          next.final = {
+            ...next.final,
+            homeTeamId: next.q1.winnerTeamId,
+            awayTeamId: next.q2.winnerTeamId
+          };
+        }
+      }
+      if (stageKey === 'final') {
+        next.championTeamId = winnerId;
+        setTimeout(() => {
+          setCareerPhase('board_review');
+        }, 500);
+      }
+      return next;
+    });
+
+    showToast(`${stageKey.toUpperCase()}: ${marginStr}`);
+  };
 
   const presentDay = calendarDays[presentDayIndex] || activeDay;
 
@@ -429,6 +551,141 @@ export const HubScreen: React.FC = () => {
       {/* Main Content Card Container (Browser 12-Column Grid) */}
       <div className="flex-1 px-6 py-4 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         <div className="lg:col-span-7 flex flex-col space-y-4">
+
+        {/* ======================================================== */}
+        {/* PLAYOFF STAGE PANEL                                      */}
+        {/* ======================================================== */}
+        {shouldShowPlayoffs && (
+          <div className="bg-gradient-to-b from-[#1c132d] via-[#101726] to-[#0d121f] border border-amber-500/40 rounded-3xl p-5 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Trophy className="w-6 h-6 text-amber-400" />
+                <div>
+                  <h2 className="text-base font-black font-display text-white uppercase tracking-wider">
+                    TATA IPL PLAYOFF STAGE · {activeSeasonYear}
+                  </h2>
+                  <span className="text-[10px] font-mono text-amber-400">
+                    Top 4 Qualification Bracket · Ahmedabad &amp; Chennai
+                  </span>
+                </div>
+              </div>
+              <span className="px-3 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 font-mono text-[10px] font-black uppercase">
+                PLAYOFFS
+              </span>
+            </div>
+
+            {/* 4 Playoff Matches Bracket Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {[
+                { key: 'q1' as const, badge: 'QUALIFIER 1' },
+                { key: 'eliminator' as const, badge: 'ELIMINATOR' },
+                { key: 'q2' as const, badge: 'QUALIFIER 2' },
+                { key: 'final' as const, badge: 'GRAND FINAL' }
+              ].map(({ key, badge }) => {
+                const dateStr = getPlayoffDateStr(key);
+                const pMatch = (currentLeague.playoffs || playoffState)[key];
+                const homeT = teams.find(t => t.id === pMatch.homeTeamId);
+                const awayT = teams.find(t => t.id === pMatch.awayTeamId);
+                const isUserMatch = homeT?.id === userTeam.id || awayT?.id === userTeam.id;
+
+                return (
+                  <div key={key} className="p-3.5 rounded-2xl bg-slate-900/90 border border-slate-800 flex flex-col justify-between space-y-2">
+                    <div className="flex items-center justify-between text-[10px] font-mono text-slate-400">
+                      <span className="font-bold text-amber-400 uppercase">{badge}</span>
+                      <span>{dateStr}</span>
+                    </div>
+
+                    <div className="flex items-center justify-between py-1 border-y border-slate-800/60">
+                      {/* Home Team */}
+                      <div className="flex items-center gap-2">
+                        <TeamLogo teamId={homeT?.id || ''} shortName={homeT?.shortName || 'TBD'} size={28} className="rounded-lg" />
+                        <span className="text-xs font-black text-white">{homeT?.shortName || 'TBD'}</span>
+                      </div>
+
+                      <span className="text-[10px] font-mono text-slate-500 font-bold">vs</span>
+
+                      {/* Away Team */}
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-black text-white">{awayT?.shortName || 'TBD'}</span>
+                        <TeamLogo teamId={awayT?.id || ''} shortName={awayT?.shortName || 'TBD'} size={28} className="rounded-lg" />
+                      </div>
+                    </div>
+
+                    {pMatch.completed ? (
+                      <div className="p-2 rounded-xl bg-emerald-950/60 border border-emerald-500/30 text-emerald-300 text-[10px] font-mono font-bold text-center">
+                        ✓ {pMatch.resultSummary || 'Match Completed'}
+                      </div>
+                    ) : homeT && awayT ? (
+                      <div className="flex items-center gap-2 pt-1">
+                        {isUserMatch ? (
+                          <div className="flex items-center gap-1.5 w-full">
+                            <button
+                              onClick={() => {
+                                sound.playCrowdCheer(0.8);
+                                playPlayoffMatch(currentLeague.id, key);
+                              }}
+                              className="flex-1 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-black text-[10px] uppercase font-mono rounded-xl shadow-md active:scale-95 transition-all text-center cursor-pointer"
+                            >
+                              PLAY ▶
+                            </button>
+                            <button
+                              onClick={() => handleSimulatePlayoffMatch(key)}
+                              className="flex-1 py-2 bg-amber-500 hover:bg-amber-400 text-black font-black text-[10px] uppercase font-mono rounded-xl shadow-md active:scale-95 transition-all text-center cursor-pointer"
+                            >
+                              QUICK SIM
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => handleSimulatePlayoffMatch(key)}
+                            className="w-full py-2 bg-amber-500 hover:bg-amber-400 text-black font-black text-[10px] uppercase font-mono rounded-xl shadow-md active:scale-95 transition-all cursor-pointer"
+                          >
+                            SIMULATE MATCH
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="text-[10px] font-mono text-slate-500 italic text-center py-1">
+                        Awaiting teams from previous round
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* OFF-SEASON REST CARD */}
+        {careerPhase === 'off_season_rest' && (
+          <div className="bg-gradient-to-r from-[#141d2f] via-[#211833] to-[#141d2f] border border-amber-500/50 rounded-2xl p-5 shadow-2xl text-center flex flex-col items-center justify-center gap-3">
+            <div className="w-12 h-12 rounded-full bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400">
+              <Moon className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="text-base font-black font-display text-white uppercase tracking-wider">
+                OFF-SEASON REST &amp; RECOVERY
+              </h3>
+              <p className="text-xs text-slate-300 mt-1 max-w-sm leading-relaxed">
+                Non-interactive calendar days are ready to be skipped. Advance off-season rest to launch Season {activeSeasonYear + 1}.
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                sound.playCrowdCheer(1.0);
+                const nextYr = activeSeasonYear + 1;
+                startNewSeason(userTeam.id, coachProfile.nationalTeamId, nextYr);
+                setCareerPhase('league_stage');
+                showToast(`Off-season complete — welcome to Season ${nextYr}!`);
+              }}
+              className="px-6 py-3.5 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-black font-black text-xs uppercase tracking-widest rounded-2xl shadow-xl shadow-amber-500/20 active:scale-95 transition-all flex items-center gap-2 cursor-pointer"
+            >
+              <FastForward className="w-4 h-4 fill-current" />
+              ADVANCE TO SEASON {activeSeasonYear + 1} ▶
+            </button>
+          </div>
+        )}
+
         {/* End of Season Review Card if completed or ready */}
         {simToSeasonEndReady && (
           <div className="bg-[#101726]/90 border border-slate-800 rounded-2xl p-4 shadow-xl">
@@ -1590,14 +1847,13 @@ export const HubScreen: React.FC = () => {
         onSeasonAdvance={(yr) => showToast(`Welcome to Season ${yr}! Squad retentions & progression applied.`)}
       />
 
-      {/* 1. Board Review Modal (Screenshot_20261019_234411_f961f584.jpg) */}
+      {/* 1. Board Review Modal */}
       <BoardReviewModal
-        isOpen={isBoardReviewOpen}
+        isOpen={isBoardReviewOpen || careerPhase === 'board_review'}
         onClose={() => setIsBoardReviewOpen(false)}
         onProceedToOffers={() => {
           setIsBoardReviewOpen(false);
-          setSimToSeasonEndReady(true);
-          setIsNextSeasonSetupOpen(true);
+          setCareerPhase('career_decision');
         }}
         userTeam={userTeam}
         userStanding={currentLeague.standings.find(s => s.teamId === userTeam.id)}
@@ -1607,22 +1863,41 @@ export const HubScreen: React.FC = () => {
           return idx >= 0 ? idx + 1 : 4;
         })()}
         seasonYear={activeSeasonYear}
+        reviewData={careerBoardReview}
       />
 
-      {/* 2. Set Up Your Next Season (Offers) (Screenshot_2026_1019_234400_00e753b3.jpg) */}
+      {/* 2. Set Up Your Next Season (Offers / Career Decision) */}
       <NextSeasonSetupModal
-        isOpen={isNextSeasonSetupOpen}
+        isOpen={isNextSeasonSetupOpen || careerPhase === 'career_decision'}
         onClose={() => setIsNextSeasonSetupOpen(false)}
         onProceed={(selectedClubId, selectedCountryId) => {
-          setPendingNextClubId(selectedClubId);
-          setPendingNextCountryId(selectedCountryId);
+          if (selectedClubId !== userTeam.id) {
+            selectUserTeam(selectedClubId);
+          }
+          if (selectedCountryId && selectedCountryId !== 'none') {
+            coachProfile.nationalTeamId = selectedCountryId;
+            setCareerPhase('international_squad_selection');
+          } else {
+            setCareerPhase('retention');
+          }
           setIsNextSeasonSetupOpen(false);
-          setIsSeasonTransitionOpen(true);
         }}
         userTeam={userTeam}
       />
 
-      {/* 3. Season Transition Modal (Screenshot_20261019_234437_ff67b4de.jpg) */}
+      {/* 2b. International Squad 15-Man Selection Modal */}
+      <InternationalSquadModal
+        isOpen={careerPhase === 'international_squad_selection'}
+        nationName={coachProfile.nationalTeamId ? (nations.find(n => n.id === coachProfile.nationalTeamId)?.name || 'National Team') : 'National Team'}
+        playerPool={players}
+        onConfirmSquad={(selectedPlayerIds) => {
+          setNationalSquadIds(selectedPlayerIds);
+          setCareerPhase('retention');
+          showToast('15-Man National Squad confirmed!');
+        }}
+      />
+
+      {/* 3. Season Transition Modal */}
       <SeasonTransitionModal
         isOpen={isSeasonTransitionOpen}
         onClose={() => setIsSeasonTransitionOpen(false)}
@@ -1642,7 +1917,7 @@ export const HubScreen: React.FC = () => {
         nextSeasonYear={activeSeasonYear + 1}
       />
 
-      {/* 4. Trade Window Modal (Screenshot_2026_1019_234527_238b6681.jpg) */}
+      {/* 4. Trade Window Modal */}
       <TradeWindowModal
         isOpen={isTradeWindowOpen}
         onClose={() => setIsTradeWindowOpen(false)}
@@ -1657,11 +1932,12 @@ export const HubScreen: React.FC = () => {
         initialPurseCr={postSeasonPurseCr}
       />
 
-      {/* 5. Mini Auction Releases Modal (Screenshot_2026_1019_234623_cfd215e3.jpg) */}
+      {/* 5. Mini Auction Releases Modal */}
       <MiniAuctionReleasesModal
-        isOpen={isReleasesModalOpen}
+        isOpen={isReleasesModalOpen || careerPhase === 'retention'}
         onClose={() => setIsReleasesModalOpen(false)}
         onProceedToAuctionHall={(releasedIds, finalPurseCr) => {
+          releasePlayersForAuction(userTeam.id, releasedIds, finalPurseCr);
           setPostSeasonPurseCr(finalPurseCr);
           const names = releasedIds.map(id => {
             const p = userTeamPlayers.find(pl => pl.id === id);
@@ -1669,6 +1945,7 @@ export const HubScreen: React.FC = () => {
           });
           if (names.length > 0) setReleasedPlayerNames(names);
           setIsReleasesModalOpen(false);
+          setCareerPhase('auction');
           setIsAuctionHallOpen(true);
         }}
         userTeam={userTeam}
@@ -1676,10 +1953,13 @@ export const HubScreen: React.FC = () => {
         currentPurseCr={postSeasonPurseCr}
       />
 
-      {/* 6. Auction Hall Overview Screen (Screenshot_2026_1019_234703_8f9ee5de.jpg) */}
+      {/* 6. Auction Hall Overview Screen */}
       <AuctionHallScreen
-        isOpen={isAuctionHallOpen}
-        onClose={() => setIsAuctionHallOpen(false)}
+        isOpen={isAuctionHallOpen || careerPhase === 'auction'}
+        onClose={() => {
+          setIsAuctionHallOpen(false);
+          setCareerPhase('squad_confirmation');
+        }}
         onStartAuction={() => {
           setIsAuctionHallOpen(false);
           setActiveTab('auction');
@@ -1687,6 +1967,19 @@ export const HubScreen: React.FC = () => {
         userTeam={userTeam}
         userPurseCr={postSeasonPurseCr}
         userReleasedNames={releasedPlayerNames}
+        seasonYear={activeSeasonYear}
+      />
+
+      {/* 7. Squad Confirmation Modal */}
+      <SquadConfirmationModal
+        isOpen={careerPhase === 'squad_confirmation'}
+        userTeam={userTeam}
+        squad={userTeamPlayers}
+        nextSeasonYear={activeSeasonYear + 1}
+        onConfirmNextSeason={() => {
+          setCareerPhase('off_season_rest');
+          showToast('Squad confirmed! Resting team during off-season.');
+        }}
       />
 
       {/* Feature 6.7: Data Portability & Community CSV Rosters Modal */}

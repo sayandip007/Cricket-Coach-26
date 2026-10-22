@@ -42,8 +42,8 @@ export function checkIsBatContact(outcome: BallOutcome | null): boolean {
     // Caught (field catch, caught behind, caught and bowled) is ALWAYS bat contact
     if (
       outcome.wicketType === 'caught' ||
-      outcome.wicketType === 'caught_behind' ||
-      outcome.wicketType === 'caught_and_bowled'
+      (outcome.wicketType as string) === 'caught_behind' ||
+      (outcome.wicketType as string) === 'caught_and_bowled'
     ) {
       return true;
     }
@@ -120,14 +120,8 @@ class SoundController {
 
   private triggerHaptic(ms = 12) {
     try {
-      if (ms >= 45) {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
-      } else if (ms >= 30) {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {});
-      } else if (ms >= 20) {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-      } else {
-        Haptics.selectionAsync().catch(() => {});
+      if (typeof window !== 'undefined' && 'vibrate' in navigator) {
+        navigator.vibrate(ms);
       }
     } catch {
       // Ignore vibration errors on desktop browsers

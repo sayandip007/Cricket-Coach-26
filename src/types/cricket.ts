@@ -529,6 +529,42 @@ export interface CoachProfile {
   }[];
 }
 
+export type CareerPhase =
+  | 'league_stage'
+  | 'playoffs'
+  | 'season_final'
+  | 'board_review'
+  | 'career_decision'
+  | 'retention'
+  | 'auction'
+  | 'squad_confirmation'
+  | 'off_season_rest'
+  | 'international_squad_selection'
+  | 'next_season_ready';
+
+export interface ObjectiveResult {
+  id: string;
+  category: 'PRIMARY' | 'SECONDARY';
+  title: string;
+  description: string;
+  targetStr: string;
+  measuredStr: string;
+  isFulfilled: boolean;
+}
+
+export interface CareerBoardReview {
+  seasonYear: number;
+  teamId: string;
+  teamName: string;
+  objectives: ObjectiveResult[];
+  fulfilledCount: number;
+  totalCount: number;
+  scorePct: number; // fulfilled / total * 100
+  isSatisfied: boolean; // scorePct >= 60
+  verdictTitle: string;
+  verdictDesc: string;
+}
+
 // ==========================================
 // FEATURE 6.1: DRS & BALL-TRACKING ENGINE
 // ==========================================

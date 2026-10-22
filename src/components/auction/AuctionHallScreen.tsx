@@ -15,6 +15,7 @@ interface AuctionHallScreenProps {
   userTeam: Team;
   userPurseCr?: number;
   userReleasedNames?: string[];
+  seasonYear?: number;
 }
 
 export const AuctionHallScreen: React.FC<AuctionHallScreenProps> = ({
@@ -23,9 +24,12 @@ export const AuctionHallScreen: React.FC<AuctionHallScreenProps> = ({
   onStartAuction,
   userTeam,
   userPurseCr,
-  userReleasedNames
+  userReleasedNames,
+  seasonYear = 2026
 }) => {
   if (!isOpen) return null;
+
+  const isMega = (seasonYear - 2025) % 3 === 0;
 
   const matchedUserClub =
     resolveAuctionFranchise(userTeam.id) || resolveAuctionFranchise(userTeam.shortName);
@@ -72,10 +76,10 @@ export const AuctionHallScreen: React.FC<AuctionHallScreenProps> = ({
         </button>
         <div>
           <h2 className="text-xs font-black font-display tracking-widest text-white uppercase">
-            TATA IPL 2026 AUCTION HALL
+            TATA IPL {seasonYear} {isMega ? 'MEGA' : 'MINI'} AUCTION HALL
           </h2>
           <span className="text-[10px] font-mono text-amber-400 block">
-            350 OFFICIAL LOTS · 42 SETS (BA1 – UAL10)
+            {isMega ? '350 OFFICIAL LOTS · MEGA AUCTION CYCLE' : 'OFFICIAL LOTS · MINI RETENTION & PURSE TOP-UP'}
           </span>
         </div>
       </div>

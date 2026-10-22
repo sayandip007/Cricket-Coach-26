@@ -57,6 +57,7 @@ import { canRetainPlayerInMega, isOverseasPlayer } from '../utils/auctionSandbox
 import { runBowlingAndSandboxTests } from './bowlingAndSandbox.test';
 import { runMatchEngineAuditTests } from './matchEngineAudit.test';
 import { runCricketBugsRegressionTests } from './cricketBugsRegression.test';
+import { runCareerProgressionTests } from './careerProgression.test';
 import {
   FIELD_TEMPLATES,
   validateFieldRestrictions,
@@ -1947,6 +1948,11 @@ runTest('REGRESSION', 'Phase 25: Complete Match Engine Audit, Cricket Rules & Ba
 runTest('REGRESSION', 'Phase 26: Cricket Engine Bugfixes — Bowler Selection, 5-Bowler Deadlock & IPL Impact Player Overseas Limit', () => {
   const bugRes = runCricketBugsRegressionTests();
   assert.equal(bugRes.passed, bugRes.total, `Expected all ${bugRes.total} cricket bugs regression tests to pass`);
+});
+
+runTest('REGRESSION', 'Phase 27: Career Mode Progression, Playoff Brackets, Board Review & Next-Season Advancement (Scenarios 1–30)', () => {
+  const careerRes = runCareerProgressionTests();
+  assert.equal(careerRes.passed, careerRes.total, `Expected all ${careerRes.total} career progression regression scenarios to pass`);
 });
 
 const failed = results.filter(r => !r.passed);

@@ -2,7 +2,8 @@ import React, { createContext, useContext, useState, useEffect, useMemo, useCall
 import {
   Player, Team, League, Nation, Achievement, JobOffer, CoachProfile,
   MatchLiveState, InningsData, AuctionLot, BatterInningsScorecard, BowlerInningsScorecard, FielderPosition, BallOutcome,
-  CompletedMatchRecord, InboxMessage, TournamentHonor, TeamSeasonRecord
+  CompletedMatchRecord, InboxMessage, TournamentHonor, TeamSeasonRecord,
+  CareerPhase, CareerBoardReview
 } from '../types/cricket';
 import {
   INITIAL_PLAYERS, INITIAL_TEAMS, INITIAL_LEAGUES, INITIAL_NATIONS,
@@ -1316,6 +1317,10 @@ export interface SaveSlotMeta {
 interface GameContextType {
   activeTab: MainTab;
   setActiveTab: (tab: MainTab) => void;
+  careerPhase: CareerPhase;
+  setCareerPhase: (phase: CareerPhase) => void;
+  careerBoardReview: CareerBoardReview | null;
+  setCareerBoardReview: (review: CareerBoardReview | null) => void;
   players: Player[];
   setPlayers: React.Dispatch<React.SetStateAction<Player[]>>;
   updatePlayer: (updated: Player) => void;
@@ -1805,6 +1810,42 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const setNationalSquadIds = useCallback((ids: string[]) => {
     setNationalSquadIdsState(ids);
     localStorage.setItem('ms_national_squad_ids_v6', JSON.stringify(ids));
+  }, []);
+
+  const [careerPhase, setCareerPhaseState] = useState<CareerPhase>(() => {
+    const saved = localStorage.getItem('ms_career_phase_v6');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed) return parsed as CareerPhase;
+      } catch {}
+    }
+    return 'league_stage';
+  });
+
+  const setCareerPhase = useCallback((phase: CareerPhase) => {
+    setCareerPhaseState(phase);
+    localStorage.setItem('ms_career_phase_v6', JSON.stringify(phase));
+  }, []);
+
+  const [careerBoardReview, setCareerBoardReviewState] = useState<CareerBoardReview | null>(() => {
+    const saved = localStorage.getItem('ms_career_board_review_v6');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed.scorePct === 'number') return parsed as CareerBoardReview;
+      } catch {}
+    }
+    return null;
+  });
+
+  const setCareerBoardReview = useCallback((review: CareerBoardReview | null) => {
+    setCareerBoardReviewState(review);
+    if (review) {
+      localStorage.setItem('ms_career_board_review_v6', JSON.stringify(review));
+    } else {
+      localStorage.removeItem('ms_career_board_review_v6');
+    }
   }, []);
 
   const [internationalSeries, setInternationalSeries] = useState<InternationalSeriesState>(() => {
@@ -2336,6 +2377,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     recordedMatchIdsRef.current.clear();
     setMatchLiveState(null);
+    setCareerPhase('league_stage');
+    setCareerBoardReview(null);
     setPlayers(freshPlayers);
     setTeams(freshTeams);
     setLeagues(freshLeagues);
@@ -2745,6 +2788,9 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
 
         updatedStandings.sort((a, b) => b.points - a.points || b.nrr - a.nrr);
+        if (updatedStandings.length > 0 && updatedStandings.every(s => s.played >= 18) && careerPhase === 'league_stage') {
+          setCareerPhase('playoffs');
+        }
         const idx = Math.min(l.calendarDates.length - 1, l.currentDateIndex + 1);
         return {
           ...l,
@@ -3019,6 +3065,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Transition to a new season: archive completed season records for all teams, apply aging/progression, reset standings & calendar, and update club/national contracts
   const startNewSeason = useCallback((selectedClubId?: string, selectedNationId?: string | null, nextYear?: number) => {
+    setCareerPhase('league_stage');
+    setCareerBoardReview(null);
     const activeLeague = leagues.find(l => l.id === currentLeagueId) || leagues[0];
     const outgoingYearStr = normalizeSeasonYear(activeLeague?.seasonName || activeLeague?.seasonYear);
     const outgoingYearNum = parseInt(outgoingYearStr, 10) || 2026;
@@ -4322,6 +4370,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
               resultSummary: shortScoreSummary
             };
             updatedPlayoffs.championTeamId = winnerId;
+            setCareerPhase('board_review');
 
             const champTeamObj = winnerId === finishedMatch.homeTeam.id ? finishedMatch.homeTeam : finishedMatch.awayTeam;
             const seasonYr = normalizeSeasonYear(activeLeague?.seasonName);
@@ -5874,6 +5923,10 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       value={{
         activeTab,
         setActiveTab,
+        careerPhase,
+        setCareerPhase,
+        careerBoardReview,
+        setCareerBoardReview,
         players,
         setPlayers,
         updatePlayer,
