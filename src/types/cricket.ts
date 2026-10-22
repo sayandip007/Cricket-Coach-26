@@ -29,6 +29,7 @@ export interface PlayerStats {
   bowlingStrikeRate?: number;
   catches?: number;
   stumpings?: number;
+  runOuts?: number;
 }
 
 export interface PlayerMatchLogEntry {
@@ -300,6 +301,7 @@ export interface BallOutcome {
   isLegalDelivery?: boolean;
   isWicket: boolean;
   wicketType?: 'bowled' | 'caught' | 'lbw' | 'run out' | 'stumped';
+  fielderId?: string;
   fielderName?: string;
   dismissedPlayerId?: string;
   dismissedPlayerName?: string;

@@ -630,31 +630,38 @@ export function calculateDeliveryProbabilities(input: DeliveryInput): DeliveryPr
 
   // 4. Batting Approach Modifiers (Meaningful & measurable trade-offs)
   const approach = battingTactics.approach || 'balanced';
+  const strikerBalls = matchSituation?.strikerBallsFaced ?? 8;
   if (approach === 'defensive') {
-    wicketProb *= 0.52;
-    dotProb *= 1.32;
-    singleProb *= 0.86;
-    fourProb *= 0.45;
-    sixProb *= 0.20;
+    wicketProb *= 0.56;
+    dotProb *= 1.11;
+    singleProb *= 1.07;
+    twoThreeProb *= 1.02;
+    fourProb *= 0.72;
+    sixProb *= 0.42;
   } else if (approach === 'anchor') {
-    wicketProb *= 0.74;
-    dotProb *= 1.06;
-    singleProb *= 1.14;
-    twoThreeProb *= 1.08;
-    fourProb *= 0.80;
-    sixProb *= 0.55;
+    wicketProb *= 0.76;
+    dotProb *= 1.05;
+    singleProb *= 1.09;
+    twoThreeProb *= 1.05;
+    fourProb *= 0.85;
+    sixProb *= 0.64;
   } else if (approach === 'aggressive') {
-    wicketProb *= 1.32;
+    wicketProb *= 1.24;
     dotProb *= 0.84;
-    singleProb *= 0.94;
-    fourProb *= 1.34;
-    sixProb *= 1.48;
+    singleProb *= 1.00;
+    twoThreeProb *= 1.08;
+    fourProb *= 1.32;
+    sixProb *= 1.46;
   } else if (approach === 'smash') {
-    wicketProb *= 1.78;
-    dotProb *= 0.74;
-    singleProb *= 0.76;
-    fourProb *= 1.55;
-    sixProb *= 1.95;
+    wicketProb *= 1.82;
+    dotProb *= 0.78;
+    singleProb *= 0.78;
+    fourProb *= 1.48;
+    sixProb *= 1.82;
+    // Blind slogging before sighting the ball outside death overs carries extra edge/mis-hit risk
+    if (!isDeathOvers && strikerBalls < 6) {
+      wicketProb *= 1.22;
+    }
   }
 
   // 5. Running Risk & Pair Running Modifiers
@@ -801,22 +808,35 @@ export function calculateDeliveryProbabilities(input: DeliveryInput): DeliveryPr
     dotProb *= 1.04;
   }
 
-  // 8. Pitch & Powerplay / Death Stage Modifiers
-  if (normPitch.includes('flat')) {
-    fourProb *= 1.12;
-    sixProb *= 1.14;
-    wicketProb *= 0.90;
-  } else if (normPitch.includes('dry') || normPitch.includes('turn')) {
-    fourProb *= 0.92;
-    sixProb *= 0.90;
-    wicketProb *= isPace ? 1.0 : 1.14;
-  } else if (normPitch.includes('green')) {
-    wicketProb *= isPace ? 1.15 : 0.98;
-    fourProb *= 0.95;
-  } else if (normPitch.includes('sluggish')) {
-    sixProb *= 0.86;
-    fourProb *= 0.90;
-    singleProb *= 1.06;
+  // 8. Tactical Approach × Pitch / Matchup Interaction & Innings Phase Modifiers
+  // Base pitch skill shift is already included in effectiveBat & effectiveBowl (no double counting).
+  // Here we model how batting approach interacts with difficult vs flat conditions and matchup disadvantage:
+  const isDifficultPitch =
+    normPitch.includes('green') ||
+    normPitch.includes('dry') ||
+    normPitch.includes('turn') ||
+    normPitch.includes('sluggish') ||
+    normPitch.includes('two-paced');
+  const isFlatPitch = normPitch.includes('flat');
+
+  if (isDifficultPitch || skillDiff < -4) {
+    if (approach === 'aggressive') {
+      wicketProb *= 1.18;
+      fourProb *= 0.90;
+      sixProb *= 0.86;
+    } else if (approach === 'smash') {
+      wicketProb *= 1.30;
+      fourProb *= 0.86;
+      sixProb *= 0.82;
+    } else if (approach === 'defensive' || approach === 'anchor') {
+      // Watchful technique mitigates tricky pitch movement and rotates strike safely
+      wicketProb *= 0.88;
+      singleProb *= 1.05;
+    }
+  } else if (isFlatPitch && (approach === 'aggressive' || approach === 'smash') && skillDiff >= -2) {
+    fourProb *= 1.08;
+    sixProb *= 1.10;
+    wicketProb *= 0.95;
   }
 
   if (isPowerplay && format !== 'TEST') {

@@ -49,7 +49,7 @@ export function getFormatQuotaConfig(
       maxOvers: 16.4,
       maxBalls: 100,
       maxOversPerBowler: 4,
-      maxBallsPerBowler: 20, // 20 legal balls max per bowler in 100-ball cricket (or 24 in 4 overs)
+      maxBallsPerBowler: 24, // 4 six-ball overs max per bowler
       maxWickets: 10
     };
   }
@@ -359,6 +359,7 @@ export function finalizeInningsOrMatchState(
 export interface ResolveDeliveryOptions {
   rng?: () => number;
   forcedOutcome?: Partial<BallOutcome>;
+  playerMap?: Map<string, Player>;
 }
 
 /**
@@ -397,12 +398,15 @@ export function resolveSingleDeliveryState(
     return finalizeInningsOrMatchState(currState, playerPool);
   }
 
-  const combinedPool = [
-    ...playerPool,
-    ...(currState.homeTeam.squad || []),
-    ...(currState.awayTeam.squad || [])
-  ];
-  const findPlayer = (id: string): Player | undefined => combinedPool.find(p => p.id === id);
+  const combinedPool = options?.playerMap
+    ? playerPool
+    : [
+        ...playerPool,
+        ...(currState.homeTeam.squad || []),
+        ...(currState.awayTeam.squad || [])
+      ];
+  const findPlayer = (id: string): Player | undefined =>
+    options?.playerMap ? options.playerMap.get(id) : combinedPool.find(p => p.id === id);
 
   // Ensure striker and non-striker are distinct and valid
   let strikerId = currInn.currentStrikerId;
@@ -574,6 +578,56 @@ export function resolveSingleDeliveryState(
   const isBatterFour = batterRuns === 4;
   const isBatterSix = batterRuns === 6;
 
+  // Resolve exact participating fielderId for catches, stumpings, and run-outs
+  let resolvedFielderId = ballOutcome.fielderId;
+  if (isWicket && !resolvedFielderId && (wicketType === 'caught' || wicketType === 'stumped' || wicketType === 'run out')) {
+    const fieldingTeam =
+      currInn.bowlingTeamId === currState.homeTeam.id ? currState.homeTeam : currState.awayTeam;
+    const xiFromIds = (fieldingTeam.playingXIIds || [])
+      .map(findPlayer)
+      .filter((p): p is Player => Boolean(p));
+    const fieldingXI =
+      xiFromIds.length >= 2
+        ? xiFromIds
+        : fieldingTeam.squad && fieldingTeam.squad.length >= 2
+        ? fieldingTeam.squad.slice(0, 11)
+        : combinedPool.filter(p => p.clubId === fieldingTeam.id).slice(0, 11);
+
+    const exactNameMatch = ballOutcome.fielderName
+      ? fieldingXI.find(p => p.name.toLowerCase() === ballOutcome.fielderName!.toLowerCase())
+      : undefined;
+
+    if (exactNameMatch) {
+      resolvedFielderId = exactNameMatch.id;
+    } else if (
+      wicketType === 'stumped' ||
+      ballOutcome.fielderName === 'Wicketkeeper' ||
+      ballOutcome.appealType === 'caught_behind'
+    ) {
+      const keeper =
+        fieldingXI.find(
+          p =>
+            p.role === 'Wk-bat' ||
+            p.role === 'Wicketkeeper' ||
+            (p.primaryRole && p.primaryRole.toLowerCase().includes('keeper'))
+        ) || fieldingXI[0];
+      resolvedFielderId = keeper?.id;
+    } else if (wicketType === 'caught' && ballOutcome.fielderName === 'Bowler') {
+      resolvedFielderId = bowler.id;
+    } else if (fieldingXI.length > 0) {
+      const outfieldPool = fieldingXI.filter(
+        p => p.id !== bowler.id && p.role !== 'Wk-bat' && p.role !== 'Wicketkeeper'
+      );
+      const poolToUse = outfieldPool.length > 0 ? outfieldPool : fieldingXI;
+      const fNameStr = ballOutcome.fielderName || 'Cover';
+      let hash = currInn.ballsCompleted;
+      for (let c = 0; c < fNameStr.length; c++) {
+        hash = (hash * 31 + fNameStr.charCodeAt(c)) >>> 0;
+      }
+      resolvedFielderId = poolToUse[hash % poolToUse.length]?.id;
+    }
+  }
+
   // Normalize ballOutcome fields so ballHistory is 100% consistent
   ballOutcome = {
     ...ballOutcome,
@@ -584,6 +638,7 @@ export function resolveSingleDeliveryState(
     isLegalDelivery,
     isWicket,
     wicketType,
+    fielderId: resolvedFielderId,
     isFour: isBatterFour || (Boolean(ballOutcome.isExtra) && extraRuns === 4),
     isSix: isBatterSix
   };
@@ -762,7 +817,7 @@ export function resolveSingleDeliveryState(
     currentStrikerId: nextStrikerId,
     currentNonStrikerId: nextNonStrikerId,
     currentBowlerId: nextBowlerId,
-    ballHistory: [ballOutcome, ...currInn.ballHistory.slice(0, 149)],
+    ballHistory: [ballOutcome, ...currInn.ballHistory.slice(0, 649)],
     fallOfWickets: updatedFow,
     overRuns: updatedOverRuns
   };
@@ -958,12 +1013,17 @@ export function simulateFullMatchHeadless(
       ? createSeededRng(seedOrRng)
       : Math.random;
 
+  const playerMap = new Map<string, Player>();
+  for (const p of playerPool) playerMap.set(p.id, p);
+  for (const p of initialState.homeTeam.squad || []) playerMap.set(p.id, p);
+  for (const p of initialState.awayTeam.squad || []) playerMap.set(p.id, p);
+
   let curr: MatchLiveState = { ...initialState, activeDrsReview: null };
   const maxSafetyDeliveries = curr.format === 'TEST' ? 1400 : curr.format === 'ODI' ? 750 : 360;
 
   for (let i = 0; i < maxSafetyDeliveries; i++) {
     if (curr.status === 'finished') break;
-    curr = resolveSingleDeliveryState(curr, playerPool, { rng });
+    curr = resolveSingleDeliveryState(curr, playerPool, { rng, playerMap });
   }
 
   if (curr.status !== 'finished') {
@@ -975,3 +1035,35 @@ export function simulateFullMatchHeadless(
 
   return curr;
 }
+
+/**
+ * Simulates only Innings 1 of a match using the single authoritative delivery engine.
+ */
+export function simulateFirstInningsHeadless(
+  initialState: MatchLiveState,
+  playerPool: Player[],
+  seedOrRng?: number | (() => number)
+): InningsData {
+  const rng =
+    typeof seedOrRng === 'function'
+      ? seedOrRng
+      : typeof seedOrRng === 'number'
+      ? createSeededRng(seedOrRng)
+      : Math.random;
+
+  const playerMap = new Map<string, Player>();
+  for (const p of playerPool) playerMap.set(p.id, p);
+  for (const p of initialState.homeTeam.squad || []) playerMap.set(p.id, p);
+  for (const p of initialState.awayTeam.squad || []) playerMap.set(p.id, p);
+
+  let curr: MatchLiveState = { ...initialState, currentInningsIndex: 1, activeDrsReview: null };
+  const maxSafetyDeliveries = curr.format === 'TEST' ? 700 : curr.format === 'ODI' ? 380 : 180;
+
+  for (let i = 0; i < maxSafetyDeliveries; i++) {
+    if (curr.currentInningsIndex !== 1 || curr.status === 'finished') break;
+    curr = resolveSingleDeliveryState(curr, playerPool, { rng, playerMap });
+  }
+
+  return curr.innings1;
+}
+

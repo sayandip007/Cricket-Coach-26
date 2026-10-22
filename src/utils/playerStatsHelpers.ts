@@ -357,10 +357,11 @@ export function recordMatchToPlayerStats(
   const activeBwCards = bwCards.filter(bw => (bw.overs || 0) > 0 || (bw.ballsInCurrentOver || 0) > 0);
   const didBowl = activeBwCards.length > 0;
 
-  // Count catches and stumpings credited in this match
+  // Count catches, stumpings, and run-outs credited in this match
   const isKeeper = isWicketkeeperRole(p.role) || isWicketkeeperRole(p.primaryRole);
   let matchCatches = 0;
   let matchStumpings = 0;
+  let matchRunOuts = 0;
 
   const checkInningsFielding = (inn: typeof inn1) => {
     if (!inn) return;
@@ -372,14 +373,21 @@ export function recordMatchToPlayerStats(
 
     for (const ball of inn.ballHistory || []) {
       if (!ball.isWicket) continue;
-      if (ball.wicketType === 'stumped' && isKeeper) {
-        matchStumpings += 1;
+      if (ball.wicketType === 'stumped') {
+        if (ball.fielderId === p.id || (!ball.fielderId && isKeeper)) {
+          matchStumpings += 1;
+        }
       } else if (ball.wicketType === 'caught') {
         if (
+          ball.fielderId === p.id ||
           ball.fielderName === p.name ||
-          (isKeeper && (ball.fielderName === 'Wicketkeeper' || ball.appealType === 'caught_behind'))
+          (!ball.fielderId && isKeeper && (ball.fielderName === 'Wicketkeeper' || ball.appealType === 'caught_behind'))
         ) {
           matchCatches += 1;
+        }
+      } else if (ball.wicketType === 'run out') {
+        if (ball.fielderId === p.id || ball.fielderName === p.name) {
+          matchRunOuts += 1;
         }
       }
     }
@@ -401,7 +409,7 @@ export function recordMatchToPlayerStats(
       fifties: 0, hundreds: 0, highestScore: 0, wickets: 0,
       oversBowled: 0, runsConceded: 0, maidens: 0, bestBowling: '0/0',
       economy: 0, average: 0, strikeRate: 0, innings: 0, dismissals: 0,
-      inningsBowled: 0, catches: 0, stumpings: 0
+      inningsBowled: 0, catches: 0, stumpings: 0, runOuts: 0
     };
 
     const prevMatches = base.matches || 0;
@@ -433,6 +441,7 @@ export function recordMatchToPlayerStats(
     const newHighest = Math.max(base.highestScore || 0, addRuns);
     const newCatches = (base.catches || 0) + matchCatches;
     const newStumpings = (base.stumpings || 0) + matchStumpings;
+    const newRunOuts = (base.runOuts || 0) + matchRunOuts;
 
     const bowlingAgg = aggregateBowlerMatchStatsIntoCareer(base, bwCards);
 
@@ -460,7 +469,8 @@ export function recordMatchToPlayerStats(
       strikeRate,
       economy: bowlingAgg.economy,
       catches: newCatches,
-      stumpings: newStumpings
+      stumpings: newStumpings,
+      runOuts: newRunOuts
     };
   };
 

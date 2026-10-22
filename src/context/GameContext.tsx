@@ -3039,20 +3039,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       isOnStrike: idx === 0
     }));
 
-    const oppBowlersList = finalOppXI.filter(p => p.role === 'Pace' || p.role === 'Spin' || p.role === 'All-rounder');
-    const finalBowlerPool = oppBowlersList.length > 0 ? oppBowlersList : finalOppXI;
-
-    const initBowlers: BowlerInningsScorecard[] = finalBowlerPool.map((p, idx) => ({
-      playerId: p.id,
-      name: p.name,
-      overs: 0,
-      ballsInCurrentOver: 0,
-      maidens: 0,
-      runs: 0,
-      wickets: 0,
-      economy: 0,
-      isCurrentBowler: idx === 0
-    }));
+    const initBowlers: BowlerInningsScorecard[] = buildBowlerScorecardPool(finalOppXI);
 
     const maxOversForFormat = format === 'TEST' ? 90 : format === 'ODI' ? 50 : format === '100BALL' ? 16.4 : 20;
 
@@ -3064,11 +3051,13 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       overs: 0,
       ballsCompleted: 0,
       maxOvers: maxOversForFormat,
+      currentOverRuns: 0,
+      extras: { total: 0, wides: 0, noBalls: 0, byes: 0, legByes: 0 },
       batters: initBatters,
       bowlers: initBowlers,
       currentStrikerId: finalUserXI[0]?.id || players[0]?.id,
       currentNonStrikerId: finalUserXI[1]?.id || players[1]?.id,
-      currentBowlerId: initBowlers[0]?.playerId || finalBowlerPool[0]?.id || finalOppXI[0]?.id,
+      currentBowlerId: initBowlers[0]?.playerId || finalOppXI[0]?.id,
       ballHistory: [],
       fallOfWickets: [],
       overRuns: []
@@ -3243,20 +3232,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       isOnStrike: idx === 0
     }));
 
-    const oppBowlersList = firstBowlXI.filter(p => p.role === 'Pace' || p.role === 'Spin' || p.role === 'All-rounder');
-    const finalBowlerPool = oppBowlersList.length > 0 ? oppBowlersList : firstBowlXI;
-
-    const initBowlers: BowlerInningsScorecard[] = finalBowlerPool.map((p, idx) => ({
-      playerId: p.id,
-      name: p.name,
-      overs: 0,
-      ballsInCurrentOver: 0,
-      maidens: 0,
-      runs: 0,
-      wickets: 0,
-      economy: 0,
-      isCurrentBowler: idx === 0
-    }));
+    const initBowlers: BowlerInningsScorecard[] = buildBowlerScorecardPool(firstBowlXI);
 
     const maxOversForFormat = format === 'TEST' ? 90 : format === 'ODI' ? 50 : format === '100BALL' ? 16.4 : 20;
 
@@ -3268,11 +3244,13 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       overs: 0,
       ballsCompleted: 0,
       maxOvers: maxOversForFormat,
+      currentOverRuns: 0,
+      extras: { total: 0, wides: 0, noBalls: 0, byes: 0, legByes: 0 },
       batters: initBatters,
       bowlers: initBowlers,
       currentStrikerId: firstBatXI[0]?.id || '',
       currentNonStrikerId: firstBatXI[1]?.id || '',
-      currentBowlerId: finalBowlerPool[0]?.id || '',
+      currentBowlerId: initBowlers[0]?.playerId || firstBowlXI[0]?.id || '',
       ballHistory: [],
       fallOfWickets: [],
       overRuns: []
@@ -4481,20 +4459,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       isOnStrike: idx === 0
     }));
 
-    const awayBowlersList = finalAwayXI.filter(p => p.role === 'Pace' || p.role === 'Spin' || p.role === 'All-rounder');
-    const finalBowlerPool = awayBowlersList.length > 0 ? awayBowlersList : finalAwayXI;
-
-    const initBowlers: BowlerInningsScorecard[] = finalBowlerPool.map((p, idx) => ({
-      playerId: p.id,
-      name: p.name,
-      overs: 0,
-      ballsInCurrentOver: 0,
-      maidens: 0,
-      runs: 0,
-      wickets: 0,
-      economy: 0,
-      isCurrentBowler: idx === 0
-    }));
+    const initBowlers: BowlerInningsScorecard[] = buildBowlerScorecardPool(finalAwayXI);
 
     const maxOversForFormat = format === 'TEST' ? 90 : format === 'ODI' ? 50 : format === '100BALL' ? 16.4 : 20;
 
@@ -4507,11 +4472,12 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       ballsCompleted: 0,
       maxOvers: maxOversForFormat,
       currentOverRuns: 0,
+      extras: { total: 0, wides: 0, noBalls: 0, byes: 0, legByes: 0 },
       batters: initBatters,
       bowlers: initBowlers,
       currentStrikerId: finalHomeXI[0]?.id || players[0]?.id,
       currentNonStrikerId: finalHomeXI[1]?.id || players[1]?.id,
-      currentBowlerId: initBowlers[0]?.playerId || finalBowlerPool[0]?.id || finalAwayXI[0]?.id,
+      currentBowlerId: initBowlers[0]?.playerId || finalAwayXI[0]?.id,
       ballHistory: [],
       fallOfWickets: [],
       overRuns: []
@@ -4882,8 +4848,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
               .filter((p): p is Player => Boolean(p));
             const finalBats = batXI.length >= 2 ? batXI : players.filter(p => p.clubId === secondBattingTeam.id).slice(0, 11);
             const finalBowls = bowlXI.length >= 2 ? bowlXI : players.filter(p => p.clubId === secondBowlingTeam.id).slice(0, 11);
-            const bPool = finalBowls.filter(p => p.role === 'Pace' || p.role === 'Spin' || p.role === 'All-rounder');
-            const activeBPool = bPool.length > 0 ? bPool : finalBowls;
+            const initBowlers2 = buildBowlerScorecardPool(finalBowls);
 
             nextTargetRuns = updatedInnings.runs + 1;
             nextStatus = 'innings_break';
@@ -4896,6 +4861,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
               ballsCompleted: 0,
               maxOvers: updatedInnings.maxOvers,
               currentOverRuns: 0,
+              extras: { total: 0, wides: 0, noBalls: 0, byes: 0, legByes: 0 },
               batters: finalBats.map((p, idx) => ({
                 playerId: p.id,
                 name: p.name,
@@ -4907,32 +4873,33 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 strikeRate: 0,
                 isOnStrike: idx === 0
               })),
-              bowlers: activeBPool.map((p, idx) => ({
-                playerId: p.id,
-                name: p.name,
-                overs: 0,
-                ballsInCurrentOver: 0,
-                maidens: 0,
-                runs: 0,
-                wickets: 0,
-                economy: 0,
-                isCurrentBowler: idx === 0
-              })),
+              bowlers: initBowlers2,
               currentStrikerId: finalBats[0]?.id || 'p1',
               currentNonStrikerId: finalBats[1]?.id || 'p2',
-              currentBowlerId: activeBPool[0]?.id || 'p3',
+              currentBowlerId: initBowlers2[0]?.playerId || finalBowls[0]?.id || 'p3',
               ballHistory: [],
               fallOfWickets: [],
               overRuns: []
             };
           } else {
             const target = prev.targetRuns || (prev.innings1.runs + 1);
-            const winnerId = updatedInnings.runs >= target ? updatedInnings.battingTeamId : prev.innings1.battingTeamId;
-            const winnerTeam = winnerId === prev.homeTeam.id ? prev.homeTeam : prev.awayTeam;
-            const runsDiff = Math.max(1, target - updatedInnings.runs - 1);
             nextStatus = 'finished';
-            nextWinnerTeamId = winnerId;
-            nextResultText = `${winnerTeam.name.toUpperCase()} WON BY ${runsDiff} RUN${runsDiff > 1 ? 'S' : ''}!`;
+            if (updatedInnings.runs >= target) {
+              const winnerId = updatedInnings.battingTeamId;
+              const winnerTeam = winnerId === prev.homeTeam.id ? prev.homeTeam : prev.awayTeam;
+              const wktsLeft = Math.max(1, 10 - updatedInnings.wickets);
+              nextWinnerTeamId = winnerId;
+              nextResultText = `${winnerTeam.name.toUpperCase()} WON BY ${wktsLeft} WICKET${wktsLeft > 1 ? 'S' : ''}!`;
+            } else if (updatedInnings.runs === target - 1) {
+              nextWinnerTeamId = undefined;
+              nextResultText = `MATCH TIED! (${prev.homeTeam.shortName} ${prev.innings1.runs}/${prev.innings1.wickets} & ${prev.awayTeam.shortName} ${updatedInnings.runs}/${updatedInnings.wickets})`;
+            } else {
+              const winnerId = prev.innings1.battingTeamId;
+              const winnerTeam = winnerId === prev.homeTeam.id ? prev.homeTeam : prev.awayTeam;
+              const runsDiff = Math.max(1, target - updatedInnings.runs - 1);
+              nextWinnerTeamId = winnerId;
+              nextResultText = `${winnerTeam.name.toUpperCase()} WON BY ${runsDiff} RUN${runsDiff > 1 ? 'S' : ''}!`;
+            }
           }
         }
       } else {
@@ -5035,8 +5002,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           .filter((p): p is Player => Boolean(p));
         const finalBats = batXI.length >= 2 ? batXI : players.filter(p => p.clubId === secondBattingTeam.id).slice(0, 11);
         const finalBowls = bowlXI.length >= 2 ? bowlXI : players.filter(p => p.clubId === secondBowlingTeam.id).slice(0, 11);
-        const bPool = finalBowls.filter(p => p.role === 'Pace' || p.role === 'Spin' || p.role === 'All-rounder');
-        const activeBPool = bPool.length > 0 ? bPool : finalBowls;
+        const initBowlers2 = buildBowlerScorecardPool(finalBowls);
 
         const innings2: InningsData = prev.innings2 || {
           battingTeamId: secondBattingTeam.id,
@@ -5047,6 +5013,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           ballsCompleted: 0,
           maxOvers: prev.innings1.maxOvers || 90,
           currentOverRuns: 0,
+          extras: { total: 0, wides: 0, noBalls: 0, byes: 0, legByes: 0 },
           batters: finalBats.map((p, idx) => ({
             playerId: p.id,
             name: p.name,
@@ -5058,20 +5025,10 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             strikeRate: 0,
             isOnStrike: idx === 0
           })),
-          bowlers: activeBPool.map((p, idx) => ({
-            playerId: p.id,
-            name: p.name,
-            overs: 0,
-            ballsInCurrentOver: 0,
-            maidens: 0,
-            runs: 0,
-            wickets: 0,
-            economy: 0,
-            isCurrentBowler: idx === 0
-          })),
+          bowlers: initBowlers2,
           currentStrikerId: finalBats[0]?.id || 'p1',
           currentNonStrikerId: finalBats[1]?.id || 'p2',
-          currentBowlerId: activeBPool[0]?.id || 'p3',
+          currentBowlerId: initBowlers2[0]?.playerId || finalBowls[0]?.id || 'p3',
           ballHistory: [],
           fallOfWickets: [],
           overRuns: []

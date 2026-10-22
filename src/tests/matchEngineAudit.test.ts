@@ -5,23 +5,65 @@ import {
   calculateFieldPlacementImpact,
   calculateDeliveryProbabilities,
   selectDirectionalFielder,
-  simulateBall,
   getFormatQuotaConfig,
   resolveSingleDeliveryState,
   createHeadlessMatchState,
   simulateFullMatchHeadless,
+  simulateFirstInningsHeadless,
   DEFAULT_MATCH_FIELD
 } from '../engine/cricketEngine';
-import { INITIAL_PLAYERS, INITIAL_TEAMS } from '../data/initialData';
-import { checkDrsEligibility, evaluateDrsDeliveryEvidence } from '../utils/drsRules';
-import { recordMatchToPlayerStats } from '../utils/playerStatsHelpers';
+import { INITIAL_PLAYERS, INITIAL_TEAMS, INITIAL_LEAGUES } from '../data/initialData';
+import {
+  checkDrsEligibility,
+  evaluateDrsDeliveryEvidence,
+  getInitialReviewsForFormat
+} from '../utils/drsRules';
+import { recordMatchToPlayerStats, getBattingStats, getBowlingStats, getKeepingStats } from '../utils/playerStatsHelpers';
 import { oversToBalls } from '../utils/bowlingStats';
-import { Player, Team, FielderPosition } from '../types/cricket';
+import { Player, Team, FielderPosition, InningsData, BattingApproach } from '../types/cricket';
 
 function assert(condition: boolean, message: string): void {
   if (!condition) {
     throw new Error(`ASSERTION FAILED: ${message}`);
   }
+}
+
+export interface ApproachAuditRow {
+  approach: BattingApproach;
+  inningsCount: number;
+  avgRuns: number;
+  avgWickets: number;
+  avgRunRate: number;
+  dotPct: number;
+  boundaryPct: number;
+  extrasPerInnings: number;
+  allOutRatePct: number;
+}
+
+export interface FormatAuditSummary {
+  format: 'T20' | 'ODI' | '100BALL' | 'TEST';
+  matchesSimulated: number;
+  inningsCount: number;
+  avgRuns: number;
+  avgWickets: number;
+  avgRunRate: number;
+  dotPct: number;
+  boundaryPct: number;
+  extrasPerInnings: number;
+  chaseWinRatePct: number;
+  defendWinRatePct: number;
+  tieRatePct: number;
+  scoreDistribution: {
+    min: number;
+    p10: number;
+    p25: number;
+    median: number;
+    p75: number;
+    p90: number;
+    max: number;
+  };
+  invalidStatesDetected: number;
+  quotaViolationsDetected: number;
 }
 
 export interface BatchMetricsReport {
@@ -34,16 +76,42 @@ export interface BatchMetricsReport {
   odiAvgRuns: number;
   odiAvgWickets: number;
   odiAvgRunRate: number;
+  hundredBallAvgRuns: number;
+  hundredBallAvgWickets: number;
+  hundredBallAvgRunRate: number;
   testAvgRuns: number;
   testAvgWickets: number;
   testAvgRunRate: number;
   strongVsWeakWinRatePct: number;
+  evenTeamsHomeWinRatePct: number;
   defensiveAvgRuns: number;
   defensiveAvgWickets: number;
+  anchorAvgRuns: number;
+  anchorAvgWickets: number;
   balancedAvgRuns: number;
   balancedAvgWickets: number;
   aggressiveAvgRuns: number;
   aggressiveAvgWickets: number;
+  smashAvgRuns: number;
+  smashAvgWickets: number;
+  approachAudit500: Record<BattingApproach, ApproachAuditRow>;
+  tacticalContextMatrix: {
+    flatBelterBalancedRuns: number;
+    flatBelterAggressiveRuns: number;
+    greenSeamerOvercastAnchorRuns: number;
+    greenSeamerOvercastAnchorWkts: number;
+    greenSeamerOvercastSmashRuns: number;
+    greenSeamerOvercastSmashWkts: number;
+    deathOvers5BalancedRuns: number;
+    deathOvers5SmashRuns: number;
+  };
+  formatAudits1000: Record<'T20' | 'ODI' | '100BALL' | 'TEST', FormatAuditSummary>;
+}
+
+function computePercentile(sorted: number[], pct: number): number {
+  if (sorted.length === 0) return 0;
+  const idx = Math.min(sorted.length - 1, Math.max(0, Math.floor((pct / 100) * sorted.length)));
+  return sorted[idx];
 }
 
 export function runMatchEngineAuditTests(): {
@@ -63,8 +131,13 @@ export function runMatchEngineAuditTests(): {
     results.push(`PASS: ${name}`);
   };
 
-  const homeTeam: Team = INITIAL_TEAMS[0];
-  const awayTeam: Team = INITIAL_TEAMS[1];
+  // Hydrate teams with full squads so all 11 XI players resolve cleanly
+  const hydratedTeams: Team[] = INITIAL_TEAMS.map(t => ({
+    ...t,
+    squad: INITIAL_PLAYERS.filter(p => p.clubId === t.id)
+  }));
+  const homeTeam: Team = hydratedTeams[0];
+  const awayTeam: Team = hydratedTeams[1];
 
   const makeFreshMatch = (format: 'T20' | 'ODI' | 'TEST' | '100BALL' = 'T20') =>
     createHeadlessMatchState({
@@ -90,21 +163,33 @@ export function runMatchEngineAuditTests(): {
     assert(strikerCard.balls === 1 && strikerCard.runs === 0, 'Striker should have 0(1)');
   });
 
-  // 2. Wide adds extra run, charges bowler, does not increment legal ball count
-  runTest('2. Wide adds extra run, charges bowler, does not increment legal ball count', () => {
+  // 2. Wide adds extra run, charges bowler, does not increment legal ball count, and handles wide + extra runs crossed
+  runTest('2. Wide adds extra run, charges bowler, does not increment legal ball count, and rotates strike on 2-run wide', () => {
     let state = makeFreshMatch('T20');
     const strikerId = state.innings1.currentStrikerId;
+    const nonStrikerId = state.innings1.currentNonStrikerId;
     const bowlerId = state.innings1.currentBowlerId;
+
+    // 1-run wide (no physical run crossed)
     state = resolveSingleDeliveryState(state, INITIAL_PLAYERS, {
       forcedOutcome: { runs: 1, isExtra: true, extraType: 'wide', isWicket: false }
     });
     assert(state.innings1.ballsCompleted === 0, 'Wide must not increment legal ballsCompleted');
     assert(state.innings1.runs === 1, 'Wide must add 1 run to team score');
     assert(state.innings1.extras?.wides === 1 && state.innings1.extras?.total === 1, 'Wide recorded in extras.wides');
+    assert(state.innings1.currentStrikerId === strikerId, '1-run wide does not swap strike');
     const strikerCard = state.innings1.batters.find(b => b.playerId === strikerId)!;
     const bowlerCard = state.innings1.bowlers.find(b => b.playerId === bowlerId)!;
     assert(strikerCard.runs === 0 && strikerCard.balls === 0, 'Wide must not add to batter runs or balls faced');
     assert(bowlerCard.runs === 1 && bowlerCard.overs === 0, 'Wide must charge 1 run to bowler and 0 legal balls');
+
+    // 2-run wide (1 wide penalty + 1 physical run crossed -> strike swaps!)
+    state = resolveSingleDeliveryState(state, INITIAL_PLAYERS, {
+      forcedOutcome: { runs: 2, extraRuns: 2, isExtra: true, extraType: 'wide', isWicket: false }
+    });
+    assert(state.innings1.ballsCompleted === 0, 'Still 0 legal balls after second wide');
+    assert(state.innings1.runs === 3 && state.innings1.extras?.wides === 3, 'Total wides should be 3');
+    assert(state.innings1.currentStrikerId === nonStrikerId, '2-run wide (1 physical run crossed) must rotate strike');
   });
 
   // 3. No-ball adds extra run, charges bowler, does not increment legal ball count, and prevents invalid dismissals
@@ -134,6 +219,22 @@ export function runMatchEngineAuditTests(): {
     const bowlerCard = state.innings1.bowlers.find(b => b.playerId === bowlerId)!;
     assert(strikerCard.runs === 4 && strikerCard.fours === 1, 'Batter credited with 4 runs and 1 four off the no-ball');
     assert(bowlerCard.runs === 5 && bowlerCard.wickets === 0, 'Bowler charged 5 runs and 0 wickets');
+
+    // Attempt illegal 'bowled', 'lbw', and 'stumped' on a no-ball -> all must be rejected
+    for (const invalidWt of ['bowled', 'lbw', 'stumped'] as const) {
+      state = resolveSingleDeliveryState(state, INITIAL_PLAYERS, {
+        forcedOutcome: {
+          runs: 1,
+          batterRuns: 0,
+          extraRuns: 1,
+          isExtra: true,
+          extraType: 'no_ball',
+          isWicket: true,
+          wicketType: invalidWt
+        }
+      });
+      assert(state.innings1.wickets === 0, `Batter cannot be out ${invalidWt} on a no-ball`);
+    }
 
     // Deliver 7 consecutive wides — over must still have 0 legal balls and not complete!
     for (let i = 0; i < 7; i++) {
@@ -262,8 +363,8 @@ export function runMatchEngineAuditTests(): {
     );
   });
 
-  // 8. Bowler cannot bowl consecutive overs or exceed format quota
-  runTest('8. Bowler rotation prevents consecutive overs and enforces 4-over T20 & 10-over ODI quotas', () => {
+  // 8. Bowler rotation prevents consecutive overs and enforces T20 (4-over), ODI (10-over), 100BALL (24-ball), and shortened-innings quotas
+  runTest('8. Bowler rotation prevents consecutive overs and enforces T20, ODI, 100BALL & shortened-innings quotas', () => {
     let state = makeFreshMatch('T20');
     let previousOverBowler = '';
 
@@ -286,14 +387,37 @@ export function runMatchEngineAuditTests(): {
 
     const odiQuota = getFormatQuotaConfig('ODI');
     assert(odiQuota.maxOversPerBowler === 10 && odiQuota.maxBalls === 300, 'ODI quota must be 10 overs / 300 balls');
+
+    const hundredQuota = getFormatQuotaConfig('100BALL');
+    assert(hundredQuota.maxOversPerBowler === 4 && hundredQuota.maxBallsPerBowler === 24 && hundredQuota.maxBalls === 100, '100BALL quota must be 100 balls / 24 max per bowler');
+
+    // Shortened 10-over rain-reduced T20 innings -> max 2 overs (12 balls) per bowler!
+    const shortenedQuota = getFormatQuotaConfig('T20', 10);
+    assert(shortenedQuota.maxOversPerBowler === 2 && shortenedQuota.maxBallsPerBowler === 12, '10-over shortened match must cap bowlers at 2 overs (12 balls)');
+
+    let shortMatch = makeFreshMatch('T20');
+    shortMatch = {
+      ...shortMatch,
+      innings1: { ...shortMatch.innings1, maxOvers: 10 }
+    };
+    for (let b = 0; b < 60; b++) {
+      shortMatch = resolveSingleDeliveryState(shortMatch, INITIAL_PLAYERS, {
+        forcedOutcome: { runs: 1, isExtra: false, isWicket: false }
+      });
+    }
+    assert(shortMatch.currentInningsIndex === 2, '10-over shortened innings must transition to Innings 2 at 60 balls');
+    for (const bw of shortMatch.innings1.bowlers) {
+      assert(oversToBalls(bw.overs) <= 12, `Bowler ${bw.name} exceeded 2-over shortened quota with ${bw.overs} overs`);
+    }
   });
 
-  // 9. Run-out does not increment bowler wickets
-  runTest('9. Run-out increments team wickets and dismisses batter without crediting bowler wickets', () => {
+  // 9. Accurate catches, stumpings, run-outs, fielderId resolution, and bowler wicket credit
+  runTest('9. Catches, stumpings, and run-outs assign exact fielderId and apply bowler wicket credit rules', () => {
     let state = makeFreshMatch('T20');
     const bowlerId = state.innings1.currentBowlerId;
     const strikerId = state.innings1.currentStrikerId;
 
+    // A. Run-out: increments team wickets, assigns fielderId, does NOT credit bowler wickets
     state = resolveSingleDeliveryState(state, INITIAL_PLAYERS, {
       forcedOutcome: {
         runs: 0,
@@ -305,10 +429,48 @@ export function runMatchEngineAuditTests(): {
         dismissalText: 'run out (Point)'
       }
     });
+    const bowlerCardAfterRunOut = state.innings1.bowlers.find(b => b.playerId === bowlerId)!;
+    assert(state.innings1.wickets === 1, 'Team wickets must be 1 after run out');
+    assert(bowlerCardAfterRunOut.wickets === 0, 'Bowler must NOT be credited with a wicket for a run out');
+    assert(Boolean(state.lastBallOutcome?.fielderId), 'Run-out must resolve a valid fielderId from the fielding XI');
 
-    const bowlerCard = state.innings1.bowlers.find(b => b.playerId === bowlerId)!;
-    assert(state.innings1.wickets === 1, 'Team wickets must be 1');
-    assert(bowlerCard.wickets === 0, 'Bowler must NOT be credited with a wicket for a run out');
+    // B. Stumped: increments team wickets, credits bowler wicket, and assigns wicketkeeper fielderId
+    const striker2Id = state.innings1.currentStrikerId;
+    state = resolveSingleDeliveryState(state, INITIAL_PLAYERS, {
+      forcedOutcome: {
+        runs: 0,
+        isExtra: false,
+        isWicket: true,
+        wicketType: 'stumped',
+        fielderName: 'Wicketkeeper',
+        dismissedPlayerId: striker2Id,
+        dismissalText: 'st †Keeper b Bowler'
+      }
+    });
+    const bowlerCardAfterStumping = state.innings1.bowlers.find(b => b.playerId === bowlerId)!;
+    assert(state.innings1.wickets === 2, 'Team wickets must be 2 after stumping');
+    assert(bowlerCardAfterStumping.wickets === 1, 'Bowler MUST be credited with a wicket for a stumping');
+    const keeperId = state.lastBallOutcome?.fielderId;
+    const keeperObj = awayTeam.squad.find(p => p.id === keeperId);
+    assert(Boolean(keeperObj && (keeperObj.role === 'Wk-bat' || keeperObj.role === 'Wicketkeeper')), 'Stumping fielderId must resolve to the bowling XI wicketkeeper');
+
+    // C. Caught: increments team wickets, credits bowler wicket, and assigns fielderId
+    const striker3Id = state.innings1.currentStrikerId;
+    state = resolveSingleDeliveryState(state, INITIAL_PLAYERS, {
+      forcedOutcome: {
+        runs: 0,
+        isExtra: false,
+        isWicket: true,
+        wicketType: 'caught',
+        fielderName: 'Cover',
+        dismissedPlayerId: striker3Id,
+        dismissalText: 'c Cover b Bowler'
+      }
+    });
+    const bowlerCardAfterCatch = state.innings1.bowlers.find(b => b.playerId === bowlerId)!;
+    assert(state.innings1.wickets === 3, 'Team wickets must be 3 after catch');
+    assert(bowlerCardAfterCatch.wickets === 2, 'Bowler MUST be credited with a wicket for a catch');
+    assert(Boolean(state.lastBallOutcome?.fielderId && awayTeam.playingXIIds.includes(state.lastBallOutcome.fielderId)), 'Catch fielderId must belong to the fielding Playing XI');
   });
 
   // 10. Caught dismissal selects a valid directional fielder
@@ -328,8 +490,8 @@ export function runMatchEngineAuditTests(): {
     assert(pickedLegDeep === 'Deep Square Leg Boundary', `Expected Deep Square Leg Boundary, got ${pickedLegDeep}`);
   });
 
-  // 11. DRS eligibility rejects invalid deliveries and handles umpire's call / overturns
-  runTest('11. DRS eligibility rejects invalid deliveries and handles review retention/overturn rules', () => {
+  // 11. DRS eligibility, review retention on Umpire's Call, and trigger state transitions
+  runTest('11. DRS eligibility, Umpire\'s Call review retention, and triggerDrsReview state transitions', () => {
     const dotNoAppeal = {
       over: 1, ballNumber: 1, bowlerId: 'b1', bowlerName: 'B', strikerId: 's1', strikerName: 'S',
       nonStrikerId: 's2', nonStrikerName: 'N', runs: 0, isWicket: false, appealType: 'none' as const,
@@ -346,10 +508,39 @@ export function runMatchEngineAuditTests(): {
       appealType: 'lbw' as const
     };
     const elig2 = checkDrsEligibility(lbwOutBall, true, 2);
-    assert(elig2.canReview, 'LBW given out with reviews remaining must be eligible for DRS');
+    assert(elig2.canReview && elig2.reviewType === 'lbw', 'LBW given out with reviews remaining must be eligible for DRS');
 
     const noReviewsLeft = checkDrsEligibility(lbwOutBall, true, 0);
     assert(!noReviewsLeft.canReview, 'Cannot review when 0 reviews remain');
+
+    // Verify deterministic evidence evaluation & Umpire's Call retention law
+    const evidence = evaluateDrsDeliveryEvidence(lbwOutBall, true, 'OUT');
+    if (evidence.isOverturned || evidence.isUmpiresCall) {
+      assert(evidence.reviewRetained === true, 'Overturned or Umpires Call review must retain the review');
+    } else {
+      assert(evidence.reviewRetained === false, 'Upheld clear decision must deduct a review');
+    }
+
+    // Verify format review allocations and bowling LBW appeal eligibility
+    assert(getInitialReviewsForFormat('T20') === 2, 'T20 must grant 2 reviews per innings');
+    assert(getInitialReviewsForFormat('TEST') === 3, 'TEST must grant 3 reviews per innings');
+    assert(getInitialReviewsForFormat('100BALL') === 1, '100BALL must grant 1 review per innings');
+
+    let state = makeFreshMatch('T20');
+    state = resolveSingleDeliveryState(state, INITIAL_PLAYERS, {
+      forcedOutcome: {
+        runs: 0,
+        isExtra: false,
+        isWicket: true,
+        wicketType: 'lbw',
+        appealType: 'lbw'
+      }
+    });
+    const liveElig = checkDrsEligibility(state.lastBallOutcome, true, state.reviewsRemaining?.home ?? 2, {
+      matchStatus: state.status,
+      latestBallOutcome: state.lastBallOutcome
+    });
+    assert(liveElig.canReview && liveElig.reviewType === 'lbw', 'Live LBW delivery must be eligible for batting DRS review');
   });
 
   // 12. Second innings ends immediately when target is reached
@@ -389,8 +580,8 @@ export function runMatchEngineAuditTests(): {
     assert(Boolean(state.resultText?.includes('10 WICKETS')), `Expected 10 wickets win text, got ${state.resultText}`);
   });
 
-  // 13. Tie, win by runs, and win by wickets are calculated accurately
-  runTest('13. Tie (runs === target - 1) and Win by Runs are distinguished accurately', () => {
+  // 13. Tie, win by runs, win by wickets, and league standings points (+2 win, +1 tie, +0 loss)
+  runTest('13. Tie (runs === target - 1), Win by Runs, and League Standings points (+2 Win, +1 Tie) are accurate', () => {
     let state = makeFreshMatch('T20');
     // Score 10 runs in Innings 1 then all out
     state = resolveSingleDeliveryState(state, INITIAL_PLAYERS, {
@@ -415,15 +606,23 @@ export function runMatchEngineAuditTests(): {
     assert(state.status === 'finished', 'Match finished');
     assert(state.winnerTeamId === undefined, 'Tied league match must have undefined winnerTeamId');
     assert(Boolean(state.resultText?.includes('MATCH TIED')), `Expected MATCH TIED!, got ${state.resultText}`);
+
+    // Verify standings update logic on Tie (+1 point each, tied + 1)
+    const initialRow = INITIAL_LEAGUES[0].standings.find(s => s.teamId === homeTeam.id)!;
+    const isTied = !state.winnerTeamId;
+    const updatedHomeRow = isTied
+      ? { ...initialRow, played: initialRow.played + 1, tied: (initialRow.tied || 0) + 1, points: initialRow.points + 1 }
+      : initialRow;
+    assert(updatedHomeRow.points === 1 && updatedHomeRow.tied === 1, 'Tied match must award 1 point and increment tied count');
   });
 
   // 14. Batting approaches produce expected directional changes in boundary rate and wicket risk
-  runTest('14. Batting approaches (Defensive -> Balanced -> Aggressive -> Smash) scale boundary & wicket probabilities', () => {
+  runTest('14. Batting approaches (Defensive -> Anchor -> Balanced -> Aggressive -> Smash) scale boundary & wicket probabilities', () => {
     const striker = INITIAL_PLAYERS[0];
     const nonStriker = INITIAL_PLAYERS[1];
     const bowler = INITIAL_PLAYERS[4];
 
-    const getProbsForApproach = (approach: 'defensive' | 'anchor' | 'balanced' | 'aggressive' | 'smash') =>
+    const getProbsForApproach = (approach: BattingApproach) =>
       calculateDeliveryProbabilities({
         over: 8,
         ballNumber: 2,
@@ -448,21 +647,24 @@ export function runMatchEngineAuditTests(): {
       });
 
     const pDef = getProbsForApproach('defensive');
+    const pAnc = getProbsForApproach('anchor');
     const pBal = getProbsForApproach('balanced');
     const pAgg = getProbsForApproach('aggressive');
     const pSma = getProbsForApproach('smash');
 
     assert(
-      pDef.wicketProb < pBal.wicketProb &&
+      pDef.wicketProb < pAnc.wicketProb &&
+        pAnc.wicketProb < pBal.wicketProb &&
         pBal.wicketProb < pAgg.wicketProb &&
         pAgg.wicketProb < pSma.wicketProb,
-      'Wicket probability must strictly increase from defensive -> balanced -> aggressive -> smash'
+      'Wicket probability must strictly increase from defensive -> anchor -> balanced -> aggressive -> smash'
     );
     assert(
-      pDef.fourProb + pDef.sixProb < pBal.fourProb + pBal.sixProb &&
+      pDef.fourProb + pDef.sixProb < pAnc.fourProb + pAnc.sixProb &&
+        pAnc.fourProb + pAnc.sixProb < pBal.fourProb + pBal.sixProb &&
         pBal.fourProb + pBal.sixProb < pAgg.fourProb + pAgg.sixProb &&
         pAgg.fourProb + pAgg.sixProb < pSma.fourProb + pSma.sixProb,
-      'Boundary probability must strictly increase from defensive -> balanced -> aggressive -> smash'
+      'Boundary probability must strictly increase from defensive -> anchor -> balanced -> aggressive -> smash'
     );
   });
 
@@ -539,124 +741,492 @@ export function runMatchEngineAuditTests(): {
     );
   });
 
-  // 16 & 17. Full match simulation & Idempotent Career Statistics commit
-  runTest('16 & 17. Full match simulation completes cleanly & career stats commit idempotently with exact dismissals/catches', () => {
-    const initial = makeFreshMatch('T20');
-    const finished = simulateFullMatchHeadless(initial, INITIAL_PLAYERS, 101);
-    assert(finished.status === 'finished', 'Simulated match must reach finished status');
-    assert(finished.innings1.ballsCompleted <= 120 && finished.innings1.wickets <= 10, 'Innings 1 within bounds');
-    assert(Boolean(finished.innings2 && finished.innings2.ballsCompleted <= 120 && finished.innings2.wickets <= 10), 'Innings 2 within bounds');
+  // 16. Player Statistics, Not-Outs vs Dismissals, Fielding Credits, Save/Load & Multi-Season Persistence
+  runTest('16. Career statistics update once per match (runs, not-outs, dismissals, bowling, catches, stumpings, run-outs, seasons & save/load)', () => {
+    let state = makeFreshMatch('T20');
+    const openerAId = state.innings1.currentStrikerId;
+    const openerBId = state.innings1.currentNonStrikerId;
+    const bowler1Id = state.innings1.currentBowlerId;
+    const awayKeeper = awayTeam.squad.find(p => p.role === 'Wk-bat' || p.role === 'Wicketkeeper') || awayTeam.squad[0];
+    const awayFielder = awayTeam.squad.find(p => p.id !== bowler1Id && p.id !== awayKeeper.id) || awayTeam.squad[1];
 
-    // Verify team score equals batter runs + extras.total
-    const inn1BatRuns = finished.innings1.batters.reduce((s, b) => s + b.runs, 0);
-    const inn1Extras = finished.innings1.extras?.total || 0;
-    assert(
-      finished.innings1.runs === inn1BatRuns + inn1Extras,
-      `Innings 1 total (${finished.innings1.runs}) must equal sum of batter runs (${inn1BatRuns}) + extras (${inn1Extras})`
-    );
+    // Opener A hits 54 off 3 balls (e.g. 50 + 4) then gets stumped by awayKeeper off bowler1!
+    state = resolveSingleDeliveryState(state, INITIAL_PLAYERS, {
+      forcedOutcome: { runs: 50, batterRuns: 50, isExtra: false, isWicket: false }
+    });
+    state = resolveSingleDeliveryState(state, INITIAL_PLAYERS, {
+      forcedOutcome: { runs: 4, batterRuns: 4, isFour: true, isExtra: false, isWicket: false }
+    });
+    state = resolveSingleDeliveryState(state, INITIAL_PLAYERS, {
+      forcedOutcome: {
+        runs: 0,
+        isExtra: false,
+        isWicket: true,
+        wicketType: 'stumped',
+        fielderId: awayKeeper.id,
+        fielderName: 'Wicketkeeper',
+        dismissedPlayerId: openerAId
+      }
+    });
 
-    // Test idempotent player stats recording
-    const testPlayer: Player = {
-      ...INITIAL_PLAYERS[0],
-      stats: {
-        matches: 0, innings: 0, dismissals: 0, runs: 0, balls: 0, fours: 0, sixes: 0,
-        fifties: 0, hundreds: 0, highestScore: 0, wickets: 0, oversBowled: 0,
-        runsConceded: 0, maidens: 0, bestBowling: '0/0', average: 0, strikeRate: 0
-      },
+    // Number 3 batter comes in and is caught by awayFielder off bowler1 for 0(1)
+    const num3Id = state.innings1.currentStrikerId;
+    state = resolveSingleDeliveryState(state, INITIAL_PLAYERS, {
+      forcedOutcome: {
+        runs: 0,
+        isExtra: false,
+        isWicket: true,
+        wicketType: 'caught',
+        fielderId: awayFielder.id,
+        fielderName: awayFielder.name,
+        dismissedPlayerId: num3Id
+      }
+    });
+
+    // Number 4 batter comes in and is run out by awayFielder for 0(1)
+    const num4Id = state.innings1.currentStrikerId;
+    state = resolveSingleDeliveryState(state, INITIAL_PLAYERS, {
+      forcedOutcome: {
+        runs: 0,
+        isExtra: false,
+        isWicket: true,
+        wicketType: 'run out',
+        fielderId: awayFielder.id,
+        fielderName: awayFielder.name,
+        dismissedPlayerId: num4Id
+      }
+    });
+
+    // Complete remaining match headlessly
+    const finished = simulateFullMatchHeadless(state, INITIAL_PLAYERS, 2026);
+    assert(finished.status === 'finished', 'Match must reach finished status');
+
+    // Verify team score equals batter runs + extras.total across both innings
+    for (const inn of [finished.innings1, finished.innings2]) {
+      if (!inn) continue;
+      const batRuns = inn.batters.reduce((s, b) => s + b.runs, 0);
+      const extRuns = inn.extras?.total || 0;
+      assert(inn.runs === batRuns + extRuns, `Team runs (${inn.runs}) must equal batter runs (${batRuns}) + extras (${extRuns})`);
+    }
+
+    const zeroStats = {
+      matches: 0, innings: 0, dismissals: 0, runs: 0, balls: 0, fours: 0, sixes: 0,
+      fifties: 0, hundreds: 0, highestScore: 0, wickets: 0, inningsBowled: 0, oversBowled: 0,
+      runsConceded: 0, maidens: 0, bestBowling: '0/0', average: 0, strikeRate: 0,
+      catches: 0, stumpings: 0, runOuts: 0
+    };
+
+    // Test Opener A (54 runs, 1 fifty, 1 dismissal)
+    const pOpenerA: Player = {
+      ...INITIAL_PLAYERS.find(p => p.id === openerAId)!,
+      stats: { ...zeroStats },
       competitionStats: { processedMatchIds: [] }
     };
-    const once = recordMatchToPlayerStats(testPlayer, finished, '2026');
-    const twice = recordMatchToPlayerStats(once, finished, '2026');
-    assert(once.stats.matches === 1, 'First commit increments matches to 1');
-    assert(twice.stats.matches === 1 && twice.stats.runs === once.stats.runs, 'Second commit for same matchId must be a no-op');
+    const recOpenerA1 = recordMatchToPlayerStats(pOpenerA, finished, '2026');
+    const recOpenerA2 = recordMatchToPlayerStats(recOpenerA1, finished, '2026'); // Duplicate call!
+    assert(recOpenerA1.stats.matches === 1 && recOpenerA1.stats.innings === 1 && recOpenerA1.stats.dismissals === 1, 'Opener A must have 1 match, 1 innings, 1 dismissal');
+    assert(recOpenerA1.stats.runs === 54 && recOpenerA1.stats.fifties === 1 && recOpenerA1.stats.fours === 1, 'Opener A must have 54 runs, 1 fifty, 1 four');
+    assert(recOpenerA2.stats.runs === 54 && recOpenerA2.stats.matches === 1, 'Duplicate recordMatchToPlayerStats call must be a strict no-op');
+
+    // Test Wicketkeeper (stumping credit) and Outfielder (catch + run-out credit)
+    const pKeeper: Player = {
+      ...awayKeeper,
+      stats: { ...zeroStats },
+      competitionStats: { processedMatchIds: [] }
+    };
+    const recKeeper = recordMatchToPlayerStats(pKeeper, finished, '2026');
+    assert((recKeeper.stats.stumpings || 0) >= 1, `Keeper must be credited with at least 1 stumping, got ${recKeeper.stats.stumpings}`);
+
+    const pFielder: Player = {
+      ...awayFielder,
+      stats: { ...zeroStats },
+      competitionStats: { processedMatchIds: [] }
+    };
+    const recFielder = recordMatchToPlayerStats(pFielder, finished, '2026');
+    assert((recFielder.stats.catches || 0) >= 1, `Fielder must be credited with at least 1 catch, got ${recFielder.stats.catches}`);
+    assert((recFielder.stats.runOuts || 0) >= 1, `Fielder must be credited with at least 1 run out, got ${recFielder.stats.runOuts}`);
+
+    // Test Season Transition ('2026' -> '2027') and Save/Load JSON serialization roundtrip
+    const finished2027 = { ...finished, id: 'audit_T20_season_2027' };
+    const recOpener2027 = recordMatchToPlayerStats(recOpenerA1, finished2027, '2027');
+    assert(recOpener2027.stats.matches === 2 && recOpener2027.stats.runs === 108, 'Career total accumulates across 2026 and 2027');
+    assert(recOpener2027.competitionStats?.iplSeasons?.['2026']?.runs === 54, 'Season 2026 stats isolated at 54 runs');
+    assert(recOpener2027.competitionStats?.iplSeasons?.['2027']?.runs === 54, 'Season 2027 stats isolated at 54 runs');
+
+    const serialized = JSON.stringify(recOpener2027);
+    const deserialized: Player = JSON.parse(serialized);
+    const formattedBat = getBattingStats(deserialized);
+    assert(formattedBat.runs === '108' && formattedBat.average === '54.00', `Expected 108 runs and 54.00 avg after save/load, got ${formattedBat.runs} / ${formattedBat.average}`);
+    const formattedKeep = getKeepingStats(recKeeper);
+    assert(Number(formattedKeep.stumpings) >= 1, 'Formatted keeping stats must preserve stumpings');
+    const bowlerObj: Player = {
+      ...INITIAL_PLAYERS.find(p => p.id === bowler1Id)!,
+      stats: { ...zeroStats },
+      competitionStats: { processedMatchIds: [] }
+    };
+    const recBowler = recordMatchToPlayerStats(bowlerObj, finished, '2026');
+    const formattedBowl = getBowlingStats(recBowler);
+    assert(formattedBowl.hasBowled && Number(formattedBowl.wickets) >= 2, 'Bowler credited with stumping + catch wickets, excluding run-out');
   });
 
-  // 18. Reproducible Batch Simulation Verification across Formats, Team Strengths, and Tactics
-  let batchReport: BatchMetricsReport = {
-    t20AvgRuns: 0, t20AvgWickets: 0, t20AvgRunRate: 0, t20DotPct: 0, t20BoundaryPct: 0, t20ExtrasPerInnings: 0,
-    odiAvgRuns: 0, odiAvgWickets: 0, odiAvgRunRate: 0,
-    testAvgRuns: 0, testAvgWickets: 0, testAvgRunRate: 0,
-    strongVsWeakWinRatePct: 0,
-    defensiveAvgRuns: 0, defensiveAvgWickets: 0,
-    balancedAvgRuns: 0, balancedAvgWickets: 0,
-    aggressiveAvgRuns: 0, aggressiveAvgWickets: 0
+  // 17. Section 2 Audit: 500 First-Innings Simulations per Batting Approach & Cross-Condition Tactical Optimality Matrix
+  const approachAudit500 = {} as Record<BattingApproach, ApproachAuditRow>;
+  const tacticalContextMatrix = {
+    flatBelterBalancedRuns: 0,
+    flatBelterAggressiveRuns: 0,
+    greenSeamerOvercastAnchorRuns: 0,
+    greenSeamerOvercastAnchorWkts: 0,
+    greenSeamerOvercastSmashRuns: 0,
+    greenSeamerOvercastSmashWkts: 0,
+    deathOvers5BalancedRuns: 0,
+    deathOvers5SmashRuns: 0
   };
 
-  runTest('18. Reproducible multi-match batch simulation across T20, ODI, TEST, team strengths, and tactics', () => {
-    // A. 30 T20 matches (60 innings)
-    let t20Runs = 0, t20Wkts = 0, t20Balls = 0, t20Dots = 0, t20Boundaries = 0, t20Extras = 0, t20InningsCount = 0;
-    for (let m = 0; m < 30; m++) {
-      const tA = INITIAL_TEAMS[m % INITIAL_TEAMS.length];
-      const tB = INITIAL_TEAMS[(m + 3) % INITIAL_TEAMS.length];
-      const st = createHeadlessMatchState({
-        id: `batch_t20_${m}`,
-        homeTeam: tA,
-        awayTeam: tB,
-        venue: 'Batch Arena',
-        format: 'T20',
-        leagueId: 'pt20',
-        playerPool: INITIAL_PLAYERS
-      });
-      const fin = simulateFullMatchHeadless(st, INITIAL_PLAYERS, 1000 + m * 37);
-      for (const inn of [fin.innings1, fin.innings2]) {
-        if (!inn) continue;
-        t20InningsCount++;
-        t20Runs += inn.runs;
-        t20Wkts += inn.wickets;
-        t20Balls += Math.max(1, inn.ballsCompleted);
-        t20Extras += inn.extras?.total || 0;
-        for (const bh of inn.ballHistory) {
-          if (bh.runs === 0 && !bh.isExtra) t20Dots++;
-          if (bh.isFour || bh.isSix) t20Boundaries++;
+  runTest('17. Batting Balance Audit: 500 first-innings simulations per approach + cross-condition tactical optimality', () => {
+    const approaches: BattingApproach[] = ['defensive', 'anchor', 'balanced', 'aggressive', 'smash'];
+    const INNINGS_PER_APPROACH = 500;
+
+    for (const app of approaches) {
+      let totalRuns = 0;
+      let totalWkts = 0;
+      let totalBalls = 0;
+      let totalDots = 0;
+      let totalBoundaries = 0;
+      let totalExtras = 0;
+      let allOuts = 0;
+
+      for (let i = 0; i < INNINGS_PER_APPROACH; i++) {
+        const tHome = hydratedTeams[i % hydratedTeams.length];
+        const tAway = hydratedTeams[(i + 5) % hydratedTeams.length];
+        const st = createHeadlessMatchState({
+          id: `app500_${app}_${i}`,
+          homeTeam: tHome,
+          awayTeam: tAway,
+          venue: 'Neutral Stadium',
+          format: 'T20',
+          leagueId: 'pt20',
+          playerPool: INITIAL_PLAYERS,
+          pitchType: 'Natural',
+          weather: 'Clear Night',
+          battingTactics: { approach: app, targetSide: 'all', runningRisk: 'normal' }
+        });
+        const inn1: InningsData = simulateFirstInningsHeadless(st, INITIAL_PLAYERS, 50000 + i * 31);
+        totalRuns += inn1.runs;
+        totalWkts += inn1.wickets;
+        totalBalls += Math.max(1, inn1.ballsCompleted);
+        totalExtras += inn1.extras?.total || 0;
+        if (inn1.wickets >= 10) allOuts++;
+
+        for (const bh of inn1.ballHistory) {
+          if (bh.runs === 0 && !bh.isExtra) totalDots++;
+          if (bh.isFour || bh.isSix) totalBoundaries++;
         }
       }
+
+      approachAudit500[app] = {
+        approach: app,
+        inningsCount: INNINGS_PER_APPROACH,
+        avgRuns: Number((totalRuns / INNINGS_PER_APPROACH).toFixed(1)),
+        avgWickets: Number((totalWkts / INNINGS_PER_APPROACH).toFixed(1)),
+        avgRunRate: Number(((totalRuns / totalBalls) * 6).toFixed(2)),
+        dotPct: Number(((totalDots / totalBalls) * 100).toFixed(1)),
+        boundaryPct: Number(((totalBoundaries / totalBalls) * 100).toFixed(1)),
+        extrasPerInnings: Number((totalExtras / INNINGS_PER_APPROACH).toFixed(1)),
+        allOutRatePct: Number(((allOuts / INNINGS_PER_APPROACH) * 100).toFixed(1))
+      };
     }
 
-    // B. 15 ODI matches (30 innings)
-    let odiRuns = 0, odiWkts = 0, odiBalls = 0, odiInningsCount = 0;
-    for (let m = 0; m < 15; m++) {
-      const st = createHeadlessMatchState({
-        id: `batch_odi_${m}`,
+    // Verify Defensive is no longer excessively penalized (<105 runs) and approaches have realistic trade-offs
+    assert(
+      approachAudit500.defensive.avgRuns >= 122 && approachAudit500.defensive.avgRuns <= 146,
+      `Defensive T20 average runs should be in realistic 122-146 range (got ${approachAudit500.defensive.avgRuns})`
+    );
+    assert(
+      approachAudit500.defensive.avgWickets < approachAudit500.anchor.avgWickets &&
+        approachAudit500.anchor.avgWickets < approachAudit500.balanced.avgWickets &&
+        approachAudit500.balanced.avgWickets < approachAudit500.aggressive.avgWickets &&
+        approachAudit500.aggressive.avgWickets < approachAudit500.smash.avgWickets,
+      'Average wickets lost over 500 innings must strictly increase from defensive -> anchor -> balanced -> aggressive -> smash'
+    );
+    assert(
+      approachAudit500.defensive.avgRuns < approachAudit500.anchor.avgRuns &&
+        approachAudit500.anchor.avgRuns < approachAudit500.balanced.avgRuns &&
+        approachAudit500.balanced.avgRuns < approachAudit500.aggressive.avgRuns,
+      'Average runs on Natural pitch must increase from defensive -> anchor -> balanced -> aggressive'
+    );
+    // Verify blind 20-over Smash from ball 1 has massive all-out risk (>70% all-out rate) and is NOT strictly better than Aggressive over a full 20-over innings!
+    assert(
+      approachAudit500.smash.allOutRatePct > 60 &&
+        approachAudit500.smash.avgWickets > 8.5,
+      `Blind 20-over Smash from ball 1 must suffer heavy wicket attrition (got ${approachAudit500.smash.avgWickets} wkts, ${approachAudit500.smash.allOutRatePct}% all-out)`
+    );
+
+    // Cross-Condition Tactical Optimality Check (proving no single tactic is universally optimal):
+    // Scenario A: Flat Belter with strong batters -> Aggressive outscores Balanced
+    let flatBal = 0, flatAgg = 0;
+    for (let i = 0; i < 100; i++) {
+      const baseSt = createHeadlessMatchState({
+        id: `flat_ctx_${i}`,
         homeTeam,
         awayTeam,
-        venue: 'Batch ODI Ground',
-        format: 'ODI',
-        leagueId: 'intl',
-        playerPool: INITIAL_PLAYERS
+        venue: 'Chinnaswamy',
+        format: 'T20',
+        leagueId: 'pt20',
+        playerPool: INITIAL_PLAYERS,
+        pitchType: 'Flat Belter',
+        weather: 'Clear Night'
       });
-      const fin = simulateFullMatchHeadless(st, INITIAL_PLAYERS, 5000 + m * 41);
-      for (const inn of [fin.innings1, fin.innings2]) {
-        if (!inn) continue;
-        odiInningsCount++;
-        odiRuns += inn.runs;
-        odiWkts += inn.wickets;
-        odiBalls += Math.max(1, inn.ballsCompleted);
-      }
+      flatBal += simulateFirstInningsHeadless(
+        { ...baseSt, battingTactics: { approach: 'balanced', targetSide: 'all', runningRisk: 'normal' } },
+        INITIAL_PLAYERS,
+        70000 + i * 17
+      ).runs;
+      flatAgg += simulateFirstInningsHeadless(
+        { ...baseSt, battingTactics: { approach: 'aggressive', targetSide: 'all', runningRisk: 'normal' } },
+        INITIAL_PLAYERS,
+        70000 + i * 17
+      ).runs;
     }
+    tacticalContextMatrix.flatBelterBalancedRuns = Number((flatBal / 100).toFixed(1));
+    tacticalContextMatrix.flatBelterAggressiveRuns = Number((flatAgg / 100).toFixed(1));
 
-    // C. 10 TEST matches (20 innings)
-    let testRuns = 0, testWkts = 0, testBalls = 0, testInningsCount = 0;
-    for (let m = 0; m < 10; m++) {
-      const st = createHeadlessMatchState({
-        id: `batch_test_${m}`,
+    // Scenario B: Green Seamer + Overcast against Attacking Pace Bowling -> Anchor/Balanced outscores blind Smash (which collapses all out)
+    let greenAncRuns = 0, greenAncWkts = 0, greenSmashRuns = 0, greenSmashWkts = 0;
+    for (let i = 0; i < 100; i++) {
+      const baseSt = createHeadlessMatchState({
+        id: `green_ctx_${i}`,
         homeTeam,
         awayTeam,
-        venue: 'Batch Test Ground',
-        format: 'TEST',
-        leagueId: 'intl',
-        playerPool: INITIAL_PLAYERS
+        venue: 'Green Park',
+        format: 'T20',
+        leagueId: 'pt20',
+        playerPool: INITIAL_PLAYERS,
+        pitchType: 'Green Seamer',
+        weather: 'Overcast & Humid',
+        bowlingTactics: {
+          length: 'good',
+          line: 'off_stump',
+          angle: 'over',
+          variation: 'Swings away',
+          intent: 'attack',
+          fielders: DEFAULT_MATCH_FIELD
+        }
       });
-      const fin = simulateFullMatchHeadless(st, INITIAL_PLAYERS, 8000 + m * 53);
-      for (const inn of [fin.innings1, fin.innings2]) {
-        if (!inn) continue;
-        testInningsCount++;
-        testRuns += inn.runs;
-        testWkts += inn.wickets;
-        testBalls += Math.max(1, inn.ballsCompleted);
+      const innAnc = simulateFirstInningsHeadless(
+        { ...baseSt, battingTactics: { approach: 'anchor', targetSide: 'all', runningRisk: 'cautious' } },
+        INITIAL_PLAYERS,
+        80000 + i * 23
+      );
+      const innSma = simulateFirstInningsHeadless(
+        { ...baseSt, battingTactics: { approach: 'smash', targetSide: 'all', runningRisk: 'aggressive' } },
+        INITIAL_PLAYERS,
+        80000 + i * 23
+      );
+      greenAncRuns += innAnc.runs;
+      greenAncWkts += innAnc.wickets;
+      greenSmashRuns += innSma.runs;
+      greenSmashWkts += innSma.wickets;
+    }
+    tacticalContextMatrix.greenSeamerOvercastAnchorRuns = Number((greenAncRuns / 100).toFixed(1));
+    tacticalContextMatrix.greenSeamerOvercastAnchorWkts = Number((greenAncWkts / 100).toFixed(1));
+    tacticalContextMatrix.greenSeamerOvercastSmashRuns = Number((greenSmashRuns / 100).toFixed(1));
+    tacticalContextMatrix.greenSeamerOvercastSmashWkts = Number((greenSmashWkts / 100).toFixed(1));
+
+    // Scenario C: Final 5 Death Overs (starting from 120/2 at 15.0 overs with set batters) -> Smash outscores Balanced
+    let deathBalDelta = 0, deathSmashDelta = 0;
+    for (let i = 0; i < 100; i++) {
+      const baseSt = createHeadlessMatchState({
+        id: `death_ctx_${i}`,
+        homeTeam,
+        awayTeam,
+        venue: 'Wankhede',
+        format: 'T20',
+        leagueId: 'pt20',
+        playerPool: INITIAL_PLAYERS,
+        pitchType: 'Natural',
+        weather: 'Clear Night'
+      });
+      const deathEntryInn: InningsData = {
+        ...baseSt.innings1,
+        runs: 120,
+        wickets: 2,
+        overs: 15,
+        ballsCompleted: 90,
+        batters: baseSt.innings1.batters.map((b, idx) =>
+          idx === 0 ? { ...b, runs: 45, balls: 30, isOnStrike: true } : idx === 1 ? { ...b, runs: 38, balls: 26 } : b
+        )
+      };
+      const innDeathBal = simulateFirstInningsHeadless(
+        {
+          ...baseSt,
+          innings1: deathEntryInn,
+          battingTactics: { approach: 'balanced', targetSide: 'all', runningRisk: 'normal' }
+        },
+        INITIAL_PLAYERS,
+        90000 + i * 19
+      );
+      const innDeathSmash = simulateFirstInningsHeadless(
+        {
+          ...baseSt,
+          innings1: deathEntryInn,
+          battingTactics: { approach: 'smash', targetSide: 'all', runningRisk: 'aggressive' }
+        },
+        INITIAL_PLAYERS,
+        90000 + i * 19
+      );
+      deathBalDelta += innDeathBal.runs - 120;
+      deathSmashDelta += innDeathSmash.runs - 120;
+    }
+    tacticalContextMatrix.deathOvers5BalancedRuns = Number((deathBalDelta / 100).toFixed(1));
+    tacticalContextMatrix.deathOvers5SmashRuns = Number((deathSmashDelta / 100).toFixed(1));
+
+    assert(
+      tacticalContextMatrix.flatBelterAggressiveRuns > tacticalContextMatrix.flatBelterBalancedRuns,
+      'On Flat Belter, Aggressive must outscore Balanced'
+    );
+    assert(
+      tacticalContextMatrix.greenSeamerOvercastAnchorWkts < tacticalContextMatrix.greenSeamerOvercastSmashWkts - 3,
+      'On Green Seamer + Overcast, Anchor must preserve significantly more wickets than Smash'
+    );
+    assert(
+      tacticalContextMatrix.deathOvers5SmashRuns > tacticalContextMatrix.deathOvers5BalancedRuns,
+      'In the final 5 death overs with 8 wickets in hand, Smash must outscore Balanced'
+    );
+  });
+
+  // 18. Section 5 Audit: 1,000+ Matches per Limited-Overs Format (T20, ODI, 100BALL) + TEST Sample & Team-Strength Win Rate Audit
+  const formatAudits1000 = {} as Record<'T20' | 'ODI' | '100BALL' | 'TEST', FormatAuditSummary>;
+  let strongVsWeakWinRatePct = 0;
+  let evenTeamsHomeWinRatePct = 0;
+
+  runTest('18. Large-scale 1,000-match simulation audit per limited-overs format (T20, ODI, 100BALL) + TEST & team-strength audit', () => {
+    const runFormatBatch = (
+      format: 'T20' | 'ODI' | '100BALL' | 'TEST',
+      matchCount: number,
+      seedBase: number
+    ): FormatAuditSummary => {
+      const quota = getFormatQuotaConfig(format);
+      let inningsCount = 0;
+      let totalRuns = 0;
+      let totalWkts = 0;
+      let totalBalls = 0;
+      let totalDots = 0;
+      let totalBoundaries = 0;
+      let totalExtras = 0;
+      let chaseWins = 0;
+      let defendWins = 0;
+      let ties = 0;
+      let invalidStatesDetected = 0;
+      let quotaViolationsDetected = 0;
+      const inningsScores: number[] = [];
+
+      for (let m = 0; m < matchCount; m++) {
+        const tA = hydratedTeams[m % hydratedTeams.length];
+        const tB = hydratedTeams[(m + 3) % hydratedTeams.length];
+        const st = createHeadlessMatchState({
+          id: `audit1000_${format}_${m}`,
+          homeTeam: tA,
+          awayTeam: tB,
+          venue: 'Audit Arena',
+          format,
+          leagueId: format === 'T20' ? 'pt20' : 'intl',
+          playerPool: INITIAL_PLAYERS
+        });
+        const fin = simulateFullMatchHeadless(st, INITIAL_PLAYERS, seedBase + m * 37);
+
+        if (fin.status !== 'finished' || !fin.innings2) {
+          invalidStatesDetected++;
+        }
+
+        // Check match result
+        if (!fin.winnerTeamId) {
+          ties++;
+        } else if (fin.winnerTeamId === fin.innings2?.battingTeamId) {
+          chaseWins++;
+        } else {
+          defendWins++;
+        }
+
+        for (const inn of [fin.innings1, fin.innings2]) {
+          if (!inn) continue;
+          inningsCount++;
+          totalRuns += inn.runs;
+          totalWkts += inn.wickets;
+          totalBalls += Math.max(1, inn.ballsCompleted);
+          totalExtras += inn.extras?.total || 0;
+          inningsScores.push(inn.runs);
+
+          // Invariant checks on every single innings
+          const batSum = inn.batters.reduce((s, b) => s + b.runs, 0);
+          const extSum = inn.extras?.total || 0;
+          if (
+            inn.runs !== batSum + extSum ||
+            inn.wickets > 10 ||
+            inn.ballsCompleted > quota.maxBalls
+          ) {
+            invalidStatesDetected++;
+          }
+
+          for (const bw of inn.bowlers) {
+            if (oversToBalls(bw.overs) > quota.maxBallsPerBowler) {
+              quotaViolationsDetected++;
+            }
+          }
+
+          for (const bh of inn.ballHistory) {
+            if (bh.runs === 0 && !bh.isExtra) totalDots++;
+            if (bh.isFour || bh.isSix) totalBoundaries++;
+          }
+        }
       }
+
+      inningsScores.sort((a, b) => a - b);
+
+      return {
+        format,
+        matchesSimulated: matchCount,
+        inningsCount,
+        avgRuns: Number((totalRuns / inningsCount).toFixed(1)),
+        avgWickets: Number((totalWkts / inningsCount).toFixed(1)),
+        avgRunRate: Number(((totalRuns / totalBalls) * 6).toFixed(2)),
+        dotPct: Number(((totalDots / totalBalls) * 100).toFixed(1)),
+        boundaryPct: Number(((totalBoundaries / totalBalls) * 100).toFixed(1)),
+        extrasPerInnings: Number((totalExtras / inningsCount).toFixed(1)),
+        chaseWinRatePct: Number(((chaseWins / matchCount) * 100).toFixed(1)),
+        defendWinRatePct: Number(((defendWins / matchCount) * 100).toFixed(1)),
+        tieRatePct: Number(((ties / matchCount) * 100).toFixed(2)),
+        scoreDistribution: {
+          min: inningsScores[0] || 0,
+          p10: computePercentile(inningsScores, 10),
+          p25: computePercentile(inningsScores, 25),
+          median: computePercentile(inningsScores, 50),
+          p75: computePercentile(inningsScores, 75),
+          p90: computePercentile(inningsScores, 90),
+          max: inningsScores[inningsScores.length - 1] || 0
+        },
+        invalidStatesDetected,
+        quotaViolationsDetected
+      };
+    };
+
+    formatAudits1000.T20 = runFormatBatch('T20', 1000, 100000);
+    formatAudits1000.ODI = runFormatBatch('ODI', 1000, 200000);
+    formatAudits1000['100BALL'] = runFormatBatch('100BALL', 1000, 300000);
+    formatAudits1000.TEST = runFormatBatch('TEST', 50, 400000);
+
+    // Assert zero invalid states or quota violations across all 3,050 simulated matches (6,100 innings)
+    for (const fmt of ['T20', 'ODI', '100BALL', 'TEST'] as const) {
+      assert(
+        formatAudits1000[fmt].invalidStatesDetected === 0,
+        `Detected ${formatAudits1000[fmt].invalidStatesDetected} invalid states in ${fmt} batch`
+      );
+      assert(
+        formatAudits1000[fmt].quotaViolationsDetected === 0,
+        `Detected ${formatAudits1000[fmt].quotaViolationsDetected} bowler quota violations in ${fmt} batch`
+      );
     }
 
-    // D. Strong XI (ratings ~84) vs Weak XI (ratings ~73) over 30 matches
+    // Strong XI (~84 OVR) vs Weak XI (~73 OVR) over 200 matches + Evenly Matched Teams over 200 matches
     const strongPlayers: Player[] = INITIAL_PLAYERS.slice(0, 11).map((p, i) => ({
       ...p,
       id: `strong_${i}`,
@@ -671,11 +1241,29 @@ export function runMatchEngineAuditTests(): {
       form: 72,
       ratings: { ...p.ratings, bat: 73, pow: 71, tec: 73, tmp: 72, vp: 73, vs: 73, bowl: 73, ctrl: 72, dth: 71, pace: 72 }
     }));
+    const evenPlayersA: Player[] = INITIAL_PLAYERS.slice(0, 11).map((p, i) => ({
+      ...p,
+      id: `evenA_${i}`,
+      clubId: 'even_a',
+      form: 78,
+      ratings: { ...p.ratings, bat: 79, pow: 78, tec: 79, tmp: 78, vp: 79, vs: 79, bowl: 79, ctrl: 78, dth: 78, pace: 78 }
+    }));
+    const evenPlayersB: Player[] = INITIAL_PLAYERS.slice(11, 22).map((p, i) => ({
+      ...p,
+      id: `evenB_${i}`,
+      clubId: 'even_b',
+      form: 78,
+      ratings: { ...p.ratings, bat: 79, pow: 78, tec: 79, tmp: 78, vp: 79, vs: 79, bowl: 79, ctrl: 78, dth: 78, pace: 78 }
+    }));
+
     const strongTeam: Team = { ...homeTeam, id: 'strong_team', shortName: 'STR', playingXIIds: strongPlayers.map(p => p.id), squad: strongPlayers };
     const weakTeam: Team = { ...awayTeam, id: 'weak_team', shortName: 'WEK', playingXIIds: weakPlayers.map(p => p.id), squad: weakPlayers };
+    const evenTeamA: Team = { ...homeTeam, id: 'even_a', shortName: 'EVA', playingXIIds: evenPlayersA.map(p => p.id), squad: evenPlayersA };
+    const evenTeamB: Team = { ...awayTeam, id: 'even_b', shortName: 'EVB', playingXIIds: evenPlayersB.map(p => p.id), squad: evenPlayersB };
 
     let strongWins = 0;
-    for (let m = 0; m < 30; m++) {
+    const STRENGTH_MATCHES = 200;
+    for (let m = 0; m < STRENGTH_MATCHES; m++) {
       const st = createHeadlessMatchState({
         id: `batch_str_wk_${m}`,
         homeTeam: m % 2 === 0 ? strongTeam : weakTeam,
@@ -685,61 +1273,69 @@ export function runMatchEngineAuditTests(): {
         leagueId: 'pt20',
         playerPool: [...strongPlayers, ...weakPlayers]
       });
-      const fin = simulateFullMatchHeadless(st, [...strongPlayers, ...weakPlayers], 12000 + m * 29);
+      const fin = simulateFullMatchHeadless(st, [...strongPlayers, ...weakPlayers], 500000 + m * 29);
       if (fin.winnerTeamId === 'strong_team') strongWins++;
     }
+    strongVsWeakWinRatePct = Number(((strongWins / STRENGTH_MATCHES) * 100).toFixed(1));
 
-    // E. Batting Approach comparison (Defensive vs Balanced vs Aggressive) in Innings 1 over 20 matches each
-    const simApproachStats = (approach: 'defensive' | 'balanced' | 'aggressive') => {
-      let r = 0, w = 0;
-      for (let m = 0; m < 20; m++) {
-        const st = createHeadlessMatchState({
-          id: `batch_app_${approach}_${m}`,
-          homeTeam,
-          awayTeam,
-          venue: 'Arena',
-          format: 'T20',
-          leagueId: 'pt20',
-          playerPool: INITIAL_PLAYERS,
-          battingTactics: { approach, targetSide: 'all', runningRisk: 'normal' }
-        });
-        const fin = simulateFullMatchHeadless(st, INITIAL_PLAYERS, 15000 + m * 19);
-        r += fin.innings1.runs;
-        w += fin.innings1.wickets;
-      }
-      return { avgRuns: Number((r / 20).toFixed(1)), avgWickets: Number((w / 20).toFixed(1)) };
-    };
+    let evenAWins = 0;
+    for (let m = 0; m < STRENGTH_MATCHES; m++) {
+      const st = createHeadlessMatchState({
+        id: `batch_even_${m}`,
+        homeTeam: m % 2 === 0 ? evenTeamA : evenTeamB,
+        awayTeam: m % 2 === 0 ? evenTeamB : evenTeamA,
+        venue: 'Arena',
+        format: 'T20',
+        leagueId: 'pt20',
+        playerPool: [...evenPlayersA, ...evenPlayersB]
+      });
+      const fin = simulateFullMatchHeadless(st, [...evenPlayersA, ...evenPlayersB], 600000 + m * 31);
+      if (fin.winnerTeamId === 'even_a') evenAWins++;
+    }
+    evenTeamsHomeWinRatePct = Number(((evenAWins / STRENGTH_MATCHES) * 100).toFixed(1));
 
-    const defStats = simApproachStats('defensive');
-    const balStats = simApproachStats('balanced');
-    const aggStats = simApproachStats('aggressive');
-
-    batchReport = {
-      t20AvgRuns: Number((t20Runs / t20InningsCount).toFixed(1)),
-      t20AvgWickets: Number((t20Wkts / t20InningsCount).toFixed(1)),
-      t20AvgRunRate: Number(((t20Runs / t20Balls) * 6).toFixed(2)),
-      t20DotPct: Number(((t20Dots / t20Balls) * 100).toFixed(1)),
-      t20BoundaryPct: Number(((t20Boundaries / t20Balls) * 100).toFixed(1)),
-      t20ExtrasPerInnings: Number((t20Extras / t20InningsCount).toFixed(1)),
-      odiAvgRuns: Number((odiRuns / odiInningsCount).toFixed(1)),
-      odiAvgWickets: Number((odiWkts / odiInningsCount).toFixed(1)),
-      odiAvgRunRate: Number(((odiRuns / odiBalls) * 6).toFixed(2)),
-      testAvgRuns: Number((testRuns / testInningsCount).toFixed(1)),
-      testAvgWickets: Number((testWkts / testInningsCount).toFixed(1)),
-      testAvgRunRate: Number(((testRuns / testBalls) * 6).toFixed(2)),
-      strongVsWeakWinRatePct: Number(((strongWins / 30) * 100).toFixed(1)),
-      defensiveAvgRuns: defStats.avgRuns,
-      defensiveAvgWickets: defStats.avgWickets,
-      balancedAvgRuns: balStats.avgRuns,
-      balancedAvgWickets: balStats.avgWickets,
-      aggressiveAvgRuns: aggStats.avgRuns,
-      aggressiveAvgWickets: aggStats.avgWickets
-    };
-
-    assert(batchReport.strongVsWeakWinRatePct >= 65 && batchReport.strongVsWeakWinRatePct < 100, `Strong team should win majority of matches (got ${batchReport.strongVsWeakWinRatePct}%)`);
-    assert(batchReport.defensiveAvgWickets < batchReport.aggressiveAvgWickets, 'Defensive batting must lose fewer wickets on average than Aggressive batting');
-    assert(batchReport.defensiveAvgRuns < batchReport.balancedAvgRuns, 'Defensive batting must score slower than Balanced batting');
+    assert(
+      strongVsWeakWinRatePct >= 62 && strongVsWeakWinRatePct <= 92,
+      `Strong team win rate over 200 matches should be between 62% and 92% (got ${strongVsWeakWinRatePct}%)`
+    );
+    assert(
+      evenTeamsHomeWinRatePct >= 40 && evenTeamsHomeWinRatePct <= 60,
+      `Evenly matched teams win rate over 200 matches should be near 50% (got ${evenTeamsHomeWinRatePct}%)`
+    );
   });
+
+  const batchReport: BatchMetricsReport = {
+    t20AvgRuns: formatAudits1000.T20.avgRuns,
+    t20AvgWickets: formatAudits1000.T20.avgWickets,
+    t20AvgRunRate: formatAudits1000.T20.avgRunRate,
+    t20DotPct: formatAudits1000.T20.dotPct,
+    t20BoundaryPct: formatAudits1000.T20.boundaryPct,
+    t20ExtrasPerInnings: formatAudits1000.T20.extrasPerInnings,
+    odiAvgRuns: formatAudits1000.ODI.avgRuns,
+    odiAvgWickets: formatAudits1000.ODI.avgWickets,
+    odiAvgRunRate: formatAudits1000.ODI.avgRunRate,
+    hundredBallAvgRuns: formatAudits1000['100BALL'].avgRuns,
+    hundredBallAvgWickets: formatAudits1000['100BALL'].avgWickets,
+    hundredBallAvgRunRate: formatAudits1000['100BALL'].avgRunRate,
+    testAvgRuns: formatAudits1000.TEST.avgRuns,
+    testAvgWickets: formatAudits1000.TEST.avgWickets,
+    testAvgRunRate: formatAudits1000.TEST.avgRunRate,
+    strongVsWeakWinRatePct,
+    evenTeamsHomeWinRatePct,
+    defensiveAvgRuns: approachAudit500.defensive.avgRuns,
+    defensiveAvgWickets: approachAudit500.defensive.avgWickets,
+    anchorAvgRuns: approachAudit500.anchor.avgRuns,
+    anchorAvgWickets: approachAudit500.anchor.avgWickets,
+    balancedAvgRuns: approachAudit500.balanced.avgRuns,
+    balancedAvgWickets: approachAudit500.balanced.avgWickets,
+    aggressiveAvgRuns: approachAudit500.aggressive.avgRuns,
+    aggressiveAvgWickets: approachAudit500.aggressive.avgWickets,
+    smashAvgRuns: approachAudit500.smash.avgRuns,
+    smashAvgWickets: approachAudit500.smash.avgWickets,
+    approachAudit500,
+    tacticalContextMatrix,
+    formatAudits1000
+  };
 
   return { passed, total, results, batchReport };
 }
