@@ -75,6 +75,182 @@ export function isBatterRole(role?: PlayerRole | string): boolean {
   return norm.includes('top-order') || norm.includes('middle-order') || norm.includes('batter') || norm.includes('batsman') || norm.includes('finisher');
 }
 
+/**
+ * Robustly checks if a player is an overseas player.
+ * Checks both explicit isOverseas flag and country attribute without relying on name heuristics.
+ */
+export function isOverseasPlayer(player?: { isOverseas?: boolean; country?: string } | null): boolean {
+  if (!player) return false;
+  if (player.country && player.country.trim().length > 0) {
+    const c = player.country.trim().toLowerCase();
+    if (c === 'india' || c === 'ind') return false;
+    return true;
+  }
+  return Boolean(player.isOverseas);
+}
+
+export interface ImpactSubValidationResult {
+  isValid: boolean;
+  reason?: string;
+  resultingOverseasCount: number;
+  currentOverseasCount: number;
+  maxOverseasAllowed: number;
+}
+
+/**
+ * Authoritatively validates an Impact Player substitution according to IPL and tournament rules:
+ * - Ensures active playing XI contains at most 4 overseas players after substitution.
+ * - Audits missing nationality/overseas eligibility data.
+ * - Disallows self-substitutions, duplicate impact usage, or replacing players not currently active in XI.
+ */
+export function validateImpactPlayerSubstitution(params: {
+  benchPlayerId: string;
+  outPlayerId: string;
+  activeXIIds: string[];
+  allPlayers: Player[];
+  impactPlayerAlreadyUsed?: boolean;
+  isInternational?: boolean;
+  maxOverseasInXI?: number;
+  outPlayerDismissalStatus?: string;
+}): ImpactSubValidationResult {
+  const {
+    benchPlayerId,
+    outPlayerId,
+    activeXIIds,
+    allPlayers,
+    impactPlayerAlreadyUsed = false,
+    isInternational = false,
+    maxOverseasInXI = 4,
+    outPlayerDismissalStatus
+  } = params;
+
+  const currentXIPlayers = activeXIIds
+    .map(id => allPlayers.find(p => p.id === id))
+    .filter((p): p is Player => Boolean(p));
+
+  const currentOverseasCount = currentXIPlayers.filter(p => isOverseasPlayer(p)).length;
+
+  if (impactPlayerAlreadyUsed) {
+    return {
+      isValid: false,
+      reason: 'Impact Player has already been used in this match (only 1 substitution allowed per team).',
+      currentOverseasCount,
+      resultingOverseasCount: currentOverseasCount,
+      maxOverseasAllowed: maxOverseasInXI
+    };
+  }
+
+  if (benchPlayerId === outPlayerId) {
+    return {
+      isValid: false,
+      reason: 'Cannot substitute a player for themselves.',
+      currentOverseasCount,
+      resultingOverseasCount: currentOverseasCount,
+      maxOverseasAllowed: maxOverseasInXI
+    };
+  }
+
+  const benchPlayer = allPlayers.find(p => p.id === benchPlayerId);
+  if (!benchPlayer) {
+    return {
+      isValid: false,
+      reason: 'Selected bench player was not found in the squad database.',
+      currentOverseasCount,
+      resultingOverseasCount: currentOverseasCount,
+      maxOverseasAllowed: maxOverseasInXI
+    };
+  }
+
+  const outPlayer = allPlayers.find(p => p.id === outPlayerId);
+  if (!outPlayer) {
+    return {
+      isValid: false,
+      reason: 'Selected outgoing player was not found in the squad database.',
+      currentOverseasCount,
+      resultingOverseasCount: currentOverseasCount,
+      maxOverseasAllowed: maxOverseasInXI
+    };
+  }
+
+  if (!activeXIIds.includes(outPlayerId)) {
+    return {
+      isValid: false,
+      reason: `${outPlayer.name} is not in the active playing XI.`,
+      currentOverseasCount,
+      resultingOverseasCount: currentOverseasCount,
+      maxOverseasAllowed: maxOverseasInXI
+    };
+  }
+
+  if (activeXIIds.includes(benchPlayerId)) {
+    return {
+      isValid: false,
+      reason: `${benchPlayer.name} is already in the active playing XI.`,
+      currentOverseasCount,
+      resultingOverseasCount: currentOverseasCount,
+      maxOverseasAllowed: maxOverseasInXI
+    };
+  }
+
+  if (outPlayerDismissalStatus === 'substituted (Impact Sub)') {
+    return {
+      isValid: false,
+      reason: `${outPlayer.name} has already been substituted out of the match.`,
+      currentOverseasCount,
+      resultingOverseasCount: currentOverseasCount,
+      maxOverseasAllowed: maxOverseasInXI
+    };
+  }
+
+  if (!isInternational) {
+    const hasMissingEligibility = (p: Player) =>
+      p.isOverseas === undefined && (!p.country || p.country.trim().length === 0);
+    if (hasMissingEligibility(benchPlayer)) {
+      return {
+        isValid: false,
+        reason: `Cannot verify overseas eligibility for ${benchPlayer.name} (missing nationality/overseas data).`,
+        currentOverseasCount,
+        resultingOverseasCount: currentOverseasCount,
+        maxOverseasAllowed: maxOverseasInXI
+      };
+    }
+    if (hasMissingEligibility(outPlayer)) {
+      return {
+        isValid: false,
+        reason: `Cannot verify overseas eligibility for ${outPlayer.name} (missing nationality/overseas data).`,
+        currentOverseasCount,
+        resultingOverseasCount: currentOverseasCount,
+        maxOverseasAllowed: maxOverseasInXI
+      };
+    }
+  }
+
+  // Calculate resulting XI overseas count
+  const resultingXIIds = activeXIIds.map(id => (id === outPlayerId ? benchPlayerId : id));
+  const resultingXIPlayers = resultingXIIds
+    .map(id => (id === benchPlayerId ? benchPlayer : allPlayers.find(p => p.id === id)))
+    .filter((p): p is Player => Boolean(p));
+
+  const resultingOverseasCount = resultingXIPlayers.filter(p => isOverseasPlayer(p)).length;
+
+  if (!isInternational && resultingOverseasCount > maxOverseasInXI) {
+    return {
+      isValid: false,
+      reason: `Cannot field more than ${maxOverseasInXI} overseas players in the active playing XI (substituting ${benchPlayer.name} in for ${outPlayer.name} would result in ${resultingOverseasCount} overseas players).`,
+      currentOverseasCount,
+      resultingOverseasCount,
+      maxOverseasAllowed: maxOverseasInXI
+    };
+  }
+
+  return {
+    isValid: true,
+    currentOverseasCount,
+    resultingOverseasCount,
+    maxOverseasAllowed: maxOverseasInXI
+  };
+}
+
 export function getRoleDisciplines(player: Player): RoleDisciplineConfig {
   const stats = player.stats;
   const role = player.role || '';

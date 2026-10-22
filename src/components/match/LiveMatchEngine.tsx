@@ -16,6 +16,7 @@ import { TeamLogo } from '../common/TeamLogo';
 import { PlayerCareerStatsCard } from '../common/PlayerCareerStatsCard';
 import { checkDrsEligibility } from '../../utils/drsRules';
 import { calculateBowlingEconomy, formatOversDisplay } from '../../utils/bowlingStats';
+import { getFormatQuotaConfig } from '../../engine/cricketEngine';
 
 export const LiveMatchEngine: React.FC = () => {
   const {
@@ -294,7 +295,7 @@ export const LiveMatchEngine: React.FC = () => {
   const bowlingXIPlayers = bowlingTeam.playingXIIds
     .map(id => players.find(p => p.id === id))
     .filter((p): p is Player => Boolean(p))
-    .filter(p => p.role === 'Pace' || p.role === 'Spin' || p.role === 'All-rounder');
+    .filter(p => p.role !== 'Wk-bat' && p.role !== 'Wicketkeeper' || currentInnings.bowlers.some(b => b.playerId === p.id));
 
   const survivingPartnerId = lastBallOutcome?.isWicket
     ? (lastBallOutcome.nonStrikerId || nonStriker.id)
@@ -415,6 +416,17 @@ export const LiveMatchEngine: React.FC = () => {
   const bowlerFigures = bowlerScore
     ? `${formatOversDisplay(bowlerScore.overs, false, true)}-${bowlerScore.maidens}-${bowlerScore.runs}-${bowlerScore.wickets}`
     : `0.0-0-0-0`;
+
+  // The bowler who bowled the preceding delivery / finished the over
+  const lastOverBowlerId = currentInnings.ballHistory[0]?.bowlerId;
+  const lastCompletedBowler = lastOverBowlerId
+    ? (players.find(p => p.id === lastOverBowlerId) || bowlingTeam.squad?.find(p => p.id === lastOverBowlerId) || currentBowler)
+    : currentBowler;
+  const lastCompletedBowlerScore = currentInnings.bowlers?.find(b => b.playerId === lastCompletedBowler.id);
+  const lastCompletedBowlerFigures = lastCompletedBowlerScore
+    ? `${formatOversDisplay(lastCompletedBowlerScore.overs, false, true)}-${lastCompletedBowlerScore.maidens}-${lastCompletedBowlerScore.runs}-${lastCompletedBowlerScore.wickets}`
+    : bowlerFigures;
+
   const bowlerEcon = bowlerScore ? calculateBowlingEconomy(bowlerScore.runs, bowlerScore.overs).toFixed(2) : '0.00';
   const bowlerOversBowled = bowlerScore ? bowlerScore.overs : 0;
   const activeEffort = bowlingTactics.effort || 'standard';
@@ -1465,9 +1477,9 @@ export const LiveMatchEngine: React.FC = () => {
       {/* 5. END OF OVER: PICK A BOWLER MODAL (Video 1 at 0:15, 0:58, 1:24, 1:31) */}
       <EndOverBowlerModal
         isOpen={showEndOverModal}
-        lastBowler={currentBowler}
-        lastBowlerFigures={bowlerFigures}
-        maxOversPerBowler={matchLiveState.format === 'TEST' ? 99 : matchLiveState.format === 'ODI' ? 10 : 4}
+        lastBowler={lastCompletedBowler}
+        lastBowlerFigures={lastCompletedBowlerFigures}
+        maxOversPerBowler={getFormatQuotaConfig(matchLiveState.format, currentInnings.maxOvers).maxBallsPerBowler / 6}
         bowlers={bowlingXIPlayers.map(p => {
           const bScore = currentInnings.bowlers.find(b => b.playerId === p.id);
           return {
@@ -1517,6 +1529,9 @@ export const LiveMatchEngine: React.FC = () => {
         teamName={activeUserMatchTeam.name.includes('Kolkata') ? 'Kolkata' : activeUserMatchTeam.name}
         benchPlayers={benchPlayers.length > 0 ? benchPlayers : players.filter(p => p.clubId === activeUserMatchTeam.id).slice(8, 14)}
         activeXIPlayers={userXIPlayers.length > 0 ? userXIPlayers : players.filter(p => p.clubId === activeUserMatchTeam.id).slice(0, 8)}
+        allPlayers={players}
+        leagueId={activeUserMatchTeam.leagueId || 'ipl'}
+        isInternational={Boolean(matchLiveState.isInternational)}
         onConfirmSubstitution={handleConfirmSubstitution}
       />
 

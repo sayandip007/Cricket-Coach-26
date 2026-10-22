@@ -28,11 +28,20 @@ export const EndOverBowlerModal: React.FC<EndOverBowlerModalProps> = ({
 }) => {
   const [selectedId, setSelectedId] = useState<string>('');
 
+  const bowlersUnderQuota = bowlers.filter(b => Math.floor(b.overs) < maxOversPerBowler);
+  const onlyOneBowlerUnderQuota = bowlersUnderQuota.length === 1;
+
   useEffect(() => {
     if (isOpen) {
-      const firstEligible = bowlers.find(
-        b => b.player.id !== lastBowler.id && Math.floor(b.overs) < maxOversPerBowler
-      ) || bowlers.find(b => b.player.id !== lastBowler.id) || bowlers[0];
+      const underQuota = bowlers.filter(b => Math.floor(b.overs) < maxOversPerBowler);
+      let firstEligible: typeof bowlers[0] | undefined;
+      if (underQuota.length === 1) {
+        firstEligible = underQuota[0];
+      } else if (underQuota.length > 1) {
+        firstEligible = underQuota.find(b => b.player.id !== lastBowler.id) || underQuota[0];
+      } else {
+        firstEligible = bowlers.find(b => b.player.id !== lastBowler.id) || bowlers[0];
+      }
       if (firstEligible) {
         setSelectedId(firstEligible.player.id);
       }
@@ -71,6 +80,13 @@ export const EndOverBowlerModal: React.FC<EndOverBowlerModalProps> = ({
             )}
           </div>
 
+          {/* Single Bowler / Quota Info Banner */}
+          {onlyOneBowlerUnderQuota && (
+            <div className="mb-2 p-2 rounded-xl bg-amber-500/15 border border-amber-500/40 text-amber-300 text-[10px] font-mono leading-tight">
+              ⚠️ Sole eligible bowler under quota ({bowlersUnderQuota[0]?.player.name.split(' ').pop()}) must complete remaining overs.
+            </div>
+          )}
+
           {/* Bowlers Table Header */}
           <div className="grid grid-cols-12 px-2 py-1.5 text-[9px] font-mono text-slate-400 uppercase border-b border-slate-800/80 mb-1">
             <span className="col-span-5">PLAYER / TYPE</span>
@@ -86,9 +102,10 @@ export const EndOverBowlerModal: React.FC<EndOverBowlerModalProps> = ({
           <div className="overflow-y-auto max-h-72 flex flex-col gap-1.5 py-1">
             {bowlers.map(({ player, overs, maidens, runs, wickets, econ }) => {
               const isSelected = selectedId === player.id;
-              const isLast = player.id === lastBowler.id;
+              // If only one bowler is under quota, do not disqualify them for having bowled the last over
+              const isLast = onlyOneBowlerUnderQuota ? false : player.id === lastBowler.id;
               const isQuotaDone = Math.floor(overs) >= maxOversPerBowler;
-              const isDisabled = isLast || isQuotaDone;
+              const isDisabled = isLast || (isQuotaDone && bowlersUnderQuota.length > 0);
 
               return (
                 <button

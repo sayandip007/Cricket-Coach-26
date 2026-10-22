@@ -56,6 +56,7 @@ import {
 import { canRetainPlayerInMega, isOverseasPlayer } from '../utils/auctionSandboxEngine';
 import { runBowlingAndSandboxTests } from './bowlingAndSandbox.test';
 import { runMatchEngineAuditTests } from './matchEngineAudit.test';
+import { runCricketBugsRegressionTests } from './cricketBugsRegression.test';
 import {
   FIELD_TEMPLATES,
   validateFieldRestrictions,
@@ -1941,6 +1942,11 @@ runTest('REGRESSION', 'Phase 25: Complete Match Engine Audit, Cricket Rules & Ba
   assert.equal(auditRes.passed, auditRes.total, `Expected all ${auditRes.total} match engine audit tests to pass`);
   console.log('\n--- BATCH SIMULATION REALISM METRICS ---');
   console.log(JSON.stringify(auditRes.batchReport, null, 2));
+});
+
+runTest('REGRESSION', 'Phase 26: Cricket Engine Bugfixes — Bowler Selection, 5-Bowler Deadlock & IPL Impact Player Overseas Limit', () => {
+  const bugRes = runCricketBugsRegressionTests();
+  assert.equal(bugRes.passed, bugRes.total, `Expected all ${bugRes.total} cricket bugs regression tests to pass`);
 });
 
 const failed = results.filter(r => !r.passed);

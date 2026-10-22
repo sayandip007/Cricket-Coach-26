@@ -130,16 +130,28 @@ export function selectNextEligibleBowler(
   format: 'T20' | 'ODI' | 'TEST',
   playerPool: Player[]
 ): string {
-  const nonConsecutiveAndUnderQuota = bowlers.filter(
-    b => b.playerId !== justBowledPlayerId && oversToBalls(b.overs) < maxBallsPerBowler
+  // 1. Find all bowlers who still have overs available under the format quota
+  const underQuota = bowlers.filter(b => oversToBalls(b.overs) < maxBallsPerBowler);
+
+  if (underQuota.length === 0) {
+    // All bowlers have exhausted their format quota: return justBowledPlayerId or first bowler
+    return justBowledPlayerId || bowlers[0]?.playerId || '';
+  }
+
+  // 2. If only one bowler remains eligible under quota, they MUST bowl
+  if (underQuota.length === 1) {
+    return underQuota[0].playerId;
+  }
+
+  // 3. Multiple bowlers under quota: apply strict non-consecutive overs rule
+  const nonConsecutiveAndUnderQuota = underQuota.filter(
+    b => b.playerId !== justBowledPlayerId
   );
-  const nonConsecutiveFallback = bowlers.filter(b => b.playerId !== justBowledPlayerId);
+
   const candidates =
     nonConsecutiveAndUnderQuota.length > 0
       ? nonConsecutiveAndUnderQuota
-      : nonConsecutiveFallback.length > 0
-      ? nonConsecutiveFallback
-      : bowlers;
+      : underQuota;
 
   if (candidates.length === 0) return justBowledPlayerId;
 
@@ -368,7 +380,7 @@ export function resolveSingleDeliveryState(
   if (currState.status === 'finished') return currState;
   if (currState.activeDrsReview?.isActive) return currState;
 
-  const currInn = currState.currentInningsIndex === 1 ? currState.innings1 : currState.innings2;
+  let currInn = currState.currentInningsIndex === 1 ? currState.innings1 : currState.innings2;
   if (!currInn) return currState;
 
   const quota = getFormatQuotaConfig(currState.format, currInn.maxOvers);
@@ -411,8 +423,30 @@ export function resolveSingleDeliveryState(
     currInn.batters.find(b => b.playerId === nonStrikerId) ||
     currInn.batters[1] ||
     currInn.batters[0];
-  const bowlerCard =
-    currInn.bowlers.find(b => b.playerId === currInn.currentBowlerId) || currInn.bowlers[0];
+  // Authoritative Bowler Resolution: Must use currInn.currentBowlerId directly!
+  const targetBowlerId = currInn.currentBowlerId || currInn.bowlers[0]?.playerId || 'fallback_bowler';
+  let bowler = findPlayer(targetBowlerId);
+
+  // Ensure target bowler has a scorecard entry in currInn.bowlers
+  let bowlerCard = currInn.bowlers.find(b => b.playerId === targetBowlerId);
+  if (!bowlerCard) {
+    bowlerCard = {
+      playerId: targetBowlerId,
+      name: bowler?.name || 'Bowler',
+      overs: 0,
+      ballsInCurrentOver: 0,
+      maidens: 0,
+      runs: 0,
+      wickets: 0,
+      economy: 0,
+      isCurrentBowler: true
+    };
+    currInn = {
+      ...currInn,
+      currentBowlerId: targetBowlerId,
+      bowlers: [...currInn.bowlers, bowlerCard]
+    };
+  }
 
   const fallbackPlayer = combinedPool[0] || {
     id: 'fallback_p',
@@ -449,11 +483,13 @@ export function resolveSingleDeliveryState(
     id: nonStrikerCard.playerId,
     name: nonStrikerCard.name
   };
-  const bowler = findPlayer(bowlerCard.playerId) || {
-    ...fallbackPlayer,
-    id: bowlerCard.playerId,
-    name: bowlerCard.name
-  };
+  if (!bowler) {
+    bowler = {
+      ...fallbackPlayer,
+      id: targetBowlerId,
+      name: bowlerCard.name
+    };
+  }
 
   const over = Math.floor(currInn.ballsCompleted / 6);
   const ballNumber = currInn.ballsCompleted % 6;
