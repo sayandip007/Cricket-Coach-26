@@ -28,7 +28,9 @@ import {
   applyCompleteAuctionState,
   applyConfirmClubSquadState,
   applyStartNewFranchiseSeasonState,
-  applyAdvanceOffSeasonState
+  applyAdvanceOffSeasonState,
+  enforceSingleCareerInvariant,
+  validatePlayoffEligibility
 } from '../context/GameContext';
 import {
   reconcileNationalSelection,
@@ -1156,7 +1158,7 @@ export function runCareerProgressionTests() {
   // Test 25.2: Reloading an active series preserves its ID
   const reloadSeriesRecovery = validateAndRecoverCareerState({
     rawPhase: 'international_series',
-    coachProfile: { ...INITIAL_COACH_PROFILE, clubTeamId: 'team_kol', nationalTeamId: ausNation.id },
+    coachProfile: { ...INITIAL_COACH_PROFILE, clubTeamId: null, nationalTeamId: ausNation.id, activeCareerMode: 'international' },
     teams: baseTeams,
     leagues: baseLeagues,
     currentLeagueId: 'pt20',
@@ -2519,8 +2521,77 @@ export function runCareerProgressionTests() {
     );
   }
 
+  // ==========================================================================
+  // REQ 31: SINGLE CAREER INVARIANT & PLAYOFF ELIGIBILITY GATING TESTS
+  // ==========================================================================
+  // 31.1 Single career mode invariant
+  const franchiseProfile: CoachProfile = {
+    ...INITIAL_COACH_PROFILE,
+    clubTeamId: 'team_kol',
+    nationalTeamId: 'aus',
+    activeCareerMode: 'franchise'
+  };
+  const enforcedFranchise = enforceSingleCareerInvariant(franchiseProfile, 'franchise');
+  assert.equal(enforcedFranchise.activeCareerMode, 'franchise');
+  assert.equal(enforcedFranchise.coachProfile.nationalTeamId, null, 'Single Career 31.1a: Franchise mode clears nationalTeamId');
+  assert.equal(enforcedFranchise.coachProfile.clubTeamId, 'team_kol');
+
+  const intlProfile: CoachProfile = {
+    ...INITIAL_COACH_PROFILE,
+    clubTeamId: 'team_kol',
+    nationalTeamId: 'aus',
+    activeCareerMode: 'international'
+  };
+  const enforcedIntl = enforceSingleCareerInvariant(intlProfile, 'international');
+  assert.equal(enforcedIntl.activeCareerMode, 'international');
+  assert.equal(enforcedIntl.coachProfile.clubTeamId, null, 'Single Career 31.1b: International mode clears clubTeamId');
+  assert.equal(enforcedIntl.coachProfile.nationalTeamId, 'aus');
+
+  // 31.2 Playoff eligibility gating
+  const midSeasonLeagueObj: League = {
+    ...baseLeagues[0],
+    standings: midSeasonStandings
+  };
+  const midSeasonEligibility = validatePlayoffEligibility({
+    league: midSeasonLeagueObj,
+    stage: 'q1',
+    userClubId: 'team_kol',
+    careerPhase: 'league_stage',
+    isUserAction: true
+  });
+  assert.equal(midSeasonEligibility.canPlay, false, 'Playoff Eligibility 31.2a: Gated before 18 league matches played');
+  assert.ok(midSeasonEligibility.reason?.includes('in progress'), 'Playoff Eligibility 31.2a error message');
+
+  const unselectedPlayoffEligibility = validatePlayoffEligibility({
+    league: leagueA_Ipl2026,
+    stage: 'q1',
+    userClubId: 'team_srh',
+    careerPhase: 'playoffs',
+    isUserAction: true
+  });
+  assert.equal(unselectedPlayoffEligibility.canPlay, false, 'Playoff Eligibility 31.2b: Non-qualifying team rejected');
+
+  const uncompletedQ1Playoffs: LeaguePlayoffs = {
+    ...qualifiedPlayoffs,
+    q1: { ...qualifiedPlayoffs.q1, completed: false },
+    eliminator: { ...qualifiedPlayoffs.eliminator, completed: false }
+  };
+  const q2UnreadyLeague: League = {
+    ...baseLeagues[0],
+    standings: seededStandings,
+    playoffs: uncompletedQ1Playoffs
+  };
+  const q2UnreadyEligibility = validatePlayoffEligibility({
+    league: q2UnreadyLeague,
+    stage: 'q2',
+    userClubId: 'team_che',
+    careerPhase: 'playoffs',
+    isUserAction: true
+  });
+  assert.equal(q2UnreadyEligibility.canPlay, false, 'Playoff Eligibility 31.2c: Prerequisite stages Q1/Eliminator required for Q2');
+
   console.log('✅ ALL Career Progression, Multi-League Recovery, International Series IDs & Transition Idempotency Tests PASSED!');
-  return { passed: 117, total: 117 };
+  return { passed: 125, total: 125 };
 }
 
 

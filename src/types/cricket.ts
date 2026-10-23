@@ -474,7 +474,8 @@ export interface CoachProfile {
   reputation?: string;
   difficulty: 'Easy' | 'Normal' | 'Hard';
   proUnlocked: boolean;
-  clubTeamId: string;
+  activeCareerMode?: 'franchise' | 'international';
+  clubTeamId: string | null;
   nationalTeamId: string | null;
   domesticTitles?: number;
   internationalTitles?: number;
@@ -514,7 +515,7 @@ export interface CoachProfile {
   }[];
   clubStints?: {
     id: string;
-    teamId: string;
+    teamId: string | null;
     teamName: string;
     clubId?: string;
     clubName?: string;
@@ -558,7 +559,7 @@ export interface ObjectiveResult {
 export interface CareerBoardReview {
   seasonYear: number;
   competitionId?: string;
-  teamId: string;
+  teamId: string | null;
   teamName: string;
   objectives: ObjectiveResult[];
   fulfilledCount: number;

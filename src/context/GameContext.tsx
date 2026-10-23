@@ -1862,6 +1862,285 @@ export function buildCareerValidationSignature(params: {
 }
 
 /**
+ * Authoritative single-career-mode invariant enforcer.
+ * - Franchise mode: active club exists (clubTeamId non-null), active nation is null (nationalTeamId = null).
+ * - International mode: active nation exists (nationalTeamId non-null), active club is null (clubTeamId = null).
+ * - Legacy saves with both IDs set are migrated deterministically based on activeCareerMode or current careerPhase.
+ */
+export function enforceSingleCareerInvariant(
+  coachProfile: CoachProfile,
+  desiredMode?: 'franchise' | 'international',
+  currentPhase?: CareerPhase
+): {
+  coachProfile: CoachProfile;
+  activeCareerMode: 'franchise' | 'international';
+  migrated: boolean;
+} {
+  const safeProfile = coachProfile && typeof coachProfile === 'object'
+    ? coachProfile
+    : { ...INITIAL_COACH_PROFILE };
+
+  const phaseStr = String(currentPhase || '');
+  const isIntlPhase =
+    phaseStr.startsWith('international') ||
+    (Boolean(safeProfile.nationalTeamId) && !safeProfile.clubTeamId);
+
+  const activeMode: 'franchise' | 'international' =
+    desiredMode ||
+    safeProfile.activeCareerMode ||
+    (isIntlPhase ? 'international' : 'franchise');
+
+  let migrated = false;
+
+  if (activeMode === 'international') {
+    const hasClub = safeProfile.clubTeamId !== null;
+    const hasNoNat = !safeProfile.nationalTeamId;
+    if (hasClub || hasNoNat || safeProfile.activeCareerMode !== 'international') {
+      migrated = true;
+    }
+    return {
+      activeCareerMode: 'international',
+      migrated,
+      coachProfile: {
+        ...safeProfile,
+        activeCareerMode: 'international',
+        nationalTeamId: safeProfile.nationalTeamId || 'nat_ind',
+        clubTeamId: null as unknown as string
+      }
+    };
+  } else {
+    const hasNat = safeProfile.nationalTeamId !== null;
+    const hasNoClub = !safeProfile.clubTeamId;
+    if (hasNat || hasNoClub || safeProfile.activeCareerMode !== 'franchise') {
+      migrated = true;
+    }
+    return {
+      activeCareerMode: 'franchise',
+      migrated,
+      coachProfile: {
+        ...safeProfile,
+        activeCareerMode: 'franchise',
+        clubTeamId: safeProfile.clubTeamId || 'team_mum',
+        nationalTeamId: null
+      }
+    };
+  }
+}
+
+/**
+ * Authoritative playoff eligibility validator.
+ * - Enforces career gating: league stage must be completed before playoffs can be played or simulated.
+ * - Enforces top 4 qualification from final standings.
+ * - Enforces prerequisite round completion (Q1 & Eliminator for Q2; Q1 & Q2 for Final).
+ * - Enforces user team participation for manual PLAY / SIMULATE actions.
+ */
+export function validatePlayoffEligibility(params: {
+  careerPhase: CareerPhase;
+  league: League;
+  userClubId: string | null;
+  stage: 'q1' | 'eliminator' | 'q2' | 'final';
+  isUserAction?: boolean;
+}): {
+  canPlay: boolean;
+  canSimulate: boolean;
+  isUserMatch: boolean;
+  userQualified: boolean;
+  userEliminated: boolean;
+  reason?: string;
+  homeTeamId: string | null;
+  awayTeamId: string | null;
+} {
+  const { careerPhase, league, userClubId, stage, isUserAction = false } = params;
+
+  if (!league || !Array.isArray(league.standings) || league.standings.length < 4) {
+    return {
+      canPlay: false,
+      canSimulate: false,
+      isUserMatch: false,
+      userQualified: false,
+      userEliminated: false,
+      reason: 'Invalid league or insufficient standings for playoff qualification.',
+      homeTeamId: null,
+      awayTeamId: null
+    };
+  }
+
+  // 1. Career Gating
+  const allLeagueMatchesPlayed = league.standings.every(s => Boolean(s && s.played >= 18));
+  const isPlayoffPhase = careerPhase === 'playoffs' || careerPhase === 'season_final';
+
+  if (!isPlayoffPhase && !allLeagueMatchesPlayed) {
+    return {
+      canPlay: false,
+      canSimulate: false,
+      isUserMatch: false,
+      userQualified: false,
+      userEliminated: false,
+      reason: 'League stage is still in progress. Playoff matches cannot be simulated yet.',
+      homeTeamId: null,
+      awayTeamId: null
+    };
+  }
+
+  // 2. Resolve Top 4 Qualification
+  const sortedStandings = [...league.standings].sort((a, b) => b.points - a.points || b.nrr - a.nrr);
+  const seed1 = sortedStandings[0]?.teamId || null;
+  const seed2 = sortedStandings[1]?.teamId || null;
+  const seed3 = sortedStandings[2]?.teamId || null;
+  const seed4 = sortedStandings[3]?.teamId || null;
+  const top4Ids = [seed1, seed2, seed3, seed4].filter(Boolean);
+
+  const userQualified = Boolean(userClubId && top4Ids.includes(userClubId));
+
+  // 3. Resolve Playoff Match Participants & Stage Prerequisites
+  const playoffs = league.playoffs || createInitialPlayoffs(sortedStandings);
+  const stageData = playoffs[stage];
+
+  let homeTeamId: string | null = stageData?.homeTeamId || null;
+  let awayTeamId: string | null = stageData?.awayTeamId || null;
+
+  if (stage === 'q1') {
+    homeTeamId = homeTeamId || seed1;
+    awayTeamId = awayTeamId || seed2;
+  } else if (stage === 'eliminator') {
+    homeTeamId = homeTeamId || seed3;
+    awayTeamId = awayTeamId || seed4;
+  } else if (stage === 'q2') {
+    if (!playoffs.q1.completed || !playoffs.eliminator.completed) {
+      return {
+        canPlay: false,
+        canSimulate: false,
+        isUserMatch: false,
+        userQualified,
+        userEliminated: false,
+        reason: 'Qualifier 2 requires Qualifier 1 and Eliminator to be completed first.',
+        homeTeamId: null,
+        awayTeamId: null
+      };
+    }
+    homeTeamId = homeTeamId || playoffs.q1.loserTeamId || null;
+    awayTeamId = awayTeamId || playoffs.eliminator.winnerTeamId || null;
+  } else if (stage === 'final') {
+    if (!playoffs.q1.completed || !playoffs.q2.completed) {
+      return {
+        canPlay: false,
+        canSimulate: false,
+        isUserMatch: false,
+        userQualified,
+        userEliminated: false,
+        reason: 'Grand Final requires Qualifier 1 and Qualifier 2 to be completed first.',
+        homeTeamId: null,
+        awayTeamId: null
+      };
+    }
+    homeTeamId = homeTeamId || playoffs.q1.winnerTeamId || null;
+    awayTeamId = awayTeamId || playoffs.q2.winnerTeamId || null;
+  }
+
+  // 4. Check match completion
+  if (stageData?.completed) {
+    return {
+      canPlay: false,
+      canSimulate: false,
+      isUserMatch: Boolean(userClubId && (homeTeamId === userClubId || awayTeamId === userClubId)),
+      userQualified,
+      userEliminated: false,
+      reason: 'This playoff match has already been completed.',
+      homeTeamId,
+      awayTeamId
+    };
+  }
+
+  // 5. User Elimination Status
+  let userEliminated = false;
+  if (userClubId && userQualified) {
+    if (playoffs.eliminator.completed && playoffs.eliminator.loserTeamId === userClubId) {
+      userEliminated = true;
+    }
+    if (playoffs.q2.completed && playoffs.q2.loserTeamId === userClubId) {
+      userEliminated = true;
+    }
+  }
+
+  const isUserMatch = Boolean(userClubId && (homeTeamId === userClubId || awayTeamId === userClubId));
+
+  // 6. User Action Authorization
+  if (isUserAction) {
+    if (!userClubId) {
+      return {
+        canPlay: false,
+        canSimulate: true,
+        isUserMatch: false,
+        userQualified: false,
+        userEliminated: false,
+        reason: 'No active franchise club.',
+        homeTeamId,
+        awayTeamId
+      };
+    }
+
+    if (!userQualified) {
+      return {
+        canPlay: false,
+        canSimulate: false,
+        isUserMatch: false,
+        userQualified: false,
+        userEliminated: true,
+        reason: 'Your team did not qualify for the playoffs. AI will simulate remaining playoff matches.',
+        homeTeamId,
+        awayTeamId
+      };
+    }
+
+    if (userEliminated) {
+      return {
+        canPlay: false,
+        canSimulate: false,
+        isUserMatch: false,
+        userQualified: true,
+        userEliminated: true,
+        reason: 'Your team has been eliminated from the playoffs. Remaining matches simulate automatically via AI.',
+        homeTeamId,
+        awayTeamId
+      };
+    }
+
+    if (!isUserMatch) {
+      return {
+        canPlay: false,
+        canSimulate: true,
+        isUserMatch: false,
+        userQualified: true,
+        userEliminated: false,
+        reason: 'This is an AI playoff match. You can simulate it to advance the bracket.',
+        homeTeamId,
+        awayTeamId
+      };
+    }
+
+    return {
+      canPlay: true,
+      canSimulate: true,
+      isUserMatch: true,
+      userQualified: true,
+      userEliminated: false,
+      homeTeamId,
+      awayTeamId
+    };
+  }
+
+  return {
+    canPlay: isUserMatch,
+    canSimulate: Boolean(homeTeamId && awayTeamId),
+    isUserMatch,
+    userQualified,
+    userEliminated,
+    homeTeamId,
+    awayTeamId
+  };
+}
+
+/**
  * Validates and recovers restored career state at the persistence boundary (save/load and startup).
  * - Resolves the active league using `currentLeagueId` first, then the explicit recovery policy (never blindly picking `leagues[0]`)
  * - Validates `rawPhase` against `VALID_CAREER_PHASES` and migrates legacy phase strings
@@ -2195,11 +2474,20 @@ export function validateAndRecoverCareerState(params: {
           boardReviewsHistory: updatedHistory
         };
 
+  const invariantRes = enforceSingleCareerInvariant(nextCoachProfile, undefined, resolvedPhase);
+  if (invariantRes.migrated) {
+    migrated = true;
+    recoveryReason = recoveryReason
+      ? `${recoveryReason}; Migrated to single active career invariant`
+      : 'Migrated to single active career invariant';
+  }
+  const finalCoachProfile = invariantRes.coachProfile;
+
   return {
     careerPhase: resolvedPhase,
     careerBoardReview: scopedReview,
     nationalSquadIds: reconciledNatSquadIds,
-    coachProfile: nextCoachProfile,
+    coachProfile: finalCoachProfile,
     internationalSeries: resolvedIntlSeries,
     resolvedLeagueId: activeLeague.id,
     requiresLeagueSelection: false,
@@ -3780,7 +4068,7 @@ export function applyAdvanceOffSeasonState(
       teams: recoveredTeams,
       careerPhase: 'next_season_ready'
     },
-    state.coachProfile.clubTeamId,
+    state.coachProfile.clubTeamId || '',
     undefined,
     targetNextYear
   );
@@ -3853,6 +4141,7 @@ interface GameContextType {
   confirmNationalSquad: (nationIdOrName: string, selectedPlayerIds: string[]) => { success: boolean; error?: string };
   completeInternationalSeries: (options?: { nextOpponentId?: string; requireSquadReselection?: boolean }) => { success: boolean; error?: string; alreadyCompleted?: boolean };
   advanceOffSeasonToNextSeason: (targetNextYear?: number) => void;
+  advanceCalendarToNextTour: () => { success: boolean; message: string };
   switchUserClub: (newClubId: string) => void;
   validateClubSquad: (teamId?: string) => { isValid: boolean; errors: string[] };
   confirmClubSquad: (teamId: string, squadPlayerIds: string[]) => { success: boolean; error?: string };
@@ -4188,7 +4477,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
                       }))
                     };
                   })
-                : buildSeasonCalendarForTeam(activeUserTeamId, INITIAL_TEAMS, false, parseInt(normYear, 10) || 2026)
+                : buildSeasonCalendarForTeam(activeUserTeamId || 'team_kol', INITIAL_TEAMS, false, parseInt(normYear, 10) || 2026)
             };
           });
           safeStorageSet('ms_leagues_v6', JSON.stringify(result));
@@ -4202,7 +4491,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       seasonYear: 2026,
       teamSeasonHistory: {},
       currentDateIndex: 0,
-      calendarDates: buildSeasonCalendarForTeam(activeUserTeamId, INITIAL_TEAMS, false, 2026)
+      calendarDates: buildSeasonCalendarForTeam(activeUserTeamId || 'team_kol', INITIAL_TEAMS, false, 2026)
     }));
     safeStorageSet('ms_leagues_v6', JSON.stringify(seededLeagues));
     return seededLeagues;
@@ -7720,18 +8009,45 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [leagues, teams]);
 
   const playPlayoffMatch = useCallback((leagueId: string, stage: 'q1' | 'eliminator' | 'q2' | 'final') => {
+    const targetLeague = leagues.find(l => l.id === leagueId) || leagues[0];
+    const eligibility = validatePlayoffEligibility({
+      careerPhase,
+      league: targetLeague,
+      userClubId: coachProfile.clubTeamId,
+      stage,
+      isUserAction: true
+    });
+
+    if (!eligibility.canPlay) {
+      return { success: false, reason: eligibility.reason || 'Playoff match is not eligible to play.' };
+    }
+
     const { homeTeamObj, awayTeamObj, format } = resolvePlayoffStageTeams(leagueId, stage);
     const newMatch = createFranchiseMatchState(homeTeamObj, awayTeamObj, leagueId, format, stage);
     setMatchLiveState(newMatch);
     setActiveTab('live_match');
     sound.playCrowdCheer(0.8);
-  }, [resolvePlayoffStageTeams, createFranchiseMatchState]);
+    return { success: true };
+  }, [leagues, careerPhase, coachProfile.clubTeamId, resolvePlayoffStageTeams, createFranchiseMatchState]);
 
-  const simPlayoffMatch = useCallback((leagueId: string, stage: 'q1' | 'eliminator' | 'q2' | 'final') => {
+  const simPlayoffMatch = useCallback((leagueId: string, stage: 'q1' | 'eliminator' | 'q2' | 'final', isUserAction: boolean = false) => {
     const targetLeague = leagues.find(l => l.id === leagueId) || leagues[0];
-    if (targetLeague?.playoffs?.[stage]?.completed) {
-      return;
+    const eligibility = validatePlayoffEligibility({
+      careerPhase,
+      league: targetLeague,
+      userClubId: coachProfile.clubTeamId,
+      stage,
+      isUserAction
+    });
+
+    if (isUserAction && !eligibility.canSimulate) {
+      return { success: false, reason: eligibility.reason || 'Playoff match is not eligible to simulate.' };
     }
+
+    if (targetLeague?.playoffs?.[stage]?.completed) {
+      return { success: false, reason: 'Playoff match already completed.' };
+    }
+
     const { homeTeamObj, awayTeamObj, format } = resolvePlayoffStageTeams(leagueId, stage);
     let curr = createFranchiseMatchState(homeTeamObj, awayTeamObj, leagueId, format, stage);
     let safetyCounter = 0;
@@ -7753,7 +8069,87 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     recordCompletedMatch(curr);
     sound.playCrowdCheer(1.0);
-  }, [leagues, resolvePlayoffStageTeams, createFranchiseMatchState, simulateSingleDeliveryState, recordCompletedMatch]);
+    return { success: true };
+  }, [leagues, careerPhase, coachProfile.clubTeamId, resolvePlayoffStageTeams, createFranchiseMatchState, simulateSingleDeliveryState, recordCompletedMatch]);
+
+  const advanceCalendarToNextTour = useCallback((): { success: boolean; message: string } => {
+    if (coachProfile.activeCareerMode !== 'international' || !coachProfile.nationalTeamId) {
+      return { success: false, message: 'Not currently in International Career Mode.' };
+    }
+
+    const userNat = nations.find(n => n.id === coachProfile.nationalTeamId) || nations[0];
+    const userNatNameLower = userNat.name.trim().toLowerCase();
+
+    const activeLeague = leagues.find(l => l.id === currentLeagueId) || leagues[0];
+    if (!activeLeague || !Array.isArray(activeLeague.calendarDates)) {
+      return { success: false, message: 'No calendar dates available.' };
+    }
+
+    const dates = activeLeague.calendarDates;
+    let curIdx = activeLeague.currentDateIndex || 0;
+
+    // Search forward in calendar for an uncompleted match involving userNat
+    let targetIdx = -1;
+    for (let i = curIdx; i < dates.length; i++) {
+      const cd = dates[i];
+      const intlFixes = cd.internationalMatches || (cd.type === 'international' ? (cd.matchFixture ? [cd.matchFixture] : []) : []);
+      const hasUserMatch = intlFixes.some(
+        m =>
+          m &&
+          !m.completed &&
+          (m.homeTeamId === userNat.id ||
+            m.awayTeamId === userNat.id ||
+            (m.homeShortName && m.homeShortName.toLowerCase() === userNatNameLower) ||
+            (m.awayShortName && m.awayShortName.toLowerCase() === userNatNameLower))
+      );
+      if (hasUserMatch) {
+        targetIdx = i;
+        break;
+      }
+    }
+
+    if (targetIdx >= 0) {
+      let daysAdvanced = 0;
+      while (curIdx < targetIdx && curIdx < dates.length - 1) {
+        advanceCalendarDay();
+        curIdx++;
+        daysAdvanced++;
+      }
+      return {
+        success: true,
+        message: `Advanced ${daysAdvanced} day(s) to ${dates[targetIdx].month} ${dates[targetIdx].dayNumber} (${dates[targetIdx].title})`
+      };
+    }
+
+    // If no tour exists in remaining calendar, generate next tour via buildInitialSeriesForNation
+    const existingSeriesIds = [
+      ...(coachProfile.completedInternationalSeriesIds || []),
+      ...(internationalSeries?.seriesId ? [internationalSeries.seriesId] : [])
+    ];
+    const tourCount = (coachProfile.completedInternationalSeriesIds?.length || 0) + 1;
+
+    try {
+      const newSeries = buildInitialSeriesForNation(
+        userNat,
+        nations,
+        undefined,
+        tourCount,
+        undefined,
+        existingSeriesIds
+      );
+      setInternationalSeries(newSeries);
+      setCareerPhase('international_series');
+      return {
+        success: true,
+        message: `Scheduled new international tour: ${newSeries.userNationName} tour of ${newSeries.opponentNationName}!`
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        message: err.message || 'No further international tours available.'
+      };
+    }
+  }, [coachProfile, nations, leagues, currentLeagueId, internationalSeries, advanceCalendarDay, setInternationalSeries, setCareerPhase]);
 
   const resetPlayoffBracket = useCallback((leagueId: string) => {
     setLeagues(prev => prev.map(l => {
@@ -8799,6 +9195,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         validateClubSquad,
         confirmClubSquad,
         advanceOffSeasonToNextSeason,
+        advanceCalendarToNextTour,
         advanceCalendarDay,
         setCalendarDateIndex,
         settings,

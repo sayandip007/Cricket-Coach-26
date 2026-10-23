@@ -72,7 +72,8 @@ export const HubScreen: React.FC = () => {
     switchUserClub,
     validateClubSquad,
     confirmClubSquad,
-    advanceOffSeasonToNextSeason
+    advanceOffSeasonToNextSeason,
+    advanceCalendarToNextTour
   } = useGame();
 
   const currentLeague = leagues.find(l => l.id === currentLeagueId) || leagues[0];
@@ -704,16 +705,17 @@ export const HubScreen: React.FC = () => {
               </button>
               <button
                 onClick={() => {
-                  const res = completeInternationalSeries();
+                  sound.playTap();
+                  const res = advanceCalendarToNextTour();
                   if (res.success) {
-                    showToast('Advancing to next International Bilateral Series!');
-                  } else if (res.error) {
-                    showToast(res.error);
+                    showToast(res.message);
+                  } else if (res.message) {
+                    showToast(res.message);
                   }
                 }}
-                className="flex-1 py-2.5 bg-gradient-to-r from-sky-400 to-emerald-400 hover:from-sky-300 hover:to-emerald-300 text-slate-950 font-black text-xs uppercase tracking-wider rounded-xl shadow-lg shadow-sky-500/20 active:scale-95 transition-all text-center"
+                className="flex-1 py-2.5 bg-gradient-to-r from-sky-400 to-emerald-400 hover:from-sky-300 hover:to-emerald-300 text-slate-950 font-black text-xs uppercase tracking-wider rounded-xl shadow-lg shadow-sky-500/20 active:scale-95 transition-all text-center cursor-pointer"
               >
-                NEXT INTERNATIONAL SERIES ▶
+                GO TO NEXT TOUR ▶
               </button>
             </div>
           </div>

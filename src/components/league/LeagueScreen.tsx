@@ -1,7 +1,6 @@
 import React, { useState, useMemo } from 'react';
-import { Trophy, ChevronDown, Flame, Star, Play, FastForward, RotateCcw, Sparkles, CheckCircle2, Lock, ChevronRight, Clock, ArrowLeft } from 'lucide-react';
+import { Trophy, ChevronDown, Flame, Star, ChevronRight, Clock, ArrowLeft } from 'lucide-react';
 import { useGame, normalizeSeasonYear } from '../../context/GameContext';
-import { createInitialPlayoffs } from '../../data/initialData';
 import { RetentionModal } from '../dynasty/RetentionModal';
 import { sound } from '../../utils/soundEffects';
 import { TeamLogo } from '../common/TeamLogo';
@@ -14,16 +13,13 @@ export const LeagueScreen: React.FC = () => {
     teams,
     userTeam,
     players,
-    playPlayoffMatch,
-    simPlayoffMatch,
-    resetPlayoffBracket,
     pendingRetentionModal,
     setPendingRetentionModal,
     tournamentHonors,
     completedMatchesHistory
   } = useGame();
 
-  const [activeTab, setActiveTab] = useState<'standings' | 'playoffs' | 'trophy_room' | 'leaders'>('standings');
+  const [activeTab, setActiveTab] = useState<'standings' | 'trophy_room' | 'leaders'>('standings');
   const [showLeagueDropdown, setShowLeagueDropdown] = useState(false);
   const [leaderFilter, setLeaderFilter] = useState<'all' | 'franchise'>('all');
   const [showRetentionModal, setShowRetentionModal] = useState(false);
@@ -39,12 +35,7 @@ export const LeagueScreen: React.FC = () => {
     return Array.from(map.values());
   }, [teams, currentLeague.teams]);
 
-  const resolveTeam = (teamId: string | null | undefined) => {
-    if (!teamId) return undefined;
-    return allLeagueTeams.find(t => t.id === teamId);
-  };
-
-  const playoffs = currentLeague.playoffs || createInitialPlayoffs(currentLeague.standings);
+  const resolveTeam = (id?: string) => allLeagueTeams.find(t => t.id === id);
 
   const handleSelectLeague = (id: string) => {
     sound.playTap();
@@ -321,20 +312,6 @@ export const LeagueScreen: React.FC = () => {
     return [];
   };
 
-  // Playoff bracket team resolution
-  const q1Home = resolveTeam(playoffs.q1.homeTeamId || currentLeague.standings[0]?.teamId);
-  const q1Away = resolveTeam(playoffs.q1.awayTeamId || currentLeague.standings[1]?.teamId);
-  const elimHome = resolveTeam(playoffs.eliminator.homeTeamId || currentLeague.standings[2]?.teamId);
-  const elimAway = resolveTeam(playoffs.eliminator.awayTeamId || currentLeague.standings[3]?.teamId);
-  const q2Home = resolveTeam(playoffs.q2.homeTeamId || playoffs.q1.loserTeamId);
-  const q2Away = resolveTeam(playoffs.q2.awayTeamId || playoffs.eliminator.winnerTeamId);
-  const finalHome = resolveTeam(playoffs.final.homeTeamId || playoffs.q1.winnerTeamId);
-  const finalAway = resolveTeam(playoffs.final.awayTeamId || playoffs.q2.winnerTeamId);
-  const championTeam = resolveTeam(playoffs.championTeamId || playoffs.final.winnerTeamId);
-
-  const canPlayQ2 = playoffs.q1.completed && playoffs.eliminator.completed && !!q2Home && !!q2Away;
-  const canPlayFinal = playoffs.q1.completed && playoffs.q2.completed && !!finalHome && !!finalAway;
-
   return (
     <div className="min-h-screen bg-[#070b12] text-slate-100 flex flex-col justify-between max-w-7xl mx-auto w-full pb-24 select-none">
       {/* Top Header */}
@@ -394,7 +371,7 @@ export const LeagueScreen: React.FC = () => {
         )}
 
         {/* Tab Switcher */}
-        <div className="grid grid-cols-4 gap-1 p-1 bg-slate-900 rounded-xl text-xs font-bold uppercase max-w-2xl">
+        <div className="grid grid-cols-3 gap-1 p-1 bg-slate-900 rounded-xl text-xs font-bold uppercase max-w-2xl">
           <button
             onClick={() => { sound.playTap(); setActiveTab('standings'); }}
             className={`py-1.5 rounded-lg transition-all ${
@@ -402,14 +379,6 @@ export const LeagueScreen: React.FC = () => {
             }`}
           >
             STANDINGS
-          </button>
-          <button
-            onClick={() => { sound.playTap(); setActiveTab('playoffs'); }}
-            className={`py-1.5 rounded-lg transition-all ${
-              activeTab === 'playoffs' ? 'bg-amber-400 text-black shadow' : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            PLAYOFFS
           </button>
           <button
             onClick={() => { sound.playTap(); setActiveTab('trophy_room'); }}
@@ -556,248 +525,7 @@ export const LeagueScreen: React.FC = () => {
           </div>
         )}
 
-        {/* PLAYABLE 4-STAGE PLAYOFFS BRACKET */}
-        {activeTab === 'playoffs' && (
-          <div className="flex flex-col gap-3">
-            {/* Stage 1: Qualifier 1 */}
-            <div className="bg-[#0f172a] border border-slate-800 rounded-3xl p-4">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] font-mono uppercase tracking-widest text-amber-400 font-bold">
-                  QUALIFIER 1 · 1st vs 2nd
-                </span>
-                {playoffs.q1.completed && (
-                  <span className="text-[10px] font-mono font-bold text-emerald-400 flex items-center gap-1">
-                    <CheckCircle2 className="w-3.5 h-3.5" /> COMPLETED
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-900/80 border border-slate-800">
-                <span className={`font-bold flex items-center gap-1.5 text-xs truncate max-w-[44%] ${
-                  playoffs.q1.winnerTeamId === q1Home?.id ? 'text-emerald-400' : 'text-white'
-                }`}>
-                  <TeamLogo teamId={q1Home?.id} shortName={q1Home?.shortName} size={20} fallbackEmoji={q1Home?.logoEmoji} />
-                  <span className="truncate">{q1Home?.name || '1st Place'} (1st)</span>
-                </span>
-                <span className="text-xs font-mono font-bold text-amber-400 px-1">VS</span>
-                <span className={`font-bold flex items-center gap-1.5 text-xs truncate max-w-[44%] ${
-                  playoffs.q1.winnerTeamId === q1Away?.id ? 'text-emerald-400' : 'text-white'
-                }`}>
-                  <TeamLogo teamId={q1Away?.id} shortName={q1Away?.shortName} size={20} fallbackEmoji={q1Away?.logoEmoji} />
-                  <span className="truncate">{q1Away?.name || '2nd Place'} (2nd)</span>
-                </span>
-              </div>
-              {playoffs.q1.completed && playoffs.q1.resultSummary ? (
-                <p className="text-[11px] text-emerald-300 font-mono mt-2 bg-emerald-950/30 border border-emerald-500/20 rounded-xl px-2.5 py-1.5">
-                  {playoffs.q1.resultSummary}
-                </p>
-              ) : (
-                <div className="grid grid-cols-2 gap-2 mt-2.5">
-                  <button
-                    onClick={() => playPlayoffMatch(currentLeague.id, 'q1')}
-                    className="py-2 px-3 rounded-xl bg-amber-400 hover:bg-amber-300 text-black font-black text-[11px] uppercase flex items-center justify-center gap-1.5 shadow active:scale-95"
-                  >
-                    <Play className="w-3.5 h-3.5 fill-black" /> PLAY PLAYOFF MATCH
-                  </button>
-                  <button
-                    onClick={() => simPlayoffMatch(currentLeague.id, 'q1')}
-                    className="py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/30 font-bold text-[11px] uppercase flex items-center justify-center gap-1.5 active:scale-95"
-                  >
-                    <FastForward className="w-3.5 h-3.5" /> SIM PLAYOFF MATCH
-                  </button>
-                </div>
-              )}
-              <span className="text-[10px] text-slate-400 font-mono mt-1.5 block">
-                Winner advances to Grand Final · Loser plays Qualifier 2
-              </span>
-            </div>
 
-            {/* Stage 2: Eliminator */}
-            <div className="bg-[#0f172a] border border-slate-800 rounded-3xl p-4">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] font-mono uppercase tracking-widest text-cyan-400 font-bold">
-                  ELIMINATOR · 3rd vs 4th
-                </span>
-                {playoffs.eliminator.completed && (
-                  <span className="text-[10px] font-mono font-bold text-emerald-400 flex items-center gap-1">
-                    <CheckCircle2 className="w-3.5 h-3.5" /> COMPLETED
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-900/80 border border-slate-800">
-                <span className={`font-bold flex items-center gap-1.5 text-xs truncate max-w-[44%] ${
-                  playoffs.eliminator.winnerTeamId === elimHome?.id ? 'text-emerald-400' : 'text-white'
-                }`}>
-                  <TeamLogo teamId={elimHome?.id} shortName={elimHome?.shortName} size={20} fallbackEmoji={elimHome?.logoEmoji} />
-                  <span className="truncate">{elimHome?.name || '3rd Place'} (3rd)</span>
-                </span>
-                <span className="text-xs font-mono font-bold text-cyan-400 px-1">VS</span>
-                <span className={`font-bold flex items-center gap-1.5 text-xs truncate max-w-[44%] ${
-                  playoffs.eliminator.winnerTeamId === elimAway?.id ? 'text-emerald-400' : 'text-white'
-                }`}>
-                  <TeamLogo teamId={elimAway?.id} shortName={elimAway?.shortName} size={20} fallbackEmoji={elimAway?.logoEmoji} />
-                  <span className="truncate">{elimAway?.name || '4th Place'} (4th)</span>
-                </span>
-              </div>
-              {playoffs.eliminator.completed && playoffs.eliminator.resultSummary ? (
-                <p className="text-[11px] text-emerald-300 font-mono mt-2 bg-emerald-950/30 border border-emerald-500/20 rounded-xl px-2.5 py-1.5">
-                  {playoffs.eliminator.resultSummary}
-                </p>
-              ) : (
-                <div className="grid grid-cols-2 gap-2 mt-2.5">
-                  <button
-                    onClick={() => playPlayoffMatch(currentLeague.id, 'eliminator')}
-                    className="py-2 px-3 rounded-xl bg-cyan-400 hover:bg-cyan-300 text-black font-black text-[11px] uppercase flex items-center justify-center gap-1.5 shadow active:scale-95"
-                  >
-                    <Play className="w-3.5 h-3.5 fill-black" /> PLAY PLAYOFF MATCH
-                  </button>
-                  <button
-                    onClick={() => simPlayoffMatch(currentLeague.id, 'eliminator')}
-                    className="py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-cyan-500/30 font-bold text-[11px] uppercase flex items-center justify-center gap-1.5 active:scale-95"
-                  >
-                    <FastForward className="w-3.5 h-3.5" /> SIM PLAYOFF MATCH
-                  </button>
-                </div>
-              )}
-              <span className="text-[10px] text-slate-400 font-mono mt-1.5 block">
-                Winner advances to Qualifier 2 · Loser is eliminated
-              </span>
-            </div>
-
-            {/* Stage 3: Qualifier 2 */}
-            <div className="bg-[#0f172a] border border-slate-800 rounded-3xl p-4">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] font-mono uppercase tracking-widest text-purple-400 font-bold">
-                  QUALIFIER 2 · Loser Q1 vs Winner Elim
-                </span>
-                {playoffs.q2.completed ? (
-                  <span className="text-[10px] font-mono font-bold text-emerald-400 flex items-center gap-1">
-                    <CheckCircle2 className="w-3.5 h-3.5" /> COMPLETED
-                  </span>
-                ) : !canPlayQ2 ? (
-                  <span className="text-[10px] font-mono text-slate-500 flex items-center gap-1">
-                    <Lock className="w-3 h-3" /> AWAITING Q1 & ELIM
-                  </span>
-                ) : null}
-              </div>
-              <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-900/80 border border-slate-800">
-                <span className={`font-bold flex items-center gap-1.5 text-xs truncate max-w-[44%] ${
-                  playoffs.q2.winnerTeamId && playoffs.q2.winnerTeamId === q2Home?.id ? 'text-emerald-400' : 'text-white'
-                }`}>
-                  <TeamLogo teamId={q2Home?.id} shortName={q2Home?.shortName} size={20} fallbackEmoji={q2Home?.logoEmoji || '⏳'} />
-                  <span className="truncate">{q2Home?.name || 'Loser Qualifier 1'}</span>
-                </span>
-                <span className="text-xs font-mono font-bold text-purple-400 px-1">VS</span>
-                <span className={`font-bold flex items-center gap-1.5 text-xs truncate max-w-[44%] ${
-                  playoffs.q2.winnerTeamId && playoffs.q2.winnerTeamId === q2Away?.id ? 'text-emerald-400' : 'text-white'
-                }`}>
-                  <TeamLogo teamId={q2Away?.id} shortName={q2Away?.shortName} size={20} fallbackEmoji={q2Away?.logoEmoji || '⏳'} />
-                  <span className="truncate">{q2Away?.name || 'Winner Eliminator'}</span>
-                </span>
-              </div>
-              {playoffs.q2.completed && playoffs.q2.resultSummary ? (
-                <p className="text-[11px] text-emerald-300 font-mono mt-2 bg-emerald-950/30 border border-emerald-500/20 rounded-xl px-2.5 py-1.5">
-                  {playoffs.q2.resultSummary}
-                </p>
-              ) : canPlayQ2 ? (
-                <div className="grid grid-cols-2 gap-2 mt-2.5">
-                  <button
-                    onClick={() => playPlayoffMatch(currentLeague.id, 'q2')}
-                    className="py-2 px-3 rounded-xl bg-purple-400 hover:bg-purple-300 text-black font-black text-[11px] uppercase flex items-center justify-center gap-1.5 shadow active:scale-95"
-                  >
-                    <Play className="w-3.5 h-3.5 fill-black" /> PLAY PLAYOFF MATCH
-                  </button>
-                  <button
-                    onClick={() => simPlayoffMatch(currentLeague.id, 'q2')}
-                    className="py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-purple-300 border border-purple-500/30 font-bold text-[11px] uppercase flex items-center justify-center gap-1.5 active:scale-95"
-                  >
-                    <FastForward className="w-3.5 h-3.5" /> SIM PLAYOFF MATCH
-                  </button>
-                </div>
-              ) : null}
-              <span className="text-[10px] text-slate-400 font-mono mt-1.5 block">
-                Winner advances to face {finalHome?.shortName || 'Qualifier 1 Winner'} in the Grand Final
-              </span>
-            </div>
-
-            {/* Stage 4: The Grand Final */}
-            <div className="bg-gradient-to-b from-amber-950/50 to-[#0f172a] border border-amber-500/40 rounded-3xl p-4 text-center">
-              <Trophy className="w-8 h-8 text-amber-400 mx-auto mb-1" />
-              <span className="font-display font-black text-xl text-white uppercase block">
-                THE GRAND FINAL
-              </span>
-              <span className="text-[11px] text-amber-300 font-mono block mb-3">
-                Championship Showdown · Winner Q1 vs Winner Q2
-              </span>
-
-              <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-900/90 border border-amber-500/30 text-left">
-                <span className={`font-bold flex items-center gap-1.5 text-xs truncate max-w-[44%] ${
-                  playoffs.final.winnerTeamId && playoffs.final.winnerTeamId === finalHome?.id ? 'text-amber-400' : 'text-white'
-                }`}>
-                  <TeamLogo teamId={finalHome?.id} shortName={finalHome?.shortName} size={20} fallbackEmoji={finalHome?.logoEmoji || '🏆'} />
-                  <span className="truncate">{finalHome?.name || 'Winner Qualifier 1'}</span>
-                </span>
-                <span className="text-xs font-mono font-bold text-amber-400 px-1">VS</span>
-                <span className={`font-bold flex items-center gap-1.5 text-xs truncate max-w-[44%] ${
-                  playoffs.final.winnerTeamId && playoffs.final.winnerTeamId === finalAway?.id ? 'text-amber-400' : 'text-white'
-                }`}>
-                  <TeamLogo teamId={finalAway?.id} shortName={finalAway?.shortName} size={20} fallbackEmoji={finalAway?.logoEmoji || '🏆'} />
-                  <span className="truncate">{finalAway?.name || 'Winner Qualifier 2'}</span>
-                </span>
-              </div>
-
-              {playoffs.final.completed && championTeam ? (
-                <div className="mt-3 p-3 rounded-2xl bg-amber-500/15 border border-amber-400/50 flex flex-col items-center gap-2">
-                  <span className="text-[10px] font-mono uppercase tracking-widest text-amber-300 font-bold">
-                    {currentLeague.name} CHAMPIONS
-                  </span>
-                  <div className="text-base font-black text-white font-display uppercase flex items-center gap-2">
-                    <TeamLogo teamId={championTeam.id} shortName={championTeam.shortName} size={28} fallbackEmoji={championTeam.logoEmoji} />
-                    <span>{championTeam.name}</span>
-                    <span>🏆</span>
-                  </div>
-                  {playoffs.final.resultSummary && (
-                    <span className="text-[11px] font-mono text-emerald-300">
-                      {playoffs.final.resultSummary}
-                    </span>
-                  )}
-                  <div className="grid grid-cols-2 gap-2 w-full mt-1">
-                    <button
-                      onClick={() => { sound.playTap(); setShowRetentionModal(true); }}
-                      className="py-2 px-3 rounded-xl bg-amber-400 hover:bg-amber-300 text-black font-black text-[11px] uppercase flex items-center justify-center gap-1.5 shadow"
-                    >
-                      <Sparkles className="w-3.5 h-3.5" /> RETENTION & DYNASTY
-                    </button>
-                    <button
-                      onClick={() => resetPlayoffBracket(currentLeague.id)}
-                      className="py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-[11px] uppercase flex items-center justify-center gap-1.5"
-                    >
-                      <RotateCcw className="w-3.5 h-3.5" /> RESET BRACKET
-                    </button>
-                  </div>
-                </div>
-              ) : canPlayFinal ? (
-                <div className="grid grid-cols-2 gap-2 mt-3">
-                  <button
-                    onClick={() => playPlayoffMatch(currentLeague.id, 'final')}
-                    className="py-2.5 px-3 rounded-xl bg-amber-400 hover:bg-amber-300 text-black font-black text-xs uppercase flex items-center justify-center gap-1.5 shadow-lg active:scale-95"
-                  >
-                    <Play className="w-3.5 h-3.5 fill-black" /> PLAY PLAYOFF MATCH
-                  </button>
-                  <button
-                    onClick={() => simPlayoffMatch(currentLeague.id, 'final')}
-                    className="py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/40 font-bold text-xs uppercase flex items-center justify-center gap-1.5 active:scale-95"
-                  >
-                    <FastForward className="w-3.5 h-3.5" /> SIM PLAYOFF MATCH
-                  </button>
-                </div>
-              ) : (
-                <span className="text-[10px] font-mono text-slate-400 mt-2 block">
-                  Complete Qualifier 1, Eliminator & Qualifier 2 to unlock The Grand Final
-                </span>
-              )}
-            </div>
-          </div>
-        )}
 
         {/* REAL DYNAMIC CAPS & LEADERS */}
         {activeTab === 'leaders' && (

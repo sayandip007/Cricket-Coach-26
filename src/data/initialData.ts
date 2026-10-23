@@ -393,6 +393,7 @@ export const INITIAL_COACH_PROFILE: CoachProfile = {
   age: 44,
   nationality: 'India',
   reputation: 'Rookie',
+  activeCareerMode: 'franchise',
   clubTeamId: 'team_kol',
   nationalTeamId: null,
   difficulty: 'Normal',
