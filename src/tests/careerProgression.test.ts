@@ -1931,8 +1931,507 @@ export function runCareerProgressionTests() {
     'Corrupted Save 29.4: Safely ignores null/malformed league entries and resolves unique matching league'
   );
 
+  // ==========================================================================
+  // REQ 30: FINAL CAREER STATE AUDIT & EDGE-CASE SCENARIOS (1 TO 12)
+  // ==========================================================================
+
+  // Scenario 1: New series with unused explicit ID is created successfully
+  const unusedExplicitId = 'intl_series_explicit_aus_vs_ind_2026_xyz123';
+  const seriesWithUnusedExplicitId = buildInitialSeriesForNation(
+    ausNation,
+    baseNations,
+    indNation.id,
+    1,
+    unusedExplicitId,
+    ['some_other_id_1', 'some_other_id_2']
+  );
+  assert.equal(
+    seriesWithUnusedExplicitId.seriesId,
+    unusedExplicitId,
+    'Scenario 1: New series with unused explicit ID is created with the exact requested ID'
+  );
+  assert.equal(
+    seriesWithUnusedExplicitId.userNationId,
+    ausNation.id,
+    'Scenario 1: Coached nation matches'
+  );
+  assert.equal(
+    seriesWithUnusedExplicitId.opponentNationId,
+    indNation.id,
+    'Scenario 1: Opponent nation matches'
+  );
+
+  // Scenario 2: New series with duplicate explicit ID is rejected or receives new unique ID
+  const duplicateId = 'already_persisted_intl_series_abc456';
+  const existingRecordsWithDuplicate = [duplicateId, 'some_other_id_1'];
+
+  // 2a: When onDuplicateExplicitId === 'reject', error is thrown
+  assert.throws(
+    () => {
+      buildInitialSeriesForNation(
+        ausNation,
+        baseNations,
+        indNation.id,
+        1,
+        duplicateId,
+        existingRecordsWithDuplicate,
+        { onDuplicateExplicitId: 'reject' }
+      );
+    },
+    /already belongs to an existing series/i,
+    'Scenario 2a: Duplicate explicit ID throws clear validation error when reject option is specified'
+  );
+
+  // 2b: When onDuplicateExplicitId === 'regenerate' (or default), collision generates a new unique ID
+  const seriesWithCollisionRegenerated = buildInitialSeriesForNation(
+    ausNation,
+    baseNations,
+    indNation.id,
+    1,
+    duplicateId,
+    existingRecordsWithDuplicate,
+    { onDuplicateExplicitId: 'regenerate' }
+  );
+  assert.notEqual(
+    seriesWithCollisionRegenerated.seriesId,
+    duplicateId,
+    'Scenario 2b: Duplicate explicit ID is not reused when creating a new series'
+  );
+  assert.ok(
+    seriesWithCollisionRegenerated.seriesId.length > 0 &&
+      !existingRecordsWithDuplicate.includes(seriesWithCollisionRegenerated.seriesId),
+    'Scenario 2b: Newly generated series ID is unique against the persisted collection'
+  );
+
+  // Scenario 3: Restoring existing series preserves its ID
+  const restoredExistingSeries = buildInitialSeriesForNation(
+    ausNation,
+    baseNations,
+    indNation.id,
+    1,
+    duplicateId,
+    existingRecordsWithDuplicate,
+    { isRestoring: true }
+  );
+  assert.equal(
+    restoredExistingSeries.seriesId,
+    duplicateId,
+    'Scenario 3: Restoring existing series preserves its original ID without generating a new one'
+  );
+
+  // Scenario 4: Two series between same nations have distinct IDs
+  const seriesNationPair1 = buildInitialSeriesForNation(
+    ausNation,
+    baseNations,
+    indNation.id,
+    1,
+    undefined,
+    []
+  );
+  const seriesNationPair2 = buildInitialSeriesForNation(
+    ausNation,
+    baseNations,
+    indNation.id,
+    1,
+    undefined,
+    [seriesNationPair1.seriesId]
+  );
+  assert.notEqual(
+    seriesNationPair1.seriesId,
+    seriesNationPair2.seriesId,
+    'Scenario 4: Two different series between the same countries receive distinct unique IDs'
+  );
+
+  // Scenario 5: IDs remain stable after save/load
+  const originalSeriesToSave = {
+    ...seriesNationPair1,
+    seriesWins: 2,
+    seriesLosses: 1,
+    matches: seriesNationPair1.matches.map((m, idx) =>
+      idx < 3 ? { ...m, completed: true, summary: 'Match result' } : m
+    )
+  };
+  const serializedSave = JSON.stringify(originalSeriesToSave);
+  const parsedSave = JSON.parse(serializedSave);
+  const recoveredSaveState = validateAndRecoverCareerState({
+    rawPhase: 'international_series',
+    coachProfile: { ...INITIAL_COACH_PROFILE, nationalTeamId: ausNation.id },
+    teams: baseTeams,
+    leagues: baseLeagues,
+    currentLeagueId: 'pt20',
+    nations: baseNations,
+    nationalSquadIds: ausSelectedIds,
+    careerBoardReview: null,
+    players: freshPlayers,
+    internationalSeries: parsedSave
+  });
+  assert.equal(
+    recoveredSaveState.internationalSeries?.seriesId,
+    seriesNationPair1.seriesId,
+    'Scenario 5: Series ID remains stable and identical after serialization and save/load recovery'
+  );
+
+  // Scenario 6: Repeated completion of same series awards title at most once
+  const completedFiveMatchSeries = {
+    ...seriesNationPair1,
+    seriesWins: 3,
+    seriesLosses: 2,
+    matches: seriesNationPair1.matches.map((m, idx) => ({
+      ...m,
+      completed: true,
+      summary: idx < 3 ? 'AUS won' : 'IND won'
+    }))
+  };
+  const testCoachProfile: CoachProfile = {
+    ...INITIAL_COACH_PROFILE,
+    nationalTeamId: ausNation.id,
+    internationalTitles: 0,
+    completedInternationalSeriesIds: []
+  };
+
+  const firstSeriesCompletion = applyCompleteInternationalSeriesState({
+    nations: baseNations,
+    coachProfile: testCoachProfile,
+    nationalSquadIds: ausSelectedIds,
+    internationalSeries: completedFiveMatchSeries,
+    careerPhase: 'international_series'
+  });
+  assert.equal(
+    firstSeriesCompletion.success,
+    true,
+    'Scenario 6a: First series completion succeeds'
+  );
+  assert.equal(
+    firstSeriesCompletion.coachProfile.internationalTitles,
+    1,
+    'Scenario 6b: International titles increments to 1'
+  );
+  assert.ok(
+    Boolean(firstSeriesCompletion.coachProfile.completedInternationalSeriesIds?.includes(seriesNationPair1.seriesId)),
+    'Scenario 6c: Authoritative seriesId is recorded in completedInternationalSeriesIds'
+  );
+
+  // Second invocation with the same completed series
+  const secondSeriesCompletion = applyCompleteInternationalSeriesState({
+    nations: baseNations,
+    coachProfile: firstSeriesCompletion.coachProfile,
+    nationalSquadIds: ausSelectedIds,
+    internationalSeries: completedFiveMatchSeries,
+    careerPhase: 'international_series'
+  });
+  assert.equal(
+    secondSeriesCompletion.success,
+    false,
+    'Scenario 6d: Second series completion returns success: false'
+  );
+  assert.equal(
+    secondSeriesCompletion.alreadyCompleted,
+    true,
+    'Scenario 6e: alreadyCompleted flag is true'
+  );
+  assert.equal(
+    secondSeriesCompletion.coachProfile.internationalTitles,
+    1,
+    'Scenario 6f: International titles count is NOT incremented a second time'
+  );
+  assert.equal(
+    secondSeriesCompletion.coachProfile.completedInternationalSeriesIds?.length,
+    1,
+    'Scenario 6g: completedInternationalSeriesIds array is not duplicated'
+  );
+
+  // Scenario 7: Later series with different ID can complete normally
+  const distinctSecondSeries = buildInitialSeriesForNation(
+    ausNation,
+    baseNations,
+    indNation.id,
+    2,
+    undefined,
+    firstSeriesCompletion.coachProfile.completedInternationalSeriesIds
+  );
+  assert.notEqual(
+    distinctSecondSeries.seriesId,
+    seriesNationPair1.seriesId,
+    'Scenario 7a: Later series receives a new distinct ID'
+  );
+  const completedSecondSeries = {
+    ...distinctSecondSeries,
+    seriesWins: 4,
+    seriesLosses: 1,
+    matches: distinctSecondSeries.matches.map(m => ({
+      ...m,
+      completed: true,
+      summary: 'AUS dominant win'
+    }))
+  };
+  const laterSeriesCompletion = applyCompleteInternationalSeriesState({
+    nations: baseNations,
+    coachProfile: firstSeriesCompletion.coachProfile,
+    nationalSquadIds: ausSelectedIds,
+    internationalSeries: completedSecondSeries,
+    careerPhase: 'international_series'
+  });
+  assert.equal(
+    laterSeriesCompletion.success,
+    true,
+    'Scenario 7b: Later series with different ID completes normally even with same nations'
+  );
+  assert.equal(
+    laterSeriesCompletion.coachProfile.internationalTitles,
+    2,
+    'Scenario 7c: International title count increments normally for the second distinct series'
+  );
+  assert.equal(
+    laterSeriesCompletion.coachProfile.completedInternationalSeriesIds?.length,
+    2,
+    'Scenario 7d: Both distinct series IDs are recorded'
+  );
+
+  // Scenario 8: Incomplete series cannot be marked complete
+  const incompleteSeries = {
+    ...distinctSecondSeries,
+    seriesId: 'series_incomplete_test_789',
+    seriesWins: 1,
+    seriesLosses: 1,
+    matches: distinctSecondSeries.matches.map((m, idx) => ({
+      ...m,
+      completed: idx < 2, // only 2 of 5 fixtures completed
+      summary: idx < 2 ? 'Completed match' : undefined
+    }))
+  };
+  const incompleteCompletion = applyCompleteInternationalSeriesState({
+    nations: baseNations,
+    coachProfile: laterSeriesCompletion.coachProfile,
+    nationalSquadIds: ausSelectedIds,
+    internationalSeries: incompleteSeries,
+    careerPhase: 'international_series'
+  });
+  assert.equal(
+    incompleteCompletion.success,
+    false,
+    'Scenario 8a: Incomplete series cannot be marked complete'
+  );
+  assert.ok(
+    incompleteCompletion.error && /all scheduled fixtures/i.test(incompleteCompletion.error),
+    'Scenario 8b: Returns clear error regarding incomplete scheduled fixtures'
+  );
+  assert.equal(
+    incompleteCompletion.coachProfile.internationalTitles,
+    2,
+    'Scenario 8c: International titles count is unchanged on incomplete series'
+  );
+
+  // Scenario 9: Invalid active-league ID recovers safely when unique replacement exists
+  const uniqueRecoveryResult = validateAndRecoverCareerState({
+    rawPhase: 'league_stage',
+    coachProfile: { ...INITIAL_COACH_PROFILE, clubTeamId: 'team_kol', nationalTeamId: null },
+    teams: baseTeams,
+    leagues: [league1_MI_2027, league2_KKR_2026], // only league2 has team_kol
+    currentLeagueId: 'completely_invalid_deleted_league_id',
+    nations: baseNations,
+    nationalSquadIds: [],
+    careerBoardReview: null,
+    players: freshPlayers
+  });
+  assert.equal(
+    uniqueRecoveryResult.resolvedLeagueId,
+    'league_kkr_2026',
+    'Scenario 9a: Recovers to the unique matching league for team_kol'
+  );
+  assert.equal(
+    uniqueRecoveryResult.requiresLeagueSelection,
+    false,
+    'Scenario 9b: Does not require manual league selection when unique replacement exists'
+  );
+
+  // Scenario 10: Ambiguous league recovery does not silently choose first league
+  // Create two leagues both containing team_kol and both with season 2026, no review
+  const ambiguousLeagueA: League = {
+    ...league2_KKR_2026,
+    id: 'league_ambiguous_A',
+    name: 'Ambiguous League A'
+  };
+  const ambiguousLeagueB: League = {
+    ...league2_KKR_2026,
+    id: 'league_ambiguous_B',
+    name: 'Ambiguous League B'
+  };
+  const ambiguousRecovery = resolveActiveLeagueForRecovery({
+    currentLeagueId: 'missing_league_id',
+    leagues: [ambiguousLeagueA, ambiguousLeagueB],
+    coachProfile: { ...INITIAL_COACH_PROFILE, clubTeamId: 'team_kol' },
+    careerBoardReview: null
+  });
+  assert.equal(
+    ambiguousRecovery.resolvedLeagueId,
+    null,
+    'Scenario 10a: Ambiguous league recovery returns resolvedLeagueId: null'
+  );
+  assert.equal(
+    ambiguousRecovery.requiresLeagueSelection,
+    true,
+    'Scenario 10b: Requires explicit league selection when multiple candidate leagues match'
+  );
+  assert.notEqual(
+    ambiguousRecovery.resolvedLeagueId,
+    ambiguousLeagueA.id,
+    'Scenario 10c: Never silently picks the first league in the array (ambiguousLeagueA)'
+  );
+
+  // Scenario 11: Repeated off-season advancement cannot create duplicate seasons
+  const offSeasonState = {
+    players: freshPlayers.map((p, idx) => idx === 0 ? { ...p, fitness: 70, isInjured: true, injuryDays: 2 } : p),
+    teams: baseTeams,
+    leagues: [league2_KKR_2026],
+    currentLeagueId: 'league_kkr_2026',
+    coachProfile: { ...INITIAL_COACH_PROFILE, clubTeamId: 'team_kol' },
+    nations: baseNations,
+    tournamentHonors: [],
+    careerPhase: 'off_season_rest' as CareerPhase,
+    careerBoardReview: null,
+    squadStamina: 75
+  };
+  const adv1 = applyAdvanceOffSeasonState(offSeasonState);
+  assert.ok(
+    adv1.restDaysProcessed > 0,
+    'Scenario 11a: First advance off-season processes rest days'
+  );
+  assert.equal(
+    adv1.careerPhase,
+    'league_stage',
+    'Scenario 11b: Career phase transitions to league_stage for next season'
+  );
+  const nextSeasonYear = adv1.leagues[0].seasonYear;
+  assert.equal(
+    nextSeasonYear,
+    2027,
+    'Scenario 11c: Season year advanced to 2027'
+  );
+  const player0AfterAdv1Age = adv1.players[0].age;
+
+  // Duplicate call to applyAdvanceOffSeasonState while in league_stage must be a no-op
+  const adv2 = applyAdvanceOffSeasonState({
+    ...adv1,
+    currentLeagueId: offSeasonState.currentLeagueId
+  });
+  assert.equal(
+    adv2.restDaysProcessed,
+    0,
+    'Scenario 11d: Duplicate advance off-season call processes 0 days'
+  );
+  assert.equal(
+    adv2.leagues[0].seasonYear,
+    2027,
+    'Scenario 11e: Season year is not incremented again'
+  );
+  assert.equal(
+    adv2.players[0].age,
+    player0AfterAdv1Age,
+    'Scenario 11f: Players are not aged twice'
+  );
+
+  // Calling applyStartNewFranchiseSeasonState when already initialized for 2027 returns alreadyInitialized: true
+  const seasonStartRepeated = applyStartNewFranchiseSeasonState(
+    {
+      players: adv1.players,
+      teams: adv1.teams,
+      leagues: adv1.leagues,
+      currentLeagueId: adv1.leagues[0].id,
+      coachProfile: adv1.coachProfile,
+      nations: adv1.nations,
+      tournamentHonors: adv1.tournamentHonors,
+      careerPhase: 'league_stage',
+      careerBoardReview: null
+    },
+    'team_kol'
+  );
+  assert.equal(
+    seasonStartRepeated.alreadyInitialized,
+    true,
+    'Scenario 11g: Repeated season start in league_stage returns alreadyInitialized: true without duplicate records'
+  );
+
+  // Scenario 12: Reloading during each major career phase resumes correct state
+  const majorCareerPhases: CareerPhase[] = [
+    'league_stage',
+    'playoffs',
+    'board_review',
+    'career_decision',
+    'international_squad_selection',
+    'international_series',
+    'retention',
+    'auction',
+    'squad_confirmation',
+    'off_season_rest',
+    'next_season_ready'
+  ];
+
+  for (const phase of majorCareerPhases) {
+    let testLeague: League = league2_KKR_2026;
+    let testClubId = 'team_kol';
+    let testBoardReview: CareerBoardReview | null = null;
+    let testBoardHistory: CareerBoardReview[] = [];
+
+    if (phase === 'league_stage') {
+      testLeague = {
+        ...league2_KKR_2026,
+        id: 'league_mid_season_kol',
+        standings: midSeasonStandings.filter(s => s.teamId === 'team_kol' || s.teamId === 'team_blr'),
+        playoffs: createInitialPlayoffs(midSeasonStandings)
+      };
+    } else if (phase === 'playoffs') {
+      testLeague = league1_MI_2027; // Has Q1 completed, final not completed
+      testClubId = 'team_mum';
+    } else if (phase === 'board_review') {
+      testLeague = league2_KKR_2026;
+      testBoardReview = kkrReviewForLeague2;
+    } else if (
+      phase === 'career_decision' ||
+      phase === 'retention' ||
+      phase === 'auction' ||
+      phase === 'squad_confirmation' ||
+      phase === 'off_season_rest' ||
+      phase === 'next_season_ready'
+    ) {
+      testLeague = league2_KKR_2026;
+      testBoardHistory = [kkrReviewForLeague2];
+    }
+
+    const rawSavedData = {
+      careerPhase: phase,
+      coachProfile: {
+        ...INITIAL_COACH_PROFILE,
+        clubTeamId: testClubId,
+        boardReviewsHistory: testBoardHistory,
+        nationalTeamId: phase.startsWith('international') ? ausNation.id : null
+      },
+      currentLeagueId: testLeague.id,
+      careerBoardReview: testBoardReview,
+      internationalSeries: phase.startsWith('international') ? seriesNationPair1 : undefined,
+      nationalSquadIds: phase === 'international_series' ? ausSelectedIds : []
+    };
+    const serialized = JSON.parse(JSON.stringify(rawSavedData));
+    const reloadedState = validateAndRecoverCareerState({
+      rawPhase: serialized.careerPhase,
+      coachProfile: serialized.coachProfile,
+      teams: baseTeams,
+      leagues: [testLeague],
+      currentLeagueId: serialized.currentLeagueId,
+      nations: baseNations,
+      nationalSquadIds: serialized.nationalSquadIds,
+      careerBoardReview: serialized.careerBoardReview,
+      players: freshPlayers,
+      internationalSeries: serialized.internationalSeries
+    });
+    assert.equal(
+      reloadedState.careerPhase,
+      phase,
+      `Scenario 12: Reloading during career phase "${phase}" resumes with the identical phase preserved`
+    );
+  }
+
   console.log('✅ ALL Career Progression, Multi-League Recovery, International Series IDs & Transition Idempotency Tests PASSED!');
-  return { passed: 105, total: 105 };
+  return { passed: 117, total: 117 };
 }
 
 

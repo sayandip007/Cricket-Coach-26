@@ -1289,6 +1289,61 @@ function createPersistentSeriesEntropyToken(): string {
 }
 
 /**
+ * Assembles the authoritative set of all persisted international series IDs
+ * across in-memory state, active save slots, localStorage keys, and caller-supplied IDs.
+ */
+export function getAuthoritativePersistedSeriesIds(extraIds?: Iterable<string>): Set<string> {
+  const set = new Set<string>();
+
+  if (extraIds) {
+    for (const id of extraIds) {
+      if (typeof id === 'string' && id.trim().length > 0) {
+        set.add(id.trim());
+      }
+    }
+  }
+
+  if (typeof localStorage !== 'undefined') {
+    try {
+      const rawProfile = localStorage.getItem('ms_profile_v6');
+      if (rawProfile) {
+        const parsed = JSON.parse(rawProfile);
+        if (Array.isArray(parsed?.completedInternationalSeriesIds)) {
+          for (const id of parsed.completedInternationalSeriesIds) {
+            if (typeof id === 'string' && id.trim().length > 0) set.add(id.trim());
+          }
+        }
+      }
+      const rawSeries = localStorage.getItem('ms_intl_series_v6');
+      if (rawSeries) {
+        const parsed = JSON.parse(rawSeries);
+        if (typeof parsed?.seriesId === 'string' && parsed.seriesId.trim().length > 0) {
+          set.add(parsed.seriesId.trim());
+        }
+      }
+      for (const slotNum of [1, 2, 3]) {
+        const rawSlot = localStorage.getItem(`ms_career_save_slot_${slotNum}`) || localStorage.getItem(`ms_save_slot_v6_${slotNum}`);
+        if (rawSlot) {
+          const parsed = JSON.parse(rawSlot);
+          if (Array.isArray(parsed?.coachProfile?.completedInternationalSeriesIds)) {
+            for (const id of parsed.coachProfile.completedInternationalSeriesIds) {
+              if (typeof id === 'string' && id.trim().length > 0) set.add(id.trim());
+            }
+          }
+          if (typeof parsed?.internationalSeries?.seriesId === 'string' && parsed.internationalSeries.seriesId.trim().length > 0) {
+            set.add(parsed.internationalSeries.seriesId.trim());
+          }
+        }
+      }
+    } catch {
+      // Safe fallback
+    }
+  }
+
+  return set;
+}
+
+/**
  * Generates a unique, persistent international series ID independent of any in-memory counter.
  * Uses cryptographic/high-entropy randomness plus collision checking against `existingSeriesIds`
  * so repeated series creation across simulated application restarts can never collide.
@@ -1299,11 +1354,7 @@ export function generateUniqueInternationalSeriesId(
   tourSequence: number = 1,
   existingSeriesIds: Iterable<string> = []
 ): string {
-  const existingSet = new Set(
-    Array.from(existingSeriesIds)
-      .filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
-      .map(id => id.trim())
-  );
+  const existingSet = getAuthoritativePersistedSeriesIds(existingSeriesIds);
   const cleanUser = (userNationId || 'nat').trim().replace(/\s+/g, '_');
   const cleanOpp = (opponentNationId || 'opp').trim().replace(/\s+/g, '_');
   const baseTourSeq = Number.isFinite(tourSequence) && tourSequence >= 1 ? Math.floor(tourSequence) : 1;
@@ -1321,13 +1372,19 @@ export function generateUniqueInternationalSeriesId(
   return candidate;
 }
 
+export interface BuildInitialSeriesOptions {
+  isRestoring?: boolean;
+  onDuplicateExplicitId?: 'regenerate' | 'reject';
+}
+
 export function buildInitialSeriesForNation(
   userNat: Nation,
   allNations: Nation[],
   preferredOpponentId?: string,
   tourSequence: number = 1,
   explicitSeriesId?: string,
-  existingSeriesIds: Iterable<string> = []
+  existingSeriesIds: Iterable<string> = [],
+  options?: BuildInitialSeriesOptions
 ): InternationalSeriesState {
   const candidates = allNations.filter(n => n.id !== userNat.id && n.name.toLowerCase() !== userNat.name.toLowerCase());
   const oppNat =
@@ -1385,10 +1442,26 @@ export function buildInitialSeriesForNation(
     { city: oppNat.name, venue: `${oppNat.name} Central Park` }
   ];
 
-  const resolvedSeriesId =
-    typeof explicitSeriesId === 'string' && explicitSeriesId.trim().length > 0
-      ? explicitSeriesId.trim()
-      : generateUniqueInternationalSeriesId(userNat.id, oppNat.id, tourSequence, existingSeriesIds);
+  const existingSet = getAuthoritativePersistedSeriesIds(existingSeriesIds);
+  const trimmedExplicitId = typeof explicitSeriesId === 'string' ? explicitSeriesId.trim() : '';
+
+  let resolvedSeriesId: string;
+  if (trimmedExplicitId.length > 0) {
+    if (options?.isRestoring) {
+      // Preserving an existing series identity on reload/resume
+      resolvedSeriesId = trimmedExplicitId;
+    } else if (existingSet.has(trimmedExplicitId)) {
+      if (options?.onDuplicateExplicitId === 'reject') {
+        throw new Error(`Cannot create international series: explicit series ID "${trimmedExplicitId}" already belongs to an existing series.`);
+      }
+      // Collision detected when creating new series: generate fresh unique ID
+      resolvedSeriesId = generateUniqueInternationalSeriesId(userNat.id, oppNat.id, tourSequence, existingSet);
+    } else {
+      resolvedSeriesId = trimmedExplicitId;
+    }
+  } else {
+    resolvedSeriesId = generateUniqueInternationalSeriesId(userNat.id, oppNat.id, tourSequence, existingSet);
+  }
 
   return {
     seriesId: resolvedSeriesId,
@@ -1876,6 +1949,10 @@ export function validateAndRecoverCareerState(params: {
     candidatePhase = 'career_decision';
     migrated = true;
     recoveryReason = 'Migrated legacy phase job_offers -> career_decision';
+  } else if (candidatePhase === 'season_transition') {
+    candidatePhase = 'next_season_ready';
+    migrated = true;
+    recoveryReason = 'Migrated legacy phase season_transition -> next_season_ready';
   }
 
   // 3. Resolve active league using currentLeagueId first, then explicit recovery policy
@@ -2782,6 +2859,14 @@ export function applyCompleteInternationalSeriesState(
     coachProfile
   };
 
+  if (!internationalSeries || typeof internationalSeries !== 'object') {
+    return {
+      success: false,
+      error: 'International series is missing or not a valid object.',
+      ...unchanged
+    };
+  }
+
   if (!Array.isArray(nations) || nations.length < 2) {
     return {
       success: false,
@@ -2790,7 +2875,7 @@ export function applyCompleteInternationalSeriesState(
     };
   }
 
-  if (!coachProfile.nationalTeamId) {
+  if (!coachProfile || typeof coachProfile !== 'object' || !coachProfile.nationalTeamId) {
     return {
       success: false,
       error: 'No active national team is assigned to the coach profile.',
@@ -2801,8 +2886,9 @@ export function applyCompleteInternationalSeriesState(
   // Strictly validate the coached nation without silently assigning nations[0]
   const userNation = nations.find(
     n =>
-      n.id === coachProfile.nationalTeamId ||
-      n.name.trim().toLowerCase() === String(coachProfile.nationalTeamId).trim().toLowerCase()
+      n &&
+      (n.id === coachProfile.nationalTeamId ||
+        n.name.trim().toLowerCase() === String(coachProfile.nationalTeamId).trim().toLowerCase())
   );
 
   if (!userNation) {
@@ -2814,20 +2900,24 @@ export function applyCompleteInternationalSeriesState(
   }
 
   // Verify the active series belongs to the coached nation
+  const seriesUserNationId = internationalSeries.userNationId ? String(internationalSeries.userNationId).trim() : '';
+  const seriesUserNationName = internationalSeries.userNationName ? String(internationalSeries.userNationName).trim().toLowerCase() : '';
+  const userNationNameLower = userNation.name.trim().toLowerCase();
+
   if (
-    internationalSeries.userNationId &&
-    internationalSeries.userNationId !== userNation.id &&
-    internationalSeries.userNationName?.trim().toLowerCase() !== userNation.name.trim().toLowerCase()
+    (!seriesUserNationId && !seriesUserNationName) ||
+    (seriesUserNationId && seriesUserNationId !== userNation.id && seriesUserNationName !== userNationNameLower) ||
+    (!seriesUserNationId && seriesUserNationName !== userNationNameLower)
   ) {
     return {
       success: false,
-      error: `Active series nation (${internationalSeries.userNationName || internationalSeries.userNationId}) does not match coached nation (${userNation.name}).`,
+      error: `Active series nation (${internationalSeries.userNationName || internationalSeries.userNationId || 'unknown'}) does not match coached nation (${userNation.name}).`,
       ...unchanged
     };
   }
 
   const otherNations = nations.filter(
-    n => n.id !== userNation.id && n.name.trim().toLowerCase() !== userNation.name.trim().toLowerCase()
+    n => n && n.id !== userNation.id && n.name.trim().toLowerCase() !== userNation.name.trim().toLowerCase()
   );
   if (otherNations.length === 0) {
     return {
@@ -2854,7 +2944,9 @@ export function applyCompleteInternationalSeriesState(
   }
 
   // Resolve or migrate authoritative seriesId before checking completion
-  const completedSeriesIds = coachProfile.completedInternationalSeriesIds || [];
+  const completedSeriesIds = Array.isArray(coachProfile.completedInternationalSeriesIds)
+    ? coachProfile.completedInternationalSeriesIds.filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
+    : [];
   let authoritativeSeries: InternationalSeriesState = internationalSeries;
   const rawSeriesId = typeof internationalSeries.seriesId === 'string' ? internationalSeries.seriesId.trim() : '';
 
@@ -2870,7 +2962,14 @@ export function applyCompleteInternationalSeriesState(
     authoritativeSeries = migration.series;
   }
 
-  const seriesCompletionKey = authoritativeSeries.seriesId;
+  const seriesCompletionKey = authoritativeSeries.seriesId ? authoritativeSeries.seriesId.trim() : '';
+  if (!seriesCompletionKey) {
+    return {
+      success: false,
+      error: 'International series has an invalid or empty series ID.',
+      ...unchanged
+    };
+  }
 
   // Check authoritative seriesId idempotency guard
   if (completedSeriesIds.includes(seriesCompletionKey)) {
@@ -2878,22 +2977,18 @@ export function applyCompleteInternationalSeriesState(
       success: false,
       alreadyCompleted: true,
       error: `International series "${seriesCompletionKey}" has already been completed.`,
-      internationalSeries: authoritativeSeries,
-      careerPhase,
-      coachProfile
+      ...unchanged
     };
   }
 
   // Require the current series to have completed fixtures before completing and awarding titles
   const matches = Array.isArray(authoritativeSeries.matches) ? authoritativeSeries.matches : [];
-  const allMatchesCompleted = matches.length > 0 && matches.every(m => m.completed);
+  const allMatchesCompleted = matches.length > 0 && matches.every(m => Boolean(m && m.completed === true));
   if (!allMatchesCompleted) {
     return {
       success: false,
       error: 'Cannot complete international series before all scheduled fixtures are completed.',
-      internationalSeries: authoritativeSeries,
-      careerPhase,
-      coachProfile
+      ...unchanged
     };
   }
 
@@ -3604,13 +3699,16 @@ export function applyAdvanceOffSeasonState(
     };
   }
 
-  const activeLeague = state.leagues.find(l => l.id === state.currentLeagueId) || state.leagues[0];
-  const remainingCalendarDays = activeLeague
-    ? Math.max(7, activeLeague.calendarDates.length - activeLeague.currentDateIndex)
+  const safeLeagues = Array.isArray(state.leagues) ? state.leagues : [];
+  const activeLeague = safeLeagues.find(l => l && l.id === state.currentLeagueId) || safeLeagues[0];
+  const remainingCalendarDays = activeLeague && Array.isArray(activeLeague.calendarDates)
+    ? Math.max(7, activeLeague.calendarDates.length - (activeLeague.currentDateIndex || 0))
     : 7;
 
   // Process daily off-season recovery across remaining rest/training days
-  let recoveredPlayers = state.players.map(p => ({ ...p }));
+  const safePlayers = Array.isArray(state.players) ? state.players : [];
+  const safeTeams = Array.isArray(state.teams) ? state.teams : [];
+  let recoveredPlayers = safePlayers.map(p => ({ ...p }));
   for (let day = 0; day < remainingCalendarDays; day++) {
     recoveredPlayers = recoveredPlayers.map(p => {
       const nextInjuryDays = Math.max(0, (p.injuryDays || 0) - 1);
@@ -3623,9 +3721,11 @@ export function applyAdvanceOffSeasonState(
     });
   }
 
-  const recoveredTeams = state.teams.map(t => ({
+  const recoveredTeams = safeTeams.map(t => ({
     ...t,
-    squad: t.squad.map(sp => recoveredPlayers.find(rp => rp.id === sp.id) || sp)
+    squad: Array.isArray(t.squad)
+      ? t.squad.map(sp => recoveredPlayers.find(rp => rp.id === sp.id) || sp)
+      : []
   }));
 
   const nextSeasonRes = applyStartNewFranchiseSeasonState(
