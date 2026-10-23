@@ -2001,7 +2001,6 @@ export const HubScreen: React.FC = () => {
         isOpen={isReleasesModalOpen || careerPhase === 'retention'}
         onClose={() => setIsReleasesModalOpen(false)}
         onProceedToAuctionHall={(releasedIds, finalPurseCr) => {
-          releasePlayersForAuction(userTeam.id, releasedIds, finalPurseCr);
           setPostSeasonPurseCr(finalPurseCr);
           const names = releasedIds.map(id => {
             const p = userTeamPlayers.find(pl => pl.id === id);

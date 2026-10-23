@@ -13,11 +13,18 @@ import {
   buildSeasonCalendarForTeam,
   VALID_CAREER_PHASES,
   isValidCareerPhase,
+  generateUniqueInternationalSeriesId,
   buildInitialSeriesForNation,
+  migrateLegacyInternationalSeries,
+  resolveActiveLeagueForRecovery,
   validateAndRecoverCareerState,
+  applyCompletePlayoffMatchState,
+  applyConfirmBoardReviewState,
   applyCareerJobDecisionState,
   applyConfirmNationalSquadState,
   applyCompleteInternationalSeriesState,
+  applyReleasePlayersForAuctionState,
+  applyCompleteAuctionState,
   applyConfirmClubSquadState,
   applyStartNewFranchiseSeasonState,
   applyAdvanceOffSeasonState
@@ -1128,8 +1135,562 @@ export function runCareerProgressionTests() {
     'Season Edge 24d: Career phase unchanged when applyConfirmClubSquadState is rejected'
   );
 
-  console.log('✅ ALL Career Progression, Multi-League Recovery, International Idempotency & Season Advancement Regression Scenarios PASSED!');
-  return { passed: 72, total: 72 };
+  // ==========================================================================
+  // REQ 25: UNIQUE, PERSISTENT INTERNATIONAL SERIES IDS (6 REGRESSION TESTS)
+  // ==========================================================================
+  const indNation = baseNations.find(n => n.name === 'India')!;
+
+  // Test 25.1: Two different series between the same countries have different IDs
+  const seriesA = buildInitialSeriesForNation(ausNation, baseNations, indNation.id, 1);
+  const seriesB = buildInitialSeriesForNation(ausNation, baseNations, indNation.id, 1);
+  assert.ok(seriesA.seriesId && seriesA.seriesId.length > 0, 'Series ID 25.1a: Series A has a valid non-empty seriesId');
+  assert.ok(seriesB.seriesId && seriesB.seriesId.length > 0, 'Series ID 25.1b: Series B has a valid non-empty seriesId');
+  assert.notEqual(
+    seriesA.seriesId,
+    seriesB.seriesId,
+    'Series ID 25.1c: Two different series between the same countries (AUS vs IND) receive distinct seriesIds'
+  );
+
+  // Test 25.2: Reloading an active series preserves its ID
+  const reloadSeriesRecovery = validateAndRecoverCareerState({
+    rawPhase: 'international_series',
+    coachProfile: { ...INITIAL_COACH_PROFILE, clubTeamId: 'team_kol', nationalTeamId: ausNation.id },
+    teams: baseTeams,
+    leagues: baseLeagues,
+    currentLeagueId: 'pt20',
+    nations: jobDecisionIntl.nations,
+    nationalSquadIds: ausSelectedIds,
+    careerBoardReview: null,
+    players: freshPlayers,
+    internationalSeries: seriesA
+  });
+  assert.equal(
+    reloadSeriesRecovery.internationalSeries?.seriesId,
+    seriesA.seriesId,
+    'Series ID 25.2: Reloading an active series preserves its exact seriesId'
+  );
+  assert.equal(reloadSeriesRecovery.migrated, false, 'Series ID 25.2b: Active valid international series reload does not mark migrated');
+
+  // Test 25.3: Completing the same series twice increments the title count at most once
+  const finishedSeriesA = {
+    ...seriesA,
+    seriesWins: 2,
+    seriesLosses: 1,
+    matches: seriesA.matches.map((m, idx) => ({
+      ...m,
+      completed: true,
+      summary: idx < 2 ? 'Australia won by 6 wickets' : 'India won by 10 runs'
+    }))
+  };
+  const completeA1 = applyCompleteInternationalSeriesState({
+    nations: jobDecisionIntl.nations,
+    coachProfile: { ...jobDecisionIntl.coachProfile, internationalTitles: 0, completedInternationalSeriesIds: [] },
+    nationalSquadIds: ausSelectedIds,
+    internationalSeries: finishedSeriesA,
+    careerPhase: 'international_series'
+  });
+  assert.equal(completeA1.success, true, 'Series ID 25.3a: First completion of Series A succeeds');
+  assert.equal(completeA1.coachProfile.internationalTitles, 1, 'Series ID 25.3b: First completion increments internationalTitles to 1');
+
+  const completeA2 = applyCompleteInternationalSeriesState({
+    nations: jobDecisionIntl.nations,
+    coachProfile: completeA1.coachProfile,
+    nationalSquadIds: ausSelectedIds,
+    internationalSeries: finishedSeriesA,
+    careerPhase: 'international_series'
+  });
+  assert.equal(completeA2.success, false, 'Series ID 25.3c: Second completion of Series A is blocked');
+  assert.equal(completeA2.alreadyCompleted, true, 'Series ID 25.3d: Second completion sets alreadyCompleted = true');
+  assert.equal(completeA2.coachProfile.internationalTitles, 1, 'Series ID 25.3e: Title count remains 1 after duplicate completion attempt');
+
+  // Test 25.4: Completing one series does not block a later series with different IDs and identical results
+  const finishedSeriesBIdenticalResults = {
+    ...seriesB,
+    seriesWins: 2,
+    seriesLosses: 1,
+    matches: seriesB.matches.map((m, idx) => ({
+      ...m,
+      completed: true,
+      summary: idx < 2 ? 'Australia won by 6 wickets' : 'India won by 10 runs' // identical results & summaries!
+    }))
+  };
+  const completeB = applyCompleteInternationalSeriesState({
+    nations: jobDecisionIntl.nations,
+    coachProfile: completeA1.coachProfile, // already has Series A's seriesId in completedInternationalSeriesIds
+    nationalSquadIds: ausSelectedIds,
+    internationalSeries: finishedSeriesBIdenticalResults,
+    careerPhase: 'international_series'
+  });
+  assert.equal(
+    completeB.success,
+    true,
+    'Series ID 25.4a: Later series between same countries with identical results and different seriesId completes cleanly'
+  );
+  assert.equal(
+    completeB.coachProfile.internationalTitles,
+    2,
+    'Series ID 25.4b: Later series increments internationalTitles to 2'
+  );
+
+  // Test 25.5: A legacy save without a seriesId migrates safely without losing completed matches or results
+  const legacySeriesWithoutId: any = {
+    userNationId: ausNation.id,
+    userNationName: ausNation.name,
+    userNationCode: ausNation.code,
+    opponentNationId: indNation.id,
+    opponentNationName: indNation.name,
+    opponentNationCode: indNation.code,
+    seriesWins: 2,
+    seriesLosses: 1,
+    matches: [
+      { matchNumber: 1, city: 'Melbourne', venue: 'MCG', completed: true, summary: 'AUS won by 5 runs' },
+      { matchNumber: 2, city: 'Sydney', venue: 'SCG', completed: true, summary: 'IND won by 4 wkts' },
+      { matchNumber: 3, city: 'Adelaide', venue: 'Adelaide Oval', completed: true, summary: 'AUS won by 22 runs' },
+      { matchNumber: 4, city: 'Perth', venue: 'Optus Stadium', completed: false },
+      { matchNumber: 5, city: 'Brisbane', venue: 'The Gabba', completed: false }
+    ]
+  };
+  const legacyMigration = migrateLegacyInternationalSeries(legacySeriesWithoutId, baseNations);
+  assert.equal(legacyMigration.canMigrate, true, 'Series ID 25.5a: Legacy series without seriesId can migrate');
+  assert.equal(legacyMigration.migrated, true, 'Series ID 25.5a: Legacy series without seriesId is flagged as migrated');
+  assert.ok(
+    legacyMigration.series && legacyMigration.series.seriesId.startsWith('legacy_intl_'),
+    'Series ID 25.5b: Migrated legacy series receives a deterministic legacy_intl_ ID'
+  );
+  assert.equal(legacyMigration.series?.seriesWins, 2, 'Series ID 25.5c: Migrated legacy series preserves seriesWins');
+  assert.equal(legacyMigration.series?.matches[0].summary, 'AUS won by 5 runs', 'Series ID 25.5d: Migrated legacy series preserves match summaries');
+
+  // Re-migrating or reloading the migrated legacy series preserves the exact same seriesId
+  const legacyMigrationReload = migrateLegacyInternationalSeries(legacyMigration.series, baseNations);
+  assert.equal(legacyMigrationReload.migrated, false, 'Series ID 25.5e: Reloading already-migrated series does not re-migrate');
+  assert.equal(
+    legacyMigrationReload.series?.seriesId,
+    legacyMigration.series?.seriesId,
+    'Series ID 25.5f: Reloading migrated legacy series keeps the exact same seriesId'
+  );
+
+  // Test 25.6: A failed, incomplete, or unidentifiable legacy series completion does not mark the series as completed
+  const malformedLegacySeries: any = {
+    opponentNationId: 'nation_unknown_corrupt',
+    seriesWins: 2,
+    seriesLosses: 0,
+    matches: []
+  };
+  const failedMalformedCompletion = applyCompleteInternationalSeriesState({
+    nations: jobDecisionIntl.nations,
+    coachProfile: { ...jobDecisionIntl.coachProfile, internationalTitles: 3, completedInternationalSeriesIds: [] },
+    nationalSquadIds: ausSelectedIds,
+    internationalSeries: malformedLegacySeries,
+    careerPhase: 'international_series'
+  });
+  assert.equal(failedMalformedCompletion.success, false, 'Series ID 25.6a: Malformed legacy series completion fails explicitly');
+  assert.equal(
+    (failedMalformedCompletion.coachProfile.completedInternationalSeriesIds || []).length,
+    0,
+    'Series ID 25.6b: Failed completion does not record any seriesId as completed'
+  );
+  assert.equal(failedMalformedCompletion.coachProfile.internationalTitles, 3, 'Series ID 25.6c: Titles unchanged on failed completion');
+
+  // ==========================================================================
+  // REQ 26: INVALID ACTIVE-LEAGUE RECOVERY POLICY (5 REGRESSION TESTS)
+  // ==========================================================================
+  const league1Teams = baseTeams.filter(t => t.id === 'team_mum' || t.id === 'team_che');
+  const league2Teams = baseTeams.filter(t => t.id === 'team_kol' || t.id === 'team_blr');
+  const league3Teams = baseTeams.filter(t => t.id === 'team_che' || t.id === 'team_hyd');
+
+  const kkrFixtures2026 = buildSeasonCalendarForTeam('team_kol', league2Teams, false, 2026);
+  const miFixtures2027 = buildSeasonCalendarForTeam('team_mum', league1Teams, false, 2027);
+  const cskFixtures2028 = buildSeasonCalendarForTeam('team_che', league3Teams, false, 2028);
+
+  const league1_MI_2027: League = {
+    ...baseLeagues[0],
+    id: 'league_mi_2027',
+    name: 'Mumbai League 2027',
+    seasonName: '2027',
+    seasonYear: 2027,
+    teams: league1Teams,
+    standings: seededStandings.filter(s => s.teamId === 'team_mum' || s.teamId === 'team_che'),
+    playoffs: bracketAfterQ1,
+    calendarDates: miFixtures2027
+  };
+
+  const league2_KKR_2026: League = {
+    ...baseLeagues[0],
+    id: 'league_kkr_2026',
+    name: 'KKR Premier League 2026',
+    seasonName: '2026',
+    seasonYear: 2026,
+    teams: league2Teams,
+    standings: seededStandings.filter(s => s.teamId === 'team_kol' || s.teamId === 'team_blr'),
+    playoffs: bracketAfterFinal,
+    calendarDates: kkrFixtures2026
+  };
+
+  const league3_CSK_2028: League = {
+    ...baseLeagues[0],
+    id: 'league_csk_2028',
+    name: 'Chennai Trophy 2028',
+    seasonName: '2028',
+    seasonYear: 2028,
+    teams: league3Teams,
+    standings: midSeasonStandings.filter(s => s.teamId === 'team_che' || s.teamId === 'team_srh'),
+    playoffs: createInitialPlayoffs(midSeasonStandings),
+    calendarDates: cskFixtures2028
+  };
+
+  const distinctLeagues = [league1_MI_2027, league2_KKR_2026, league3_CSK_2028];
+  const kkrReviewForLeague2: CareerBoardReview = {
+    ...fullReview,
+    competitionId: 'league_kkr_2026',
+    teamId: 'team_kol',
+    seasonYear: 2026
+  };
+
+  // Test 26.1: A valid currentLeagueId resolves to the correct league even when it is not the first item (index 1)
+  const validNonFirstResolution = validateAndRecoverCareerState({
+    rawPhase: 'career_decision',
+    coachProfile: { ...INITIAL_COACH_PROFILE, clubTeamId: 'team_kol', nationalTeamId: null },
+    teams: baseTeams,
+    leagues: distinctLeagues,
+    currentLeagueId: 'league_kkr_2026', // index 1, NOT leagues[0]!
+    nations: baseNations,
+    nationalSquadIds: [],
+    careerBoardReview: kkrReviewForLeague2,
+    players: freshPlayers,
+    internationalSeries: baseIntlSeries
+  });
+  assert.equal(validNonFirstResolution.resolvedLeagueId, 'league_kkr_2026', 'League Recovery 26.1a: Resolves to league_kkr_2026 (index 1)');
+  assert.equal(validNonFirstResolution.careerPhase, 'career_decision', 'League Recovery 26.1b: Preserves career_decision phase');
+  assert.equal(validNonFirstResolution.requiresLeagueSelection, false, 'League Recovery 26.1c: Does not require manual league selection');
+
+  // Test 26.2: An invalid currentLeagueId resolves through the documented recovery policy when exactly one suitable league exists
+  // Here coachProfile.clubTeamId is 'team_kol', which only participates in league2_KKR_2026 (index 1), NOT leagues[0] (league1_MI_2027)
+  const singleCandidateRecovery = validateAndRecoverCareerState({
+    rawPhase: 'career_decision',
+    coachProfile: { ...INITIAL_COACH_PROFILE, clubTeamId: 'team_kol', nationalTeamId: null },
+    teams: baseTeams,
+    leagues: distinctLeagues,
+    currentLeagueId: 'corrupted_deleted_league_id',
+    nations: baseNations,
+    nationalSquadIds: [],
+    careerBoardReview: kkrReviewForLeague2,
+    players: freshPlayers,
+    internationalSeries: baseIntlSeries
+  });
+  assert.equal(
+    singleCandidateRecovery.resolvedLeagueId,
+    'league_kkr_2026',
+    'League Recovery 26.2a: Invalid currentLeagueId resolves deterministically to the single matching league (league_kkr_2026, not leagues[0])'
+  );
+  assert.equal(singleCandidateRecovery.migrated, true, 'League Recovery 26.2b: Marks migrated = true when recovering currentLeagueId');
+  assert.equal(singleCandidateRecovery.requiresLeagueSelection, false, 'League Recovery 26.2c: Unique match does not require manual disambiguation');
+
+  // Test 26.3: An invalid ID with multiple plausible league candidates does not silently choose the first
+  // Suppose 'team_che' is in both league1_MI_2027 (2027) and league3_CSK_2028 (2028) and no season/competition filter narrows it down
+  const ambiguousCandidateRecovery = validateAndRecoverCareerState({
+    rawPhase: 'league_stage',
+    coachProfile: { ...INITIAL_COACH_PROFILE, clubTeamId: 'team_che', nationalTeamId: null },
+    teams: baseTeams,
+    leagues: distinctLeagues,
+    currentLeagueId: 'invalid_ambiguous_league_id',
+    nations: baseNations,
+    nationalSquadIds: [],
+    careerBoardReview: null,
+    players: freshPlayers,
+    internationalSeries: baseIntlSeries
+  });
+  assert.equal(
+    ambiguousCandidateRecovery.resolvedLeagueId,
+    null,
+    'League Recovery 26.3a: Ambiguous invalid currentLeagueId returns resolvedLeagueId = null instead of picking leagues[0]'
+  );
+  assert.equal(
+    ambiguousCandidateRecovery.requiresLeagueSelection,
+    true,
+    'League Recovery 26.3b: Ambiguous candidates set requiresLeagueSelection = true'
+  );
+  assert.deepEqual(
+    ambiguousCandidateRecovery.candidateLeagueIds,
+    ['league_mi_2027', 'league_csk_2028'],
+    'League Recovery 26.3c: Lists exact plausible candidate league IDs for user disambiguation'
+  );
+  assert.ok(
+    ambiguousCandidateRecovery.recoveryError && ambiguousCandidateRecovery.recoveryError.includes('plausible leagues'),
+    'League Recovery 26.3d: Reports explicit recoverable state error message'
+  );
+
+  // Test 26.4: Recovery does not combine one league's fixtures with another league's standings or board review
+  const recoveredLeague2 = distinctLeagues.find(l => l.id === singleCandidateRecovery.resolvedLeagueId)!;
+  assert.equal(recoveredLeague2.seasonYear, 2026, 'League Recovery 26.4a: Recovered league keeps its own 2026 seasonYear');
+  assert.equal(
+    recoveredLeague2.calendarDates[0].id,
+    kkrFixtures2026[0].id,
+    'League Recovery 26.4b: Recovered league keeps its own KKR fixture list'
+  );
+  assert.equal(
+    singleCandidateRecovery.careerBoardReview?.competitionId,
+    'league_kkr_2026',
+    'League Recovery 26.4c: Board review matches the recovered league competitionId'
+  );
+
+  // Test 26.5: A valid saved career remains completely unchanged during recovery
+  const unchangedValidRecovery = validateAndRecoverCareerState({
+    rawPhase: 'career_decision',
+    coachProfile: { ...INITIAL_COACH_PROFILE, clubTeamId: 'team_kol', nationalTeamId: null },
+    teams: baseTeams,
+    leagues: distinctLeagues,
+    currentLeagueId: 'league_kkr_2026',
+    nations: baseNations,
+    nationalSquadIds: [],
+    careerBoardReview: kkrReviewForLeague2,
+    players: freshPlayers,
+    internationalSeries: baseIntlSeries
+  });
+  assert.equal(unchangedValidRecovery.migrated, false, 'League Recovery 26.5a: Valid career save has migrated = false');
+  assert.equal(unchangedValidRecovery.resolvedLeagueId, 'league_kkr_2026', 'League Recovery 26.5b: Valid currentLeagueId unchanged');
+  assert.equal(unchangedValidRecovery.careerPhase, 'career_decision', 'League Recovery 26.5c: Valid careerPhase unchanged');
+  assert.deepEqual(unchangedValidRecovery.careerBoardReview, kkrReviewForLeague2, 'League Recovery 26.5d: Valid careerBoardReview unchanged');
+
+  // ==========================================================================
+  // REQ 27: IDEMPOTENCY AUDIT ACROSS ALL 10 CAREER TRANSITIONS
+  // ==========================================================================
+  // 27.1: Final match completion and board review creation (applyCompletePlayoffMatchState)
+  const leagueReadyForFinal: League = {
+    ...baseLeagues[0],
+    id: 'pt20',
+    seasonYear: 2026,
+    standings: seededStandings,
+    playoffs: {
+      ...bracketAfterQ2,
+      final: {
+        ...bracketAfterQ2.final,
+        completed: false,
+        winnerTeamId: null,
+        loserTeamId: null
+      },
+      championTeamId: undefined
+    },
+    calendarDates: mockCalendar
+  };
+  const finalCompletion1 = applyCompletePlayoffMatchState(
+    {
+      leagues: [leagueReadyForFinal],
+      currentLeagueId: 'pt20',
+      coachProfile: { ...INITIAL_COACH_PROFILE, clubTeamId: 'team_kol', domesticTitles: 0 },
+      teams: baseTeams,
+      tournamentHonors: [],
+      careerPhase: 'season_final',
+      careerBoardReview: null
+    },
+    {
+      leagueId: 'pt20',
+      stage: 'final',
+      homeTeamId: 'team_kol',
+      awayTeamId: 'team_che',
+      winnerTeamId: 'team_kol',
+      resultSummary: 'KKR beat CSK by 6 runs'
+    }
+  );
+  assert.equal(finalCompletion1.alreadyCompleted, false, 'Idempotency 27.1a: First Final completion executes normally');
+  assert.equal(finalCompletion1.careerPhase, 'board_review', 'Idempotency 27.1b: First Final completion transitions to board_review');
+  assert.equal(finalCompletion1.coachProfile.domesticTitles, 1, 'Idempotency 27.1c: First Final completion increments domesticTitles to 1');
+  assert.ok(finalCompletion1.careerBoardReview !== null, 'Idempotency 27.1d: Board review created on Final completion');
+
+  const finalCompletion2 = applyCompletePlayoffMatchState(
+    {
+      leagues: finalCompletion1.leagues,
+      currentLeagueId: 'pt20',
+      coachProfile: finalCompletion1.coachProfile,
+      teams: baseTeams,
+      tournamentHonors: finalCompletion1.tournamentHonors,
+      careerPhase: finalCompletion1.careerPhase,
+      careerBoardReview: finalCompletion1.careerBoardReview
+    },
+    {
+      leagueId: 'pt20',
+      stage: 'final',
+      homeTeamId: 'team_kol',
+      awayTeamId: 'team_che',
+      winnerTeamId: 'team_kol',
+      resultSummary: 'KKR beat CSK by 6 runs'
+    }
+  );
+  assert.equal(finalCompletion2.alreadyCompleted, true, 'Idempotency 27.1e: Duplicate Final completion is blocked');
+  assert.equal(finalCompletion2.coachProfile.domesticTitles, 1, 'Idempotency 27.1f: domesticTitles is NOT incremented a second time');
+
+  // 27.2: Board review confirmation (applyConfirmBoardReviewState)
+  const boardConfirm1 = applyConfirmBoardReviewState({
+    careerPhase: 'board_review',
+    careerBoardReview: finalCompletion1.careerBoardReview,
+    coachProfile: finalCompletion1.coachProfile
+  });
+  assert.equal(boardConfirm1.alreadyConfirmed, false, 'Idempotency 27.2a: First board review confirmation succeeds');
+  assert.equal(boardConfirm1.careerPhase, 'career_decision', 'Idempotency 27.2b: Transitions from board_review to career_decision');
+
+  const boardConfirm2 = applyConfirmBoardReviewState({
+    careerPhase: boardConfirm1.careerPhase,
+    careerBoardReview: boardConfirm1.careerBoardReview,
+    coachProfile: boardConfirm1.coachProfile
+  });
+  assert.equal(boardConfirm2.alreadyConfirmed, true, 'Idempotency 27.2c: Second board review confirmation is a no-op');
+  assert.equal(
+    boardConfirm2.coachProfile.boardReviewsHistory?.length,
+    boardConfirm1.coachProfile.boardReviewsHistory?.length,
+    'Idempotency 27.2d: Board review history is not duplicated'
+  );
+
+  // 27.3: Career job acceptance (applyCareerJobDecisionState)
+  const jobAccept1 = applyCareerJobDecisionState(
+    {
+      coachProfile: boardConfirm1.coachProfile,
+      teams: baseTeams,
+      nations: baseNations,
+      players: freshPlayers,
+      leagues: finalCompletion1.leagues,
+      currentLeagueId: 'pt20',
+      nationalSquadIds: [],
+      internationalSeries: baseIntlSeries,
+      careerPhase: 'career_decision',
+      careerBoardReview: boardConfirm1.careerBoardReview
+    },
+    'team_kol',
+    null
+  );
+  assert.equal(jobAccept1.alreadyAccepted, false, 'Idempotency 27.3a: First job acceptance executes');
+  assert.equal(jobAccept1.careerPhase, 'retention', 'Idempotency 27.3b: Franchise job acceptance transitions to retention');
+
+  const jobAccept2 = applyCareerJobDecisionState(
+    {
+      coachProfile: jobAccept1.coachProfile,
+      teams: jobAccept1.teams,
+      nations: jobAccept1.nations,
+      players: freshPlayers,
+      leagues: finalCompletion1.leagues,
+      currentLeagueId: 'pt20',
+      nationalSquadIds: jobAccept1.nationalSquadIds,
+      internationalSeries: jobAccept1.internationalSeries,
+      careerPhase: jobAccept1.careerPhase,
+      careerBoardReview: jobAccept1.careerBoardReview
+    },
+    'team_kol',
+    null
+  );
+  assert.equal(jobAccept2.alreadyAccepted, true, 'Idempotency 27.3c: Duplicate job acceptance is blocked');
+  assert.equal(jobAccept2.careerPhase, 'retention', 'Idempotency 27.3d: Phase remains retention');
+
+  // 27.4: International squad confirmation (applyConfirmNationalSquadState)
+  const intlSquadConfirm1 = applyConfirmNationalSquadState(
+    {
+      nations: jobDecisionIntl.nations,
+      players: freshPlayers,
+      coachProfile: jobDecisionIntl.coachProfile,
+      nationalSquadIds: [],
+      internationalSeries: jobDecisionIntl.internationalSeries,
+      careerPhase: 'international_squad_selection'
+    },
+    ausNation.id,
+    ausSelectedIds
+  );
+  assert.equal(intlSquadConfirm1.success, true, 'Idempotency 27.4a: First national squad confirmation succeeds');
+  assert.equal(intlSquadConfirm1.alreadyConfirmed, false, 'Idempotency 27.4b: First national squad confirmation not marked alreadyConfirmed');
+
+  const intlSquadConfirm2 = applyConfirmNationalSquadState(
+    {
+      nations: intlSquadConfirm1.nextState.nations,
+      players: freshPlayers,
+      coachProfile: intlSquadConfirm1.nextState.coachProfile,
+      nationalSquadIds: intlSquadConfirm1.nextState.nationalSquadIds,
+      internationalSeries: intlSquadConfirm1.nextState.internationalSeries,
+      careerPhase: intlSquadConfirm1.nextState.careerPhase
+    },
+    ausNation.id,
+    ausSelectedIds
+  );
+  assert.equal(intlSquadConfirm2.alreadyConfirmed, true, 'Idempotency 27.4c: Duplicate national squad confirmation is a no-op');
+  assert.equal(
+    intlSquadConfirm2.nextState.internationalSeries.seriesId,
+    intlSquadConfirm1.nextState.internationalSeries.seriesId,
+    'Idempotency 27.4d: Duplicate national squad confirmation does not regenerate or replace active seriesId'
+  );
+
+  // 27.5: Franchise retention and player releases (applyReleasePlayersForAuctionState)
+  const playersToRelease = kkrPlayers.slice(0, 2).map(p => p.id);
+  const release1 = applyReleasePlayersForAuctionState(
+    {
+      players: freshPlayers,
+      teams: baseTeams,
+      careerPhase: 'retention'
+    },
+    'team_kol',
+    playersToRelease
+  );
+  assert.equal(release1.alreadyReleased, false, 'Idempotency 27.5a: First retention release processes normally');
+  assert.equal(release1.careerPhase, 'auction', 'Idempotency 27.5b: Transitions from retention to auction');
+  const kkrPurseAfterFirstRelease = release1.teams.find(t => t.id === 'team_kol')!.purseCr;
+  const kkrSquadCountAfterFirstRelease = release1.teams.find(t => t.id === 'team_kol')!.squad.length;
+
+  const release2 = applyReleasePlayersForAuctionState(
+    {
+      players: release1.players,
+      teams: release1.teams,
+      careerPhase: release1.careerPhase // already 'auction'
+    },
+    'team_kol',
+    playersToRelease
+  );
+  assert.equal(release2.alreadyReleased, true, 'Idempotency 27.5c: Second retention release call (e.g. from modal + parent) is blocked');
+  assert.equal(
+    release2.teams.find(t => t.id === 'team_kol')!.purseCr,
+    kkrPurseAfterFirstRelease,
+    'Idempotency 27.5d: Purse is NOT credited a second time'
+  );
+  assert.equal(
+    release2.teams.find(t => t.id === 'team_kol')!.squad.length,
+    kkrSquadCountAfterFirstRelease,
+    'Idempotency 27.5e: Squad size is unchanged on duplicate release call'
+  );
+
+  // 27.6: Auction completion (applyCompleteAuctionState)
+  const auctionComplete1 = applyCompleteAuctionState({
+    careerPhase: 'auction',
+    auctionLot: null
+  });
+  assert.equal(auctionComplete1.alreadyCompleted, false, 'Idempotency 27.6a: First auction completion transitions to squad_confirmation');
+  assert.equal(auctionComplete1.careerPhase, 'squad_confirmation', 'Idempotency 27.6b: Phase is squad_confirmation');
+
+  const auctionComplete2 = applyCompleteAuctionState({
+    careerPhase: auctionComplete1.careerPhase,
+    auctionLot: auctionComplete1.auctionLot
+  });
+  assert.equal(auctionComplete2.alreadyCompleted, true, 'Idempotency 27.6c: Duplicate auction completion is a no-op');
+
+  // 27.7: Franchise squad confirmation idempotency (applyConfirmClubSquadState)
+  const clubSquadConfirm1 = applyConfirmClubSquadState(
+    {
+      teams: baseTeams,
+      players: freshPlayers,
+      careerPhase: 'squad_confirmation'
+    },
+    'team_kol',
+    validKkrSquadIds
+  );
+  assert.equal(clubSquadConfirm1.alreadyConfirmed, false, 'Idempotency 27.7a: First club squad confirmation succeeds');
+  assert.equal(clubSquadConfirm1.nextState.careerPhase, 'off_season_rest', 'Idempotency 27.7b: Transitions to off_season_rest');
+
+  const clubSquadConfirm2 = applyConfirmClubSquadState(
+    {
+      teams: clubSquadConfirm1.nextState.teams,
+      players: freshPlayers,
+      careerPhase: clubSquadConfirm1.nextState.careerPhase
+    },
+    'team_kol',
+    validKkrSquadIds
+  );
+  assert.equal(clubSquadConfirm2.alreadyConfirmed, true, 'Idempotency 27.7c: Second club squad confirmation in off_season_rest is a no-op');
+
+  console.log('✅ ALL Career Progression, Multi-League Recovery, International Series IDs & Transition Idempotency Tests PASSED!');
+  return { passed: 95, total: 95 };
 }
+
 
 
