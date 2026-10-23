@@ -193,8 +193,12 @@ export const HubScreen: React.FC = () => {
     const matchObj = (currentLeague.playoffs || playoffState)[stageKey];
     if (!matchObj || matchObj.completed || !matchObj.homeTeamId || !matchObj.awayTeamId) return;
 
-    simPlayoffMatch(currentLeague.id, stageKey);
-    showToast(`${stageKey.toUpperCase()} simulated!`);
+    const res = simPlayoffMatch(currentLeague.id, stageKey, true);
+    if (res.success) {
+      showToast(`${stageKey.toUpperCase()} simulated!`);
+    } else {
+      showToast(res.reason || 'Simulation rejected');
+    }
   };
 
   const presentDay = calendarDays[presentDayIndex] || activeDay;
@@ -588,12 +592,9 @@ export const HubScreen: React.FC = () => {
                             </button>
                           </div>
                         ) : (
-                          <button
-                            onClick={() => handleSimulatePlayoffMatch(key)}
-                            className="w-full py-2 bg-amber-500 hover:bg-amber-400 text-black font-black text-[10px] uppercase font-mono rounded-xl shadow-md active:scale-95 transition-all cursor-pointer"
-                          >
-                            SIMULATE MATCH
-                          </button>
+                          <div className="w-full py-1.5 text-[10px] font-mono font-medium text-slate-400 italic text-center bg-slate-950/50 rounded-xl border border-slate-800/60">
+                            AI Match · Advances Automatically
+                          </div>
                         )}
                       </div>
                     ) : (

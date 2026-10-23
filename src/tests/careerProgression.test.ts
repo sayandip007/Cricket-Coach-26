@@ -2522,76 +2522,187 @@ export function runCareerProgressionTests() {
   }
 
   // ==========================================================================
-  // REQ 31: SINGLE CAREER INVARIANT & PLAYOFF ELIGIBILITY GATING TESTS
+  // REQ 32: VERIFIED PLAYOFF & CAREER-MODE DEFECT SCENARIOS
   // ==========================================================================
-  // 31.1 Single career mode invariant
-  const franchiseProfile: CoachProfile = {
-    ...INITIAL_COACH_PROFILE,
-    clubTeamId: 'team_kol',
-    nationalTeamId: 'aus',
-    activeCareerMode: 'franchise'
-  };
-  const enforcedFranchise = enforceSingleCareerInvariant(franchiseProfile, 'franchise');
-  assert.equal(enforcedFranchise.activeCareerMode, 'franchise');
-  assert.equal(enforcedFranchise.coachProfile.nationalTeamId, null, 'Single Career 31.1a: Franchise mode clears nationalTeamId');
-  assert.equal(enforcedFranchise.coachProfile.clubTeamId, 'team_kol');
-
-  const intlProfile: CoachProfile = {
-    ...INITIAL_COACH_PROFILE,
-    clubTeamId: 'team_kol',
-    nationalTeamId: 'aus',
-    activeCareerMode: 'international'
-  };
-  const enforcedIntl = enforceSingleCareerInvariant(intlProfile, 'international');
-  assert.equal(enforcedIntl.activeCareerMode, 'international');
-  assert.equal(enforcedIntl.coachProfile.clubTeamId, null, 'Single Career 31.1b: International mode clears clubTeamId');
-  assert.equal(enforcedIntl.coachProfile.nationalTeamId, 'aus');
-
-  // 31.2 Playoff eligibility gating
-  const midSeasonLeagueObj: League = {
-    ...baseLeagues[0],
-    standings: midSeasonStandings
-  };
-  const midSeasonEligibility = validatePlayoffEligibility({
-    league: midSeasonLeagueObj,
-    stage: 'q1',
-    userClubId: 'team_kol',
-    careerPhase: 'league_stage',
-    isUserAction: true
-  });
-  assert.equal(midSeasonEligibility.canPlay, false, 'Playoff Eligibility 31.2a: Gated before 18 league matches played');
-  assert.ok(midSeasonEligibility.reason?.includes('in progress'), 'Playoff Eligibility 31.2a error message');
-
-  const unselectedPlayoffEligibility = validatePlayoffEligibility({
-    league: leagueA_Ipl2026,
-    stage: 'q1',
-    userClubId: 'team_srh',
-    careerPhase: 'playoffs',
-    isUserAction: true
-  });
-  assert.equal(unselectedPlayoffEligibility.canPlay, false, 'Playoff Eligibility 31.2b: Non-qualifying team rejected');
-
-  const uncompletedQ1Playoffs: LeaguePlayoffs = {
-    ...qualifiedPlayoffs,
-    q1: { ...qualifiedPlayoffs.q1, completed: false },
-    eliminator: { ...qualifiedPlayoffs.eliminator, completed: false }
-  };
-  const q2UnreadyLeague: League = {
+  // Scenario 32.1: Manual simulation of a non-user playoff fixture is rejected
+  const q1UserLeague: League = {
     ...baseLeagues[0],
     standings: seededStandings,
-    playoffs: uncompletedQ1Playoffs
+    playoffs: qualifiedPlayoffs
   };
-  const q2UnreadyEligibility = validatePlayoffEligibility({
-    league: q2UnreadyLeague,
-    stage: 'q2',
-    userClubId: 'team_che',
+  const nonUserPlayoffSim = validatePlayoffEligibility({
     careerPhase: 'playoffs',
+    league: q1UserLeague,
+    userClubId: 'team_kol', // team_kol is in Q1, NOT Eliminator (team_mum vs team_blr)
+    stage: 'eliminator',
     isUserAction: true
   });
-  assert.equal(q2UnreadyEligibility.canPlay, false, 'Playoff Eligibility 31.2c: Prerequisite stages Q1/Eliminator required for Q2');
+  assert.equal(nonUserPlayoffSim.canSimulate, false, 'Defect 32.1: Manual simulation of non-user playoff fixture MUST be rejected');
+  assert.equal(nonUserPlayoffSim.isUserMatch, false, 'Defect 32.1: Eliminator is not a user match');
 
-  console.log('✅ ALL Career Progression, Multi-League Recovery, International Series IDs & Transition Idempotency Tests PASSED!');
-  return { passed: 125, total: 125 };
+  // Scenario 32.2: Manual simulation of an eligible user-team fixture succeeds
+  const userPlayoffSim = validatePlayoffEligibility({
+    careerPhase: 'playoffs',
+    league: q1UserLeague,
+    userClubId: 'team_kol', // team_kol is Q1 home team vs team_che
+    stage: 'q1',
+    isUserAction: true
+  });
+  assert.equal(userPlayoffSim.canSimulate, true, 'Defect 32.2: Manual simulation of eligible user playoff fixture MUST succeed');
+  assert.equal(userPlayoffSim.canPlay, true, 'Defect 32.2: Manual play of eligible user playoff fixture MUST succeed');
+
+  // Scenario 32.3: An incomplete league stage cannot be bypassed by setting phase to "playoffs"
+  const incompleteLeagueObj: League = {
+    ...baseLeagues[0],
+    standings: seededStandings.map(s => ({ ...s, played: 12 })) // Only 12 played out of 18
+  };
+  const bypassAttempt = validatePlayoffEligibility({
+    careerPhase: 'playoffs', // Fraudulent phase setting
+    league: incompleteLeagueObj,
+    userClubId: 'team_kol',
+    stage: 'q1',
+    isUserAction: true
+  });
+  assert.equal(bypassAttempt.canPlay, false, 'Defect 32.3: Incomplete league stage cannot be bypassed via phase string');
+  assert.equal(bypassAttempt.canSimulate, false, 'Defect 32.3: Simulation rejected when league stage is incomplete');
+
+  // Scenario 32.4: Invalid or unresolved playoff participants do not produce arbitrary matches
+  const corruptedPlayoffLeague: League = {
+    ...baseLeagues[0],
+    standings: seededStandings,
+    playoffs: {
+      ...qualifiedPlayoffs,
+      q2: { ...qualifiedPlayoffs.q2, homeTeamId: null, awayTeamId: null }
+    }
+  };
+  const unresolvedEligibility = validatePlayoffEligibility({
+    careerPhase: 'playoffs',
+    league: corruptedPlayoffLeague,
+    userClubId: 'team_kol',
+    stage: 'q2',
+    isUserAction: true
+  });
+  assert.equal(unresolvedEligibility.canPlay, false, 'Defect 32.4: Unresolved playoff participants MUST NOT produce playable match');
+  assert.equal(unresolvedEligibility.canSimulate, false, 'Defect 32.4: Unresolved playoff participants MUST NOT produce simmable match');
+
+  // Scenario 32.5: Qualifier prerequisites and final qualification remain enforced
+  const uncompletedQ1Q2League: League = {
+    ...baseLeagues[0],
+    standings: seededStandings,
+    playoffs: {
+      ...qualifiedPlayoffs,
+      q1: { ...qualifiedPlayoffs.q1, completed: false },
+      q2: { ...qualifiedPlayoffs.q2, completed: false }
+    }
+  };
+  const prematureFinalEligibility = validatePlayoffEligibility({
+    careerPhase: 'playoffs',
+    league: uncompletedQ1Q2League,
+    userClubId: 'team_kol',
+    stage: 'final',
+    isUserAction: true
+  });
+  assert.equal(prematureFinalEligibility.canPlay, false, 'Defect 32.5: Final requires Q1 and Q2 completion');
+  assert.equal(prematureFinalEligibility.canSimulate, false, 'Defect 32.5: Final simulation rejected prior to prerequisites');
+
+  // Scenario 32.6: Accepting an international coaching job clears the active club contract
+  const jobStateInput = {
+    coachProfile: { ...INITIAL_COACH_PROFILE, clubTeamId: 'team_kol', nationalTeamId: null, activeCareerMode: 'franchise' as const },
+    teams: baseTeams,
+    nations: baseNations,
+    players: freshPlayers,
+    leagues: baseLeagues,
+    currentLeagueId: 'pt20',
+    nationalSquadIds: [],
+    internationalSeries: buildInitialSeriesForNation(baseNations[0], baseNations),
+    careerPhase: 'career_decision' as const,
+    careerBoardReview: null
+  };
+  const intlDecision = applyCareerJobDecisionState(jobStateInput, 'team_kol', 'nat_ind');
+  assert.equal(intlDecision.coachProfile.activeCareerMode, 'international', 'Defect 32.6: Active career mode must be international');
+  assert.equal(intlDecision.coachProfile.nationalTeamId, 'nat_ind', 'Defect 32.6: Active national team set to nat_ind');
+  assert.equal(intlDecision.coachProfile.clubTeamId, null, 'Defect 32.6: Accepting international job MUST clear active club contract (clubTeamId = null)');
+
+  // Scenario 32.7: Franchise transitions clear the active national-team contract
+  const franchiseDecision = applyCareerJobDecisionState(
+    {
+      ...jobStateInput,
+      coachProfile: { ...INITIAL_COACH_PROFILE, clubTeamId: null, nationalTeamId: 'nat_ind', activeCareerMode: 'international' as const }
+    },
+    'team_kol',
+    null
+  );
+  assert.equal(franchiseDecision.coachProfile.activeCareerMode, 'franchise', 'Defect 32.7: Active career mode must be franchise');
+  assert.equal(franchiseDecision.coachProfile.clubTeamId, 'team_kol', 'Defect 32.7: Active club team set to team_kol');
+  assert.equal(franchiseDecision.coachProfile.nationalTeamId, null, 'Defect 32.7: Franchise transition MUST clear active national contract (nationalTeamId = null)');
+
+  // Scenario 32.8: The next-tour fallback persists the generated tour and matching calendar fixtures
+  const freshTour = buildInitialSeriesForNation(baseNations[0], baseNations, undefined, 2);
+  assert.ok(freshTour.seriesId && freshTour.seriesId.length > 0, 'Defect 32.8: Generated series MUST have valid non-empty seriesId');
+  assert.ok(freshTour.matches.length >= 3, 'Defect 32.8: Generated series MUST contain scheduled match fixtures');
+
+  // Scenario 32.9: Direct simulation cannot complete the same fixture twice
+  const completedQ1State = applyCompletePlayoffMatchState(
+    {
+      leagues: [q1UserLeague],
+      currentLeagueId: 'pt20',
+      teams: baseTeams,
+      coachProfile: { ...INITIAL_COACH_PROFILE, clubTeamId: 'team_kol' },
+      tournamentHonors: [],
+      careerPhase: 'playoffs',
+      careerBoardReview: null
+    },
+    {
+      leagueId: 'pt20',
+      stage: 'q1',
+      homeTeamId: 'team_kol',
+      awayTeamId: 'team_che',
+      winnerTeamId: 'team_kol',
+      resultSummary: 'KKR beat CSK by 12 runs'
+    }
+  );
+  assert.equal(completedQ1State.alreadyCompleted, false, 'Defect 32.9a: First completion succeeds');
+  const repeatQ1State = applyCompletePlayoffMatchState(
+    {
+      ...completedQ1State,
+      currentLeagueId: 'pt20',
+      teams: baseTeams
+    },
+    {
+      leagueId: 'pt20',
+      stage: 'q1',
+      homeTeamId: 'team_kol',
+      awayTeamId: 'team_che',
+      winnerTeamId: 'team_kol',
+      resultSummary: 'KKR beat CSK by 12 runs'
+    }
+  );
+  assert.equal(repeatQ1State.alreadyCompleted, true, 'Defect 32.9b: Second completion flagged as alreadyCompleted without duplicate mutation');
+
+  // Scenario 32.10: Existing valid career saves still recover without losing completed results
+  const validCompletedLeague: League = {
+    ...baseLeagues[0],
+    standings: seededStandings,
+    playoffs: bracketAfterQ2
+  };
+  const recoveredSave = validateAndRecoverCareerState({
+    rawPhase: 'playoffs',
+    coachProfile: { ...INITIAL_COACH_PROFILE, clubTeamId: 'team_kol', activeCareerMode: 'franchise' },
+    teams: baseTeams,
+    leagues: [validCompletedLeague],
+    currentLeagueId: 'pt20',
+    nations: baseNations,
+    nationalSquadIds: [],
+    careerBoardReview: null,
+    players: freshPlayers,
+    internationalSeries: freshTour
+  });
+  assert.equal(recoveredSave.resolvedLeagueId, 'pt20', 'Defect 32.10: Active league recovered cleanly');
+  assert.equal(recoveredSave.requiresLeagueSelection, false, 'Defect 32.10: Valid save requires no manual league selection');
+  assert.ok(recoveredSave.coachProfile.clubTeamId === 'team_kol', 'Defect 32.10: Coached club team retained');
+
+  console.log('✅ ALL Career Progression, Multi-League Recovery, International Series IDs, Transition Idempotency & Verified Defect Tests PASSED!');
+  return { passed: 135, total: 135 };
 }
 
 
