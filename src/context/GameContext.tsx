@@ -1403,18 +1403,38 @@ export function buildInitialSeriesForNation(
     throw new Error(`Cannot create international series: no eligible opponent nation available against ${userNat.name}.`);
   }
 
-  const oppNat =
-    (preferredOpponentId
-      ? candidates.find(
-          n =>
-            n.id === preferredOpponentId ||
-            n.name.trim().toLowerCase() === preferredOpponentId.trim().toLowerCase()
-        )
-      : undefined) ||
-    (userNat.name === 'South Africa'
-      ? candidates.find(n => n.name === 'India')
-      : candidates.find(n => n.name === 'South Africa')) ||
-    candidates[0];
+  const isExplicitOppRequested = typeof preferredOpponentId === 'string' && preferredOpponentId.trim().length > 0;
+  let oppNat: Nation | undefined;
+
+  if (isExplicitOppRequested) {
+    const requestedOpp = preferredOpponentId.trim();
+    oppNat = candidates.find(
+      n =>
+        n.id === requestedOpp ||
+        n.name.trim().toLowerCase() === requestedOpp.toLowerCase()
+    );
+
+    if (!oppNat) {
+      if (
+        requestedOpp === userNat.id ||
+        requestedOpp.toLowerCase() === userNatNameLower
+      ) {
+        throw new Error(
+          `Cannot create international series: requested opponent "${requestedOpp}" is identical to coached nation ${userNat.name}.`
+        );
+      }
+      throw new Error(
+        `Cannot create international series: explicitly requested opponent "${requestedOpp}" was not found among eligible nations.`
+      );
+    }
+  } else {
+    // Automatic opponent selection when no explicit opponent is supplied
+    oppNat =
+      (userNat.name === 'South Africa'
+        ? candidates.find(n => n.name === 'India')
+        : candidates.find(n => n.name === 'South Africa')) ||
+      candidates[0];
+  }
 
   if (!oppNat || oppNat.id === userNat.id || oppNat.name.trim().toLowerCase() === userNatNameLower) {
     throw new Error(`Cannot create international series: resolved opponent nation is invalid or identical to coached nation ${userNat.name}.`);

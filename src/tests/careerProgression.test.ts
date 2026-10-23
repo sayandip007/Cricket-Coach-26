@@ -2041,11 +2041,63 @@ export function runCareerProgressionTests() {
     'Part 4 Scenario 9: Missing coached nation fails safely'
   );
 
-  // Part 4 Scenario 10: Invalid opponent fails without state mutation
+  // Part 4 Scenario 10: Nonexistent explicit opponent ID fails clearly against non-empty candidate pool without state mutation
+  const baseNationsSnapshot = JSON.stringify(baseNations);
+  const ausNationSnapshot = JSON.stringify(ausNation);
+
   assert.throws(
-    () => buildInitialSeriesForNation(ausNation, [ausNation], 'non_existent_opp_999', 1),
-    /no eligible opponent nation available/i,
-    'Part 4 Scenario 10: Invalid opponent fails safely without creating an opponent'
+    () => buildInitialSeriesForNation(ausNation, baseNations, 'non_existent_opp_999', 1),
+    /explicitly requested opponent "non_existent_opp_999" was not found among eligible nations/i,
+    'Part 4 Scenario 10a: Nonexistent explicit opponent ID throws a clear validation error without falling back to another nation'
+  );
+
+  assert.equal(
+    JSON.stringify(baseNations),
+    baseNationsSnapshot,
+    'Part 4 Scenario 10b: Nation dataset remains completely unmutated on failed series creation'
+  );
+  assert.equal(
+    JSON.stringify(ausNation),
+    ausNationSnapshot,
+    'Part 4 Scenario 10c: Coached nation object remains completely unmutated on failed series creation'
+  );
+
+  // Additional explicit opponent validation cases:
+  // 10d: Valid explicit opponent ID succeeds
+  const explicitIdSeries = buildInitialSeriesForNation(ausNation, baseNations, indNation.id, 1);
+  assert.equal(
+    explicitIdSeries.opponentNationId,
+    indNation.id,
+    'Part 4 Scenario 10d: Valid explicit opponent ID succeeds and selects the requested opponent'
+  );
+
+  // 10e: Valid explicit opponent name succeeds
+  const explicitNameSeries = buildInitialSeriesForNation(ausNation, baseNations, 'South Africa', 1);
+  assert.equal(
+    explicitNameSeries.opponentNationName,
+    'South Africa',
+    'Part 4 Scenario 10e: Valid explicit opponent name succeeds and selects requested nation'
+  );
+
+  // 10f: Omitting opponent uses automatic selection successfully
+  const autoSelectSeries = buildInitialSeriesForNation(ausNation, baseNations, undefined, 1);
+  assert.ok(
+    autoSelectSeries.opponentNationId && autoSelectSeries.opponentNationId !== ausNation.id,
+    'Part 4 Scenario 10f: Omitting opponent uses automatic selection successfully when eligible candidates exist'
+  );
+
+  // 10g: Explicit self-opponent ID is rejected
+  assert.throws(
+    () => buildInitialSeriesForNation(ausNation, baseNations, ausNation.id, 1),
+    /identical to coached nation/i,
+    'Part 4 Scenario 10g: Explicit self-opponent ID is rejected'
+  );
+
+  // 10h: Explicit self-opponent name is rejected
+  assert.throws(
+    () => buildInitialSeriesForNation(ausNation, baseNations, 'Australia', 1),
+    /identical to coached nation/i,
+    'Part 4 Scenario 10h: Explicit self-opponent name is rejected'
   );
 
   // Part 4 Scenario 11: Valid opponent produces valid schedule
