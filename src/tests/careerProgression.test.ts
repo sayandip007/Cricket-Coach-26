@@ -499,7 +499,11 @@ export function runCareerProgressionTests() {
     ...confirmValid15.nextState.internationalSeries,
     seriesWins: 2,
     seriesLosses: 1,
-    matches: confirmValid15.nextState.internationalSeries.matches.map(m => ({ ...m, completed: true }))
+    matches: confirmValid15.nextState.internationalSeries.matches.map((m, idx) => ({
+      ...m,
+      completed: true,
+      summary: idx < 2 ? 'Australia won by 6 wickets' : 'South Africa won by 12 runs'
+    }))
   };
   const afterIntlComplete = applyCompleteInternationalSeriesState({
     nations: confirmValid15.nextState.nations,
@@ -508,6 +512,7 @@ export function runCareerProgressionTests() {
     internationalSeries: completedSeriesState,
     careerPhase: 'international_series'
   });
+  assert.equal(afterIntlComplete.success, true, 'Int Req 6: Completing finished international series succeeds');
   assert.notEqual(afterIntlComplete.careerPhase, 'retention', 'Int Req 6: Completing international series never enters retention');
   assert.notEqual(afterIntlComplete.careerPhase, 'auction', 'Int Req 6: Completing international series never enters auction');
   assert.equal(afterIntlComplete.careerPhase, 'international_series', 'Int Req 6: Proceeds to next international series');
@@ -635,6 +640,8 @@ export function runCareerProgressionTests() {
   for (const validPhase of VALID_CAREER_PHASES) {
     assert.equal(isValidCareerPhase(validPhase), true, `Save Req 17: ${validPhase} is recognized as valid`);
     const needsNation = validPhase === 'international_squad_selection' || validPhase === 'international_series';
+    const needsCompletedFinal = validPhase === 'board_review' || validPhase === 'career_decision';
+    const needsPlayoffsInProgress = validPhase === 'playoffs' || validPhase === 'season_final';
     const restored = validateAndRecoverCareerState({
       rawPhase: validPhase,
       coachProfile: {
@@ -645,10 +652,16 @@ export function runCareerProgressionTests() {
       teams: baseTeams,
       leagues: baseLeagues.map(l => ({
         ...l,
-        playoffs: validPhase === 'season_final'
+        standings: validPhase === 'league_stage'
+          ? seededStandings.map(s => ({ ...s, played: 6, won: 3, lost: 3, points: 6 }))
+          : seededStandings,
+        playoffs: needsPlayoffsInProgress
           ? { ...bracketAfterQ2, final: { ...bracketAfterQ2.final, completed: false }, championTeamId: undefined }
-          : l.playoffs
+          : needsCompletedFinal
+          ? bracketAfterFinal
+          : createInitialPlayoffs(seededStandings)
       })),
+      currentLeagueId: 'pt20',
       nations: baseNations,
       nationalSquadIds: needsNation ? ausSelectedIds : [],
       careerBoardReview: fullReview,
@@ -664,6 +677,7 @@ export function runCareerProgressionTests() {
     coachProfile: { ...INITIAL_COACH_PROFILE, clubTeamId: 'team_kol', nationalTeamId: null },
     teams: baseTeams,
     leagues: baseLeagues, // Final is completed and fullReview is present
+    currentLeagueId: 'pt20',
     nations: baseNations,
     nationalSquadIds: [],
     careerBoardReview: fullReview,
@@ -683,6 +697,7 @@ export function runCareerProgressionTests() {
     coachProfile: { ...INITIAL_COACH_PROFILE, clubTeamId: 'team_kol', nationalTeamId: null },
     teams: baseTeams,
     leagues: baseLeagues,
+    currentLeagueId: 'pt20',
     nations: baseNations,
     nationalSquadIds: [],
     careerBoardReview: null,
@@ -696,6 +711,7 @@ export function runCareerProgressionTests() {
     coachProfile: { ...INITIAL_COACH_PROFILE, clubTeamId: 'team_kol', nationalTeamId: null },
     teams: baseTeams,
     leagues: baseLeagues,
+    currentLeagueId: 'pt20',
     nations: baseNations,
     nationalSquadIds: [],
     careerBoardReview: fullReview,
@@ -709,6 +725,7 @@ export function runCareerProgressionTests() {
     coachProfile: { ...INITIAL_COACH_PROFILE, clubTeamId: 'team_kol', nationalTeamId: null },
     teams: baseTeams,
     leagues: baseLeagues, // final.completed = true & fullReview present
+    currentLeagueId: 'pt20',
     nations: baseNations,
     nationalSquadIds: [],
     careerBoardReview: fullReview,
@@ -803,7 +820,316 @@ export function runCareerProgressionTests() {
   assert.equal(secondInitAttempt.alreadyInitialized, true, 'Idempotency: Duplicate season 2027 initialization is blocked');
   assert.equal(secondInitAttempt.players[0].age, ageAfterFirstInit, 'Idempotency: Players are not aged a second time');
 
-  console.log('✅ ALL Career Progression, International Workflow, Save/Load & Off-Season Regression Scenarios PASSED!');
-  return { passed: 55, total: 55 };
+  // ==========================================================================
+  // REQ 22: MULTIPLE ACTIVE LEAGUES WITH DIFFERING SEASON YEARS, STANDINGS, PLAYOFFS & BOARD REVIEWS
+  // ==========================================================================
+  const leagueA_Ipl2026: League = {
+    ...baseLeagues[0],
+    id: 'pt20',
+    name: 'Indian Premier League',
+    seasonName: '2026',
+    seasonYear: 2026,
+    standings: seededStandings, // all 18 played
+    playoffs: bracketAfterFinal // final completed!
+  };
+
+  const midSeasonStandings = seededStandings.map(s => ({
+    ...s,
+    played: 7,
+    won: 4,
+    lost: 3,
+    points: 8
+  }));
+  const leagueB_SmAt2028: League = {
+    ...baseLeagues[0],
+    id: 'league_smat',
+    name: 'Syed Mushtaq Ali Trophy',
+    seasonName: '2028',
+    seasonYear: 2028,
+    standings: midSeasonStandings, // only 7 matches played
+    playoffs: createInitialPlayoffs(midSeasonStandings) // playoffs NOT started, final NOT completed
+  };
+
+  const leagueC_Playoffs2027: League = {
+    ...baseLeagues[0],
+    id: 'league_clt20',
+    name: 'Champions League T20',
+    seasonName: '2027',
+    seasonYear: 2027,
+    standings: seededStandings, // all 18 played
+    playoffs: bracketAfterQ1 // Q1 done, Final NOT completed
+  };
+
+  const multiLeagues = [leagueA_Ipl2026, leagueB_SmAt2028, leagueC_Playoffs2027];
+
+  // When currentLeagueId is 'league_smat' (index 1, mid-season 2028), validateAndRecoverCareerState must NOT use leagues[0]!
+  const recoveryForLeagueB = validateAndRecoverCareerState({
+    rawPhase: 'board_review', // invalid for league_smat because league_smat final is not completed
+    coachProfile: {
+      ...INITIAL_COACH_PROFILE,
+      clubTeamId: 'team_kol',
+      nationalTeamId: null
+    },
+    teams: baseTeams,
+    leagues: multiLeagues,
+    currentLeagueId: 'league_smat',
+    nations: baseNations,
+    nationalSquadIds: [],
+    careerBoardReview: fullReview, // 2026 pt20 review — must be archived and NOT reused for 2028 league_smat!
+    players: freshPlayers
+  });
+
+  assert.equal(
+    recoveryForLeagueB.careerPhase,
+    'league_stage',
+    'Multi-League 22a: Recovering league_smat (2028, 7 played, final incomplete) resolves to league_stage instead of using leagues[0]'
+  );
+  assert.equal(
+    recoveryForLeagueB.careerBoardReview,
+    null,
+    'Multi-League 22b: 2026 pt20 board review is archived and not reused for 2028 league_smat'
+  );
+  assert.equal(
+    recoveryForLeagueB.coachProfile.boardReviewsHistory?.[0]?.competitionId,
+    'pt20',
+    'Multi-League 22c: Archived 2026 pt20 board review is preserved in boardReviewsHistory'
+  );
+
+  // When currentLeagueId is 'league_clt20' (index 2, 2027 playoffs in progress), recovering from an invalid phase infers 'playoffs'
+  const recoveryForLeagueC = validateAndRecoverCareerState({
+    rawPhase: 'invalid_phase_clt20',
+    coachProfile: recoveryForLeagueB.coachProfile,
+    teams: baseTeams,
+    leagues: multiLeagues,
+    currentLeagueId: 'league_clt20',
+    nations: baseNations,
+    nationalSquadIds: [],
+    careerBoardReview: null,
+    players: freshPlayers
+  });
+  assert.equal(
+    recoveryForLeagueC.careerPhase,
+    'playoffs',
+    'Multi-League 22d: Recovering league_clt20 (2027, Q1 completed, final incomplete) resolves to playoffs'
+  );
+
+  // Switching back to 'pt20' (index 0, 2026 completed final) restores its archived 2026 pt20 board review and advances to career_decision
+  const recoveryBackToLeagueA = validateAndRecoverCareerState({
+    rawPhase: 'season_final',
+    coachProfile: recoveryForLeagueB.coachProfile,
+    teams: baseTeams,
+    leagues: multiLeagues,
+    currentLeagueId: 'pt20',
+    nations: baseNations,
+    nationalSquadIds: [],
+    careerBoardReview: null,
+    players: freshPlayers
+  });
+  assert.equal(
+    recoveryBackToLeagueA.careerPhase,
+    'career_decision',
+    'Multi-League 22e: Switching back to pt20 (2026 completed final + archived review) resolves to career_decision'
+  );
+  assert.equal(
+    recoveryBackToLeagueA.careerBoardReview?.competitionId,
+    'pt20',
+    'Multi-League 22f: Switching back to pt20 restores its matching archived board review'
+  );
+
+  // ==========================================================================
+  // REQ 23: INVALID / MISSING NATIONAL-TEAM DATA & DUPLICATE INTERNATIONAL SERIES COMPLETION
+  // ==========================================================================
+  // 23a: Missing nationalTeamId must NOT silently fallback to nations[0]
+  const missingNationComplete = applyCompleteInternationalSeriesState({
+    nations: baseNations,
+    coachProfile: { ...INITIAL_COACH_PROFILE, nationalTeamId: null, internationalTitles: 2 },
+    nationalSquadIds: ausSelectedIds,
+    internationalSeries: completedSeriesState,
+    careerPhase: 'international_series'
+  });
+  assert.equal(missingNationComplete.success, false, 'Intl Edge 23a: Missing nationalTeamId is rejected');
+  assert.equal(
+    missingNationComplete.coachProfile.internationalTitles,
+    2,
+    'Intl Edge 23a: Missing nationalTeamId does not increment internationalTitles'
+  );
+  assert.equal(
+    missingNationComplete.internationalSeries.opponentNationId,
+    completedSeriesState.opponentNationId,
+    'Intl Edge 23a: Missing nationalTeamId does not advance tour opponent or fallback to nations[0]'
+  );
+
+  // 23b: Invalid nationalTeamId not present in nations dataset must NOT fallback to nations[0]
+  const invalidNationComplete = applyCompleteInternationalSeriesState({
+    nations: baseNations,
+    coachProfile: { ...INITIAL_COACH_PROFILE, nationalTeamId: 'nation_atlantis_invalid', internationalTitles: 3 },
+    nationalSquadIds: ausSelectedIds,
+    internationalSeries: completedSeriesState,
+    careerPhase: 'international_series'
+  });
+  assert.equal(invalidNationComplete.success, false, 'Intl Edge 23b: Invalid nationalTeamId is rejected without falling back to nations[0]');
+  assert.ok(
+    invalidNationComplete.error?.includes('was not found'),
+    'Intl Edge 23b: Clear error returned for non-existent nationalTeamId'
+  );
+  assert.equal(invalidNationComplete.coachProfile.internationalTitles, 3, 'Intl Edge 23b: Titles unchanged');
+
+  // 23c: Invalid nextOpponentId must be rejected safely without partial state change
+  const invalidOpponentComplete = applyCompleteInternationalSeriesState(
+    {
+      nations: confirmValid15.nextState.nations,
+      coachProfile: confirmValid15.nextState.coachProfile,
+      nationalSquadIds: confirmValid15.nextState.nationalSquadIds,
+      internationalSeries: completedSeriesState,
+      careerPhase: 'international_series'
+    },
+    { nextOpponentId: 'nation_non_existent_xyz' }
+  );
+  assert.equal(invalidOpponentComplete.success, false, 'Intl Edge 23c: Invalid nextOpponentId is rejected');
+  assert.equal(
+    invalidOpponentComplete.internationalSeries.seriesId,
+    completedSeriesState.seriesId,
+    'Intl Edge 23c: Series state unchanged on invalid nextOpponentId'
+  );
+
+  // 23d: Unfinished series (matches not completed) cannot be completed prematurely
+  const unfinishedSeriesComplete = applyCompleteInternationalSeriesState({
+    nations: confirmValid15.nextState.nations,
+    coachProfile: confirmValid15.nextState.coachProfile,
+    nationalSquadIds: confirmValid15.nextState.nationalSquadIds,
+    internationalSeries: confirmValid15.nextState.internationalSeries, // 0 completed matches
+    careerPhase: 'international_series'
+  });
+  assert.equal(unfinishedSeriesComplete.success, false, 'Intl Edge 23d: Unfinished international series cannot be completed');
+
+  // 23e: Duplicate international series completion (idempotency guard)
+  // Calling applyCompleteInternationalSeriesState a second time with the same completed series must NOT increment titles or advance opponent a second time!
+  const titlesAfterFirstComplete = afterIntlComplete.coachProfile.internationalTitles || 0;
+  const duplicateSeriesComplete = applyCompleteInternationalSeriesState({
+    nations: confirmValid15.nextState.nations,
+    coachProfile: afterIntlComplete.coachProfile, // contains completedInternationalSeriesIds from 1st completion
+    nationalSquadIds: confirmValid15.nextState.nationalSquadIds,
+    internationalSeries: completedSeriesState, // same completed series re-submitted
+    careerPhase: 'international_series'
+  });
+  assert.equal(duplicateSeriesComplete.success, false, 'Intl Edge 23e: Duplicate completion of the same series is rejected');
+  assert.equal(duplicateSeriesComplete.alreadyCompleted, true, 'Intl Edge 23e: Marked alreadyCompleted = true');
+  assert.equal(
+    duplicateSeriesComplete.coachProfile.internationalTitles,
+    titlesAfterFirstComplete,
+    'Intl Edge 23e: Duplicate series completion does not increment internationalTitles a second time'
+  );
+
+  // ==========================================================================
+  // REQ 24: REPEATED SEASON ADVANCEMENT & CROSS-MODE ISOLATION GUARDS
+  // ==========================================================================
+  // 24a: Calling applyStartNewFranchiseSeasonState WITHOUT explicit nextYear a second time after season reset is blocked
+  const repeatedWithoutNextYear = applyStartNewFranchiseSeasonState(
+    {
+      players: offSeasonResult.players,
+      teams: offSeasonResult.teams,
+      leagues: offSeasonResult.leagues, // already at 2027 with 0 matches played and archived 2026 history
+      currentLeagueId: 'pt20',
+      coachProfile: offSeasonResult.coachProfile,
+      nations: offSeasonResult.nations,
+      tournamentHonors: offSeasonResult.tournamentHonors,
+      careerPhase: offSeasonResult.careerPhase, // 'league_stage'
+      careerBoardReview: null
+    },
+    'team_kol',
+    null
+    // nextYear intentionally omitted
+  );
+  assert.equal(
+    repeatedWithoutNextYear.alreadyInitialized,
+    true,
+    'Season Edge 24a: Repeated applyStartNewFranchiseSeasonState without explicit nextYear is blocked'
+  );
+  assert.equal(
+    repeatedWithoutNextYear.leagues.find(l => l.id === 'pt20')?.seasonYear,
+    2027,
+    'Season Edge 24a: Season year stays 2027 and does not jump to 2028'
+  );
+  assert.equal(
+    repeatedWithoutNextYear.players[0].age,
+    ageAfterFirstInit,
+    'Season Edge 24a: Players are not aged again'
+  );
+
+  // 24b: Calling applyAdvanceOffSeasonState again after it already transitioned to league_stage is a no-op
+  const repeatedOffSeasonAdvance = applyAdvanceOffSeasonState({
+    players: offSeasonResult.players,
+    teams: offSeasonResult.teams,
+    leagues: offSeasonResult.leagues,
+    currentLeagueId: 'pt20',
+    coachProfile: offSeasonResult.coachProfile,
+    nations: offSeasonResult.nations,
+    tournamentHonors: offSeasonResult.tournamentHonors,
+    careerPhase: offSeasonResult.careerPhase, // 'league_stage'
+    careerBoardReview: null,
+    squadStamina: offSeasonResult.squadStamina
+  });
+  assert.equal(
+    repeatedOffSeasonAdvance.restDaysProcessed,
+    0,
+    'Season Edge 24b: Repeated applyAdvanceOffSeasonState in league_stage processes 0 days and does not re-advance season'
+  );
+  assert.equal(
+    repeatedOffSeasonAdvance.leagues.find(l => l.id === 'pt20')?.seasonYear,
+    2027,
+    'Season Edge 24b: Season year remains 2027'
+  );
+
+  // 24c: Franchise functions are strictly blocked during international career phases
+  const franchiseInitDuringIntl = applyStartNewFranchiseSeasonState(
+    {
+      players: freshPlayers,
+      teams: baseTeams,
+      leagues: baseLeagues,
+      currentLeagueId: 'pt20',
+      coachProfile: confirmValid15.nextState.coachProfile,
+      nations: confirmValid15.nextState.nations,
+      tournamentHonors: [],
+      careerPhase: 'international_series',
+      careerBoardReview: null
+    },
+    'team_kol',
+    ausNation.id,
+    2027
+  );
+  assert.equal(
+    franchiseInitDuringIntl.alreadyInitialized,
+    true,
+    'Season Edge 24c: applyStartNewFranchiseSeasonState is blocked during international_series'
+  );
+  assert.equal(
+    franchiseInitDuringIntl.careerPhase,
+    'international_series',
+    'Season Edge 24c: Career phase remains international_series'
+  );
+
+  const clubConfirmDuringIntl = applyConfirmClubSquadState(
+    {
+      teams: baseTeams,
+      players: freshPlayers,
+      careerPhase: 'international_series'
+    },
+    'team_kol',
+    validKkrSquadIds
+  );
+  assert.equal(
+    clubConfirmDuringIntl.success,
+    false,
+    'Season Edge 24d: applyConfirmClubSquadState is rejected during international_series'
+  );
+  assert.equal(
+    clubConfirmDuringIntl.nextState.careerPhase,
+    'international_series',
+    'Season Edge 24d: Career phase unchanged when applyConfirmClubSquadState is rejected'
+  );
+
+  console.log('✅ ALL Career Progression, Multi-League Recovery, International Idempotency & Season Advancement Regression Scenarios PASSED!');
+  return { passed: 72, total: 72 };
 }
+
 

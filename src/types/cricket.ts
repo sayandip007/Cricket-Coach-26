@@ -528,6 +528,7 @@ export interface CoachProfile {
     titles: number;
   }[];
   boardReviewsHistory?: CareerBoardReview[];
+  completedInternationalSeriesIds?: string[];
 }
 
 export type CareerPhase =

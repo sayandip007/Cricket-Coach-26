@@ -189,70 +189,11 @@ export const HubScreen: React.FC = () => {
   const shouldShowPlayoffs = careerPhase === 'playoffs' || careerPhase === 'season_final' || (isLeagueStageCompleted && (currentLeague.standings?.length ?? 0) > 0);
 
   const handleSimulatePlayoffMatch = (stageKey: 'q1' | 'eliminator' | 'q2' | 'final') => {
-    sound.playCrowdCheer(0.8);
     const matchObj = (currentLeague.playoffs || playoffState)[stageKey];
-    if (!matchObj || !matchObj.homeTeamId || !matchObj.awayTeamId) return;
+    if (!matchObj || matchObj.completed || !matchObj.homeTeamId || !matchObj.awayTeamId) return;
 
     simPlayoffMatch(currentLeague.id, stageKey);
-
-    const homeT = teams.find(t => t.id === matchObj.homeTeamId) || teams[0];
-    const awayT = teams.find(t => t.id === matchObj.awayTeamId) || teams[1];
-
-    const headlessState = createHeadlessMatchState({
-      id: `match_playoff_${stageKey}`,
-      leagueId: currentLeagueId,
-      homeTeam: homeT,
-      awayTeam: awayT,
-      playerPool: players,
-      format: 'T20',
-      venue: 'Narendra Modi Stadium, Ahmedabad'
-    });
-
-    const outcome = simulateFullMatchHeadless(headlessState, players);
-    const winnerId = outcome.winnerTeamId || (outcome.innings1.runs >= (outcome.innings2?.runs || 0) ? homeT.id : awayT.id);
-    const loserId = winnerId === homeT.id ? awayT.id : homeT.id;
-    const winnerShort = winnerId === homeT.id ? homeT.shortName : awayT.shortName;
-    const marginStr = outcome.resultText || `${winnerShort} won match`;
-
-    setPlayoffState(prev => {
-      const next = { ...prev };
-      next[stageKey] = {
-        ...next[stageKey],
-        completed: true,
-        winnerTeamId: winnerId,
-        loserTeamId: loserId,
-        resultSummary: marginStr
-      };
-
-      if (stageKey === 'q1' || stageKey === 'eliminator') {
-        if (next.q1.completed && next.eliminator.completed) {
-          next.q2 = {
-            ...next.q2,
-            homeTeamId: next.q1.loserTeamId,
-            awayTeamId: next.eliminator.winnerTeamId
-          };
-        }
-      }
-      if (stageKey === 'q2') {
-        if (next.q1.completed && next.q2.completed) {
-          next.final = {
-            ...next.final,
-            homeTeamId: next.q1.winnerTeamId,
-            awayTeamId: next.q2.winnerTeamId
-          };
-        }
-      }
-      if (stageKey === 'final') {
-        next.championTeamId = winnerId;
-      }
-      return next;
-    });
-
-    if (stageKey === 'final') {
-      setCareerPhase('board_review');
-    }
-
-    showToast(`${stageKey.toUpperCase()}: ${marginStr}`);
+    showToast(`${stageKey.toUpperCase()} simulated!`);
   };
 
   const presentDay = calendarDays[presentDayIndex] || activeDay;
@@ -763,9 +704,12 @@ export const HubScreen: React.FC = () => {
               </button>
               <button
                 onClick={() => {
-                  sound.playCrowdCheer(0.8);
-                  completeInternationalSeries();
-                  showToast('Advancing to next International Bilateral Series!');
+                  const res = completeInternationalSeries();
+                  if (res.success) {
+                    showToast('Advancing to next International Bilateral Series!');
+                  } else if (res.error) {
+                    showToast(res.error);
+                  }
                 }}
                 className="flex-1 py-2.5 bg-gradient-to-r from-sky-400 to-emerald-400 hover:from-sky-300 hover:to-emerald-300 text-slate-950 font-black text-xs uppercase tracking-wider rounded-xl shadow-lg shadow-sky-500/20 active:scale-95 transition-all text-center"
               >
