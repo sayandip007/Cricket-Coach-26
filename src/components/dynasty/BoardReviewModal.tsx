@@ -15,6 +15,7 @@ interface BoardReviewModalProps {
   userStanding?: StandingRow;
   userStandingRank?: number;
   seasonYear?: number;
+  competitionId?: string;
   reviewData?: CareerBoardReview | null;
   onSaveReview?: (review: CareerBoardReview) => void;
   topPlayerInLeaderboards?: boolean;
@@ -32,14 +33,14 @@ export function calculateActualHomeWinsFromData(
     for (const d of calendarDates) {
       const fix = d.matchFixture;
       if (fix && fix.completed) {
-        const isHome = fix.homeTeamId === userTeamId || d.isHome;
+        const isHome = fix.homeTeamId === userTeamId || (d.isHome && (fix.homeTeamId === userTeamId || fix.awayTeamId === userTeamId));
         if (isHome) {
           if (fix.completedMatchState?.winnerTeamId) {
             if (fix.completedMatchState.winnerTeamId === userTeamId) homeWins++;
           } else if (fix.resultSummary) {
             const sumLower = fix.resultSummary.toLowerCase();
-            const shortLower = userTeamShort.toLowerCase();
-            if (sumLower.includes(shortLower) && (sumLower.includes('won') || sumLower.includes('beat'))) {
+            const shortLower = (userTeamShort || '').toLowerCase();
+            if (shortLower && sumLower.includes(shortLower) && (sumLower.includes('won') || sumLower.includes('beat'))) {
               homeWins++;
             }
           }
@@ -52,11 +53,11 @@ export function calculateActualHomeWinsFromData(
   if (completedMatchesHistory && completedMatchesHistory.length > 0) {
     let homeWins = 0;
     for (const m of completedMatchesHistory) {
-      const isHome = m.homeTeam?.toLowerCase().includes(userTeamShort.toLowerCase());
+      const shortLower = (userTeamShort || '').toLowerCase();
+      const isHome = Boolean(shortLower && m.homeTeam?.toLowerCase().includes(shortLower));
       if (isHome) {
         const sumLower = m.summary?.toLowerCase() || '';
-        const shortLower = userTeamShort.toLowerCase();
-        if (sumLower.includes(shortLower) && (sumLower.includes('won') || sumLower.includes('beat'))) {
+        if (shortLower && sumLower.includes(shortLower) && (sumLower.includes('won') || sumLower.includes('beat'))) {
           homeWins++;
         }
       }
@@ -98,16 +99,17 @@ export function buildDefaultBoardReview(
   calendarDates?: League['calendarDates'],
   players?: Player[],
   completedMatchesHistory?: CompletedMatchRecord[],
-  actualHomeWinsOverride?: number
+  actualHomeWinsOverride?: number,
+  competitionId: string = 'pt20'
 ): CareerBoardReview {
-  // 1. Calculate actual rank from standings or userStandingRank
-  let rank = userStandingRank ?? 10;
+  // 1. Calculate actual rank strictly from standings or explicit userStandingRank (no fabricated success)
+  let rank: number | null = userStandingRank !== undefined ? userStandingRank : null;
   if (standings && standings.length > 0) {
     const sorted = [...standings].sort((a, b) => b.points - a.points || b.nrr - a.nrr);
     const foundIdx = sorted.findIndex(s => s.teamId === userTeam.id);
-    if (foundIdx >= 0) rank = foundIdx + 1;
-  } else if (userStanding) {
-    rank = userStandingRank ?? 10;
+    if (foundIdx >= 0) {
+      rank = foundIdx + 1;
+    }
   }
 
   // 2. Calculate actual home wins strictly from completed home fixtures (no estimation formula)
@@ -120,10 +122,26 @@ export function buildDefaultBoardReview(
     ? topPlayerInLeaderboards
     : checkUserPlayerInTopLeaderboard(userTeam.id, players);
 
-  const rankSuffix = rank === 1 ? '1st' : rank === 2 ? '2nd' : rank === 3 ? '3rd' : `${rank}th`;
-  const primaryFulfilled = rank <= 4;
+  const hasValidRank = rank !== null && rank >= 1;
+  const rankSuffix = !hasValidRank
+    ? 'Unranked'
+    : rank === 1
+    ? '1st'
+    : rank === 2
+    ? '2nd'
+    : rank === 3
+    ? '3rd'
+    : `${rank}th`;
+  const primaryFulfilled = hasValidRank && rank! <= 4;
   const secondary1Fulfilled = wonHomeMatches >= 4;
-  const secondary2Fulfilled = starPerformerAchieved;
+  const secondary2Fulfilled = Boolean(starPerformerAchieved);
+
+  const hasFixtureData =
+    actualHomeWinsOverride !== undefined ||
+    Boolean((calendarDates && calendarDates.length > 0) || (completedMatchesHistory && completedMatchesHistory.length > 0));
+  const hasPlayerStatsData =
+    topPlayerInLeaderboards !== undefined ||
+    Boolean(players && players.length > 0 && players.some(p => (p.stats?.runs || 0) > 0 || (p.stats?.wickets || 0) > 0));
 
   const objectives: ObjectiveResult[] = [
     {
@@ -132,7 +150,11 @@ export function buildDefaultBoardReview(
       title: 'Reach the playoffs (Top 4)',
       description: 'Finish in the top four positions on the league standings table.',
       targetStr: 'Top 4 finish',
-      measuredStr: rank <= 4 ? `Finished ${rankSuffix} (Qualified)` : `Finished ${rankSuffix} (Eliminated)`,
+      measuredStr: !hasValidRank
+        ? 'Standings unavailable (Not qualified)'
+        : primaryFulfilled
+        ? `Finished ${rankSuffix} (Qualified)`
+        : `Finished ${rankSuffix} (Eliminated)`,
       isFulfilled: primaryFulfilled
     },
     {
@@ -141,7 +163,7 @@ export function buildDefaultBoardReview(
       title: 'Win at least 4 home matches',
       description: 'Defend your home venue and secure 4 or more victories.',
       targetStr: '4 home wins',
-      measuredStr: `${wonHomeMatches} home wins`,
+      measuredStr: hasFixtureData ? `${wonHomeMatches} home wins` : `0 home wins (Fixtures unavailable)`,
       isFulfilled: secondary1Fulfilled
     },
     {
@@ -150,7 +172,11 @@ export function buildDefaultBoardReview(
       title: 'Top 3 player on leaderboard',
       description: 'Have a squad member finish in the top 3 for Orange or Purple cap.',
       targetStr: 'Top 3 run/wicket scorer',
-      measuredStr: secondary2Fulfilled ? 'Achieved (Top 3 player)' : 'Missed top 3 leaderboard',
+      measuredStr: secondary2Fulfilled
+        ? 'Achieved (Top 3 player)'
+        : hasPlayerStatsData
+        ? 'Missed top 3 leaderboard'
+        : 'Leaderboard unavailable (Missed top 3)',
       isFulfilled: secondary2Fulfilled
     }
   ];
@@ -158,7 +184,7 @@ export function buildDefaultBoardReview(
   const fulfilledCount = objectives.filter(o => o.isFulfilled).length;
   const totalCount = objectives.length;
   const scorePct = totalCount > 0 ? Math.round((fulfilledCount / totalCount) * 100) : 0;
-  const isSatisfied = scorePct >= 60; // 60% threshold
+  const isSatisfied = scorePct >= 60; // 60% threshold (exactly 60% counts as satisfied)
 
   const verdictTitle = isSatisfied
     ? 'The board is satisfied.'
@@ -169,6 +195,7 @@ export function buildDefaultBoardReview(
 
   return {
     seasonYear,
+    competitionId,
     teamId: userTeam.id,
     teamName: userTeam.name,
     objectives,
@@ -192,13 +219,21 @@ export const BoardReviewModal: React.FC<BoardReviewModalProps> = ({
   userStanding,
   userStandingRank,
   seasonYear = 2026,
+  competitionId = 'pt20',
   reviewData,
   onSaveReview,
   topPlayerInLeaderboards,
   actualHomeWins
 }) => {
+  const isMatchingStoredReview = Boolean(
+    reviewData &&
+      reviewData.seasonYear === seasonYear &&
+      reviewData.teamId === userTeam.id &&
+      (!reviewData.competitionId || reviewData.competitionId === competitionId)
+  );
+
   const review = useMemo(() => {
-    if (reviewData && reviewData.seasonYear === seasonYear && reviewData.teamId === userTeam.id) {
+    if (isMatchingStoredReview && reviewData) {
       return reviewData;
     }
     return buildDefaultBoardReview(
@@ -211,11 +246,14 @@ export const BoardReviewModal: React.FC<BoardReviewModalProps> = ({
       calendarDates,
       players,
       completedMatchesHistory,
-      actualHomeWins
+      actualHomeWins,
+      competitionId
     );
   }, [
+    isMatchingStoredReview,
     reviewData,
     seasonYear,
+    competitionId,
     userTeam,
     userStanding,
     userStandingRank,
@@ -227,12 +265,12 @@ export const BoardReviewModal: React.FC<BoardReviewModalProps> = ({
     actualHomeWins
   ]);
 
-  // Store once per season
+  // Store once per (seasonYear, competitionId, teamId)
   useEffect(() => {
-    if (isOpen && review && (!reviewData || reviewData.seasonYear !== seasonYear)) {
+    if (isOpen && review && !isMatchingStoredReview) {
       onSaveReview?.(review);
     }
-  }, [isOpen, review, reviewData, seasonYear, onSaveReview]);
+  }, [isOpen, review, isMatchingStoredReview, onSaveReview]);
 
   if (!isOpen) return null;
 

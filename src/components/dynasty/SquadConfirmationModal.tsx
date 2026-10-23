@@ -11,28 +11,45 @@ interface SquadConfirmationModalProps {
   onConfirmNextSeason: () => void;
 }
 
-export function validateFranchiseSquadLimits(squad: Player[]): {
+export function validateFranchiseSquadLimits(
+  squad: Player[],
+  teamId?: string
+): {
   isValid: boolean;
   totalCount: number;
   overseasCount: number;
   isSquadSizeValid: boolean;
   isOverseasValid: boolean;
+  hasUniqueIds: boolean;
+  isTeamEligible: boolean;
   errors: string[];
 } {
   const totalCount = squad.length;
+  const uniqueIds = new Set(squad.map(p => p.id));
+  const hasUniqueIds = uniqueIds.size === totalCount;
+  const ineligiblePlayer = teamId
+    ? squad.find(p => p.clubId && p.clubId !== teamId)
+    : undefined;
+  const isTeamEligible = !ineligiblePlayer;
   const overseasCount = squad.filter(p => p.isOverseas || (p.country && p.country.toLowerCase() !== 'india')).length;
   const isSquadSizeValid = totalCount >= 16 && totalCount <= 25;
   const isOverseasValid = overseasCount <= 8;
   const errors: string[] = [];
+  if (!hasUniqueIds) errors.push('Duplicate player IDs found in franchise squad');
+  if (!isTeamEligible && ineligiblePlayer) {
+    errors.push(`Player ${ineligiblePlayer.name} is contracted to another franchise (${ineligiblePlayer.clubId})`);
+  }
   if (totalCount < 16) errors.push(`Squad size (${totalCount}) is below minimum of 16 players`);
   if (totalCount > 25) errors.push(`Squad size (${totalCount}) exceeds maximum of 25 players`);
   if (overseasCount > 8) errors.push(`Overseas count (${overseasCount}) exceeds maximum of 8`);
   return {
-    isValid: isSquadSizeValid && isOverseasValid,
+    isValid: isSquadSizeValid && isOverseasValid && hasUniqueIds && isTeamEligible,
     totalCount,
     overseasCount,
     isSquadSizeValid,
     isOverseasValid,
+    hasUniqueIds,
+    isTeamEligible,
     errors
   };
 }
@@ -46,7 +63,7 @@ export const SquadConfirmationModal: React.FC<SquadConfirmationModalProps> = ({
 }) => {
   if (!isOpen) return null;
 
-  const validation = validateFranchiseSquadLimits(squad);
+  const validation = validateFranchiseSquadLimits(squad, userTeam.id);
   const { totalCount, overseasCount, isSquadSizeValid, isOverseasValid, isValid } = validation;
 
   return (

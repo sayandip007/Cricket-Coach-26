@@ -66,10 +66,13 @@ export const HubScreen: React.FC = () => {
     setNationalSquadIds,
     internationalSeries,
     completedMatchesHistory,
+    applyCareerJobDecision,
     confirmNationalSquad,
+    completeInternationalSeries,
     switchUserClub,
     validateClubSquad,
-    confirmClubSquad
+    confirmClubSquad,
+    advanceOffSeasonToNextSeason
   } = useGame();
 
   const currentLeague = leagues.find(l => l.id === currentLeagueId) || leagues[0];
@@ -241,12 +244,13 @@ export const HubScreen: React.FC = () => {
       }
       if (stageKey === 'final') {
         next.championTeamId = winnerId;
-        setTimeout(() => {
-          setCareerPhase('board_review');
-        }, 500);
       }
       return next;
     });
+
+    if (stageKey === 'final') {
+      setCareerPhase('board_review');
+    }
 
     showToast(`${stageKey.toUpperCase()}: ${marginStr}`);
   };
@@ -746,26 +750,26 @@ export const HubScreen: React.FC = () => {
               }
             })()}
 
-            {/* Advance / Pre-season Action */}
+            {/* Advance / International Tour Action */}
             <div className="pt-1 flex items-center gap-2">
               <button
                 onClick={() => {
                   sound.playTap();
-                  setActiveTab('world');
+                  setCareerPhase('international_squad_selection');
                 }}
                 className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs uppercase tracking-wider rounded-xl border border-slate-700 active:scale-95 transition-all text-center"
               >
-                VIEW WORLD STAGE
+                MANAGE 15-MAN SQUAD
               </button>
               <button
                 onClick={() => {
                   sound.playCrowdCheer(0.8);
-                  setCareerPhase('retention');
-                  showToast('Entering Club Off-Season & Retentions');
+                  completeInternationalSeries();
+                  showToast('Advancing to next International Bilateral Series!');
                 }}
-                className="flex-1 py-2.5 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-black font-black text-xs uppercase tracking-wider rounded-xl shadow-lg shadow-amber-500/20 active:scale-95 transition-all text-center"
+                className="flex-1 py-2.5 bg-gradient-to-r from-sky-400 to-emerald-400 hover:from-sky-300 hover:to-emerald-300 text-slate-950 font-black text-xs uppercase tracking-wider rounded-xl shadow-lg shadow-sky-500/20 active:scale-95 transition-all text-center"
               >
-                PROCEED TO CLUB RETENTIONS ▶
+                NEXT INTERNATIONAL SERIES ▶
               </button>
             </div>
           </div>
@@ -789,8 +793,7 @@ export const HubScreen: React.FC = () => {
               onClick={() => {
                 sound.playCrowdCheer(1.0);
                 const nextYr = activeSeasonYear + 1;
-                startNewSeason(userTeam.id, coachProfile.nationalTeamId, nextYr);
-                setCareerPhase('league_stage');
+                advanceOffSeasonToNextSeason(nextYr);
                 showToast(`Off-season complete — welcome to Season ${nextYr}!`);
               }}
               className="px-6 py-3.5 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-black font-black text-xs uppercase tracking-widest rounded-2xl shadow-xl shadow-amber-500/20 active:scale-95 transition-all flex items-center gap-2 cursor-pointer"
@@ -1982,6 +1985,7 @@ export const HubScreen: React.FC = () => {
           return idx >= 0 ? idx + 1 : 4;
         })()}
         seasonYear={activeSeasonYear}
+        competitionId={currentLeague.id || 'pt20'}
         reviewData={careerBoardReview}
         onSaveReview={setCareerBoardReview}
       />
@@ -1991,15 +1995,7 @@ export const HubScreen: React.FC = () => {
         isOpen={isNextSeasonSetupOpen || careerPhase === 'career_decision'}
         onClose={() => setIsNextSeasonSetupOpen(false)}
         onProceed={(selectedClubId, selectedCountryId) => {
-          if (selectedClubId !== userTeam.id) {
-            switchUserClub(selectedClubId);
-          }
-          if (selectedCountryId && selectedCountryId !== 'none') {
-            coachProfile.nationalTeamId = selectedCountryId;
-            setCareerPhase('international_squad_selection');
-          } else {
-            setCareerPhase('retention');
-          }
+          applyCareerJobDecision(selectedClubId, selectedCountryId);
           setIsNextSeasonSetupOpen(false);
         }}
         userTeam={userTeam}

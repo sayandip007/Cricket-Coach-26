@@ -527,6 +527,7 @@ export interface CoachProfile {
     winPct: number;
     titles: number;
   }[];
+  boardReviewsHistory?: CareerBoardReview[];
 }
 
 export type CareerPhase =
@@ -555,6 +556,7 @@ export interface ObjectiveResult {
 
 export interface CareerBoardReview {
   seasonYear: number;
+  competitionId?: string;
   teamId: string;
   teamName: string;
   objectives: ObjectiveResult[];
