@@ -17,12 +17,16 @@ export const ZERO_PLAYER_STATS = {
   bestBowling: '0/0'
 };
 
-export const createFreshPlayers = (): Player[] =>
-  CSV_PLAYERS.map(p => ({
+import { buildCompleteInitialPlayers } from './internationalPlayerRosters';
+
+export const createFreshPlayers = (): Player[] => {
+  const basePlayers = CSV_PLAYERS.map(p => ({
     ...p,
     ratings: { ...p.ratings },
     stats: { ...ZERO_PLAYER_STATS }
   }));
+  return buildCompleteInitialPlayers(basePlayers);
+};
 
 export const INITIAL_PLAYERS: Player[] = createFreshPlayers();
 

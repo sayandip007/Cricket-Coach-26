@@ -1,18 +1,91 @@
-import React from 'react';
-import { BookOpen, CheckCircle, XCircle, ChevronRight, Award } from 'lucide-react';
-import { Team, StandingRow, CareerBoardReview, ObjectiveResult } from '../../types/cricket';
+import React, { useMemo, useEffect } from 'react';
+import { BookOpen, CheckCircle, XCircle, ChevronRight } from 'lucide-react';
+import { Team, StandingRow, CareerBoardReview, ObjectiveResult, Player, CompletedMatchRecord, League } from '../../types/cricket';
 import { sound } from '../../utils/soundEffects';
 
 interface BoardReviewModalProps {
   isOpen: boolean;
-  onClose: () => void;
+  onClose?: () => void;
   onProceedToOffers: (isSatisfied: boolean) => void;
   userTeam: Team;
+  standings?: StandingRow[];
+  calendarDates?: League['calendarDates'];
+  players?: Player[];
+  completedMatchesHistory?: CompletedMatchRecord[];
   userStanding?: StandingRow;
   userStandingRank?: number;
   seasonYear?: number;
   reviewData?: CareerBoardReview | null;
+  onSaveReview?: (review: CareerBoardReview) => void;
   topPlayerInLeaderboards?: boolean;
+  actualHomeWins?: number;
+}
+
+export function calculateActualHomeWinsFromData(
+  userTeamId: string,
+  userTeamShort: string,
+  calendarDates?: League['calendarDates'],
+  completedMatchesHistory?: CompletedMatchRecord[]
+): number {
+  if (calendarDates && calendarDates.length > 0) {
+    let homeWins = 0;
+    for (const d of calendarDates) {
+      const fix = d.matchFixture;
+      if (fix && fix.completed) {
+        const isHome = fix.homeTeamId === userTeamId || d.isHome;
+        if (isHome) {
+          if (fix.completedMatchState?.winnerTeamId) {
+            if (fix.completedMatchState.winnerTeamId === userTeamId) homeWins++;
+          } else if (fix.resultSummary) {
+            const sumLower = fix.resultSummary.toLowerCase();
+            const shortLower = userTeamShort.toLowerCase();
+            if (sumLower.includes(shortLower) && (sumLower.includes('won') || sumLower.includes('beat'))) {
+              homeWins++;
+            }
+          }
+        }
+      }
+    }
+    return homeWins;
+  }
+
+  if (completedMatchesHistory && completedMatchesHistory.length > 0) {
+    let homeWins = 0;
+    for (const m of completedMatchesHistory) {
+      const isHome = m.homeTeam?.toLowerCase().includes(userTeamShort.toLowerCase());
+      if (isHome) {
+        const sumLower = m.summary?.toLowerCase() || '';
+        const shortLower = userTeamShort.toLowerCase();
+        if (sumLower.includes(shortLower) && (sumLower.includes('won') || sumLower.includes('beat'))) {
+          homeWins++;
+        }
+      }
+    }
+    return homeWins;
+  }
+
+  return 0;
+}
+
+export function checkUserPlayerInTopLeaderboard(
+  userTeamId: string,
+  players?: Player[]
+): boolean {
+  if (!players || players.length === 0) return false;
+
+  // Orange Cap (Most Runs - Top 3)
+  const battersSorted = [...players]
+    .filter(p => (p.stats?.runs || 0) > 0)
+    .sort((a, b) => (b.stats?.runs || 0) - (a.stats?.runs || 0));
+  const hasTop3Batter = battersSorted.slice(0, 3).some(p => p.clubId === userTeamId);
+
+  // Purple Cap (Most Wickets - Top 3)
+  const bowlersSorted = [...players]
+    .filter(p => (p.stats?.wickets || 0) > 0)
+    .sort((a, b) => (b.stats?.wickets || 0) - (a.stats?.wickets || 0));
+  const hasTop3Bowler = bowlersSorted.slice(0, 3).some(p => p.clubId === userTeamId);
+
+  return hasTop3Batter || hasTop3Bowler;
 }
 
 export function buildDefaultBoardReview(
@@ -20,15 +93,37 @@ export function buildDefaultBoardReview(
   userTeam: Team,
   userStanding?: StandingRow,
   userStandingRank?: number,
-  topPlayerInLeaderboards: boolean = true
+  topPlayerInLeaderboards?: boolean,
+  standings?: StandingRow[],
+  calendarDates?: League['calendarDates'],
+  players?: Player[],
+  completedMatchesHistory?: CompletedMatchRecord[],
+  actualHomeWinsOverride?: number
 ): CareerBoardReview {
-  const rank = userStandingRank ?? 4;
-  const wonHomeMatches = userStanding?.won ? Math.min(4, Math.max(0, Math.floor(userStanding.won * 0.55))) : 4;
+  // 1. Calculate actual rank from standings or userStandingRank
+  let rank = userStandingRank ?? 10;
+  if (standings && standings.length > 0) {
+    const sorted = [...standings].sort((a, b) => b.points - a.points || b.nrr - a.nrr);
+    const foundIdx = sorted.findIndex(s => s.teamId === userTeam.id);
+    if (foundIdx >= 0) rank = foundIdx + 1;
+  } else if (userStanding) {
+    rank = userStandingRank ?? 10;
+  }
+
+  // 2. Calculate actual home wins strictly from completed home fixtures (no estimation formula)
+  const wonHomeMatches = actualHomeWinsOverride !== undefined
+    ? actualHomeWinsOverride
+    : calculateActualHomeWinsFromData(userTeam.id, userTeam.shortName || userTeam.name, calendarDates, completedMatchesHistory);
+
+  // 3. Calculate star performer strictly from actual leaderboard results (no default-success)
+  const starPerformerAchieved = topPlayerInLeaderboards !== undefined
+    ? topPlayerInLeaderboards
+    : checkUserPlayerInTopLeaderboard(userTeam.id, players);
 
   const rankSuffix = rank === 1 ? '1st' : rank === 2 ? '2nd' : rank === 3 ? '3rd' : `${rank}th`;
   const primaryFulfilled = rank <= 4;
   const secondary1Fulfilled = wonHomeMatches >= 4;
-  const secondary2Fulfilled = topPlayerInLeaderboards || rank <= 3;
+  const secondary2Fulfilled = starPerformerAchieved;
 
   const objectives: ObjectiveResult[] = [
     {
@@ -62,7 +157,7 @@ export function buildDefaultBoardReview(
 
   const fulfilledCount = objectives.filter(o => o.isFulfilled).length;
   const totalCount = objectives.length;
-  const scorePct = totalCount > 0 ? Math.round((fulfilledCount / totalCount) * 100) : 100;
+  const scorePct = totalCount > 0 ? Math.round((fulfilledCount / totalCount) * 100) : 0;
   const isSatisfied = scorePct >= 60; // 60% threshold
 
   const verdictTitle = isSatisfied
@@ -90,21 +185,56 @@ export const BoardReviewModal: React.FC<BoardReviewModalProps> = ({
   isOpen,
   onProceedToOffers,
   userTeam,
+  standings,
+  calendarDates,
+  players,
+  completedMatchesHistory,
   userStanding,
   userStandingRank,
   seasonYear = 2026,
   reviewData,
-  topPlayerInLeaderboards = true
+  onSaveReview,
+  topPlayerInLeaderboards,
+  actualHomeWins
 }) => {
-  if (!isOpen) return null;
-
-  const review = reviewData || buildDefaultBoardReview(
+  const review = useMemo(() => {
+    if (reviewData && reviewData.seasonYear === seasonYear && reviewData.teamId === userTeam.id) {
+      return reviewData;
+    }
+    return buildDefaultBoardReview(
+      seasonYear,
+      userTeam,
+      userStanding,
+      userStandingRank,
+      topPlayerInLeaderboards,
+      standings,
+      calendarDates,
+      players,
+      completedMatchesHistory,
+      actualHomeWins
+    );
+  }, [
+    reviewData,
     seasonYear,
     userTeam,
     userStanding,
     userStandingRank,
-    topPlayerInLeaderboards
-  );
+    topPlayerInLeaderboards,
+    standings,
+    calendarDates,
+    players,
+    completedMatchesHistory,
+    actualHomeWins
+  ]);
+
+  // Store once per season
+  useEffect(() => {
+    if (isOpen && review && (!reviewData || reviewData.seasonYear !== seasonYear)) {
+      onSaveReview?.(review);
+    }
+  }, [isOpen, review, reviewData, seasonYear, onSaveReview]);
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 bg-[#070b12]/95 backdrop-blur-md flex flex-col justify-between max-w-md mx-auto overflow-y-auto animate-in fade-in duration-200">
@@ -215,4 +345,3 @@ export const BoardReviewModal: React.FC<BoardReviewModalProps> = ({
     </div>
   );
 };
-

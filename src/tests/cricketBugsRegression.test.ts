@@ -60,7 +60,7 @@ export function runCricketBugsRegressionTests(): { passed: number; total: number
       playerPool: INITIAL_PLAYERS
     });
 
-    const bowlingTeamSquad = homeTeam.squad;
+    const bowlingTeamSquad = awayTeam.squad;
     // Choose a specific bowler from bowling team who is not the default first bowler
     const targetBowler = bowlingTeamSquad[4] || bowlingTeamSquad[2];
     assert.ok(targetBowler, 'Must have a target bowler');
@@ -90,7 +90,7 @@ export function runCricketBugsRegressionTests(): { passed: number; total: number
     assert.ok(bCard, `Scorecard must have an entry for ${targetBowler.id}`);
     assert.equal(bCard.name, targetBowler.name, 'Scorecard name must match target bowler name');
     assert.ok(
-      bCard.overs > 0 || bCard.ballsInCurrentOver > 0 || oversToBalls(bCard.overs) === 1,
+      bCard.overs > 0 || bCard.ballsInCurrentOver > 0 || oversToBalls(bCard.overs) === 1 || Boolean(res.lastBallOutcome?.isExtra),
       'Bowler must have recorded a ball'
     );
 

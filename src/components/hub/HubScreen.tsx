@@ -63,7 +63,13 @@ export const HubScreen: React.FC = () => {
     setCareerBoardReview,
     selectUserTeam,
     releasePlayersForAuction,
-    setNationalSquadIds
+    setNationalSquadIds,
+    internationalSeries,
+    completedMatchesHistory,
+    confirmNationalSquad,
+    switchUserClub,
+    validateClubSquad,
+    confirmClubSquad
   } = useGame();
 
   const currentLeague = leagues.find(l => l.id === currentLeagueId) || leagues[0];
@@ -652,6 +658,115 @@ export const HubScreen: React.FC = () => {
                   </div>
                 );
               })}
+            </div>
+          </div>
+        )}
+
+        {/* INTERNATIONAL TOUR & SERIES CARD */}
+        {careerPhase === 'international_series' && internationalSeries && (
+          <div className="bg-gradient-to-r from-[#0c1829] via-[#10243e] to-[#0c1829] border border-cyan-500/50 rounded-2xl p-5 shadow-2xl flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <span className="px-2.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 text-[10px] font-black uppercase tracking-widest inline-flex items-center gap-1.5">
+                <Globe className="w-3.5 h-3.5 text-cyan-400" />
+                INTERNATIONAL CAREER DUTY
+              </span>
+              <span className="text-[11px] font-mono font-bold text-amber-400">
+                {internationalSeries.seriesWins > internationalSeries.seriesLosses
+                  ? `${internationalSeries.userNationCode} LEADS ${internationalSeries.seriesWins} - ${internationalSeries.seriesLosses}`
+                  : internationalSeries.seriesLosses > internationalSeries.seriesWins
+                  ? `${internationalSeries.opponentNationCode} LEADS ${internationalSeries.seriesLosses} - ${internationalSeries.seriesWins}`
+                  : `SERIES LEVEL ${internationalSeries.seriesWins} - ${internationalSeries.seriesLosses}`}
+              </span>
+            </div>
+
+            <div>
+              <h3 className="text-sm font-black font-display text-white uppercase tracking-wider">
+                {internationalSeries.userNationName.toUpperCase()} TOUR OF {internationalSeries.opponentNationName.toUpperCase()}
+              </h3>
+              <p className="text-xs text-slate-300 mt-0.5">
+                5-Match International Bilateral Series · 15-Man National Squad on Active Tour
+              </p>
+            </div>
+
+            {/* Next Match or Series Status */}
+            {(() => {
+              const nextM = internationalSeries.matches.find(m => !m.completed);
+              if (nextM) {
+                const ordinals = ['1st', '2nd', '3rd', '4th', '5th'];
+                return (
+                  <div className="p-3 bg-slate-900/80 rounded-xl border border-cyan-500/30 flex items-center justify-between">
+                    <div>
+                      <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                        <span>{internationalSeries.opponentNationFlag} v {internationalSeries.userNationFlag}</span>
+                        <span>{ordinals[nextM.matchNumber - 1] || `${nextM.matchNumber}th`} T20I</span>
+                      </span>
+                      <span className="text-[10px] text-slate-400 block font-mono mt-0.5">
+                        {nextM.venue} ({nextM.city})
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => {
+                          sound.playCrowdCheer(0.8);
+                          startInternationalMatch(
+                            internationalSeries.opponentNationName,
+                            internationalSeries.userNationName,
+                            nextM.venue,
+                            'T20'
+                          );
+                        }}
+                        className="px-3 py-1.5 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-black text-[11px] rounded-lg tracking-wider uppercase shadow-md active:scale-95 transition-all"
+                      >
+                        PLAY LIVE
+                      </button>
+                      <button
+                        onClick={() => {
+                          sound.playTap();
+                          startInternationalMatch(
+                            internationalSeries.opponentNationName,
+                            internationalSeries.userNationName,
+                            nextM.venue,
+                            'T20'
+                          );
+                          setTimeout(() => simEntireMatch(), 250);
+                        }}
+                        className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-400/30 font-bold text-[11px] rounded-lg tracking-wider uppercase active:scale-95 transition-all"
+                      >
+                        SIM
+                      </button>
+                    </div>
+                  </div>
+                );
+              } else {
+                return (
+                  <div className="p-3 bg-emerald-950/40 rounded-xl border border-emerald-500/40 text-xs text-center text-emerald-300 font-bold">
+                    🏆 Bilateral Tour Concluded! Series complete.
+                  </div>
+                );
+              }
+            })()}
+
+            {/* Advance / Pre-season Action */}
+            <div className="pt-1 flex items-center gap-2">
+              <button
+                onClick={() => {
+                  sound.playTap();
+                  setActiveTab('world');
+                }}
+                className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs uppercase tracking-wider rounded-xl border border-slate-700 active:scale-95 transition-all text-center"
+              >
+                VIEW WORLD STAGE
+              </button>
+              <button
+                onClick={() => {
+                  sound.playCrowdCheer(0.8);
+                  setCareerPhase('retention');
+                  showToast('Entering Club Off-Season & Retentions');
+                }}
+                className="flex-1 py-2.5 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-black font-black text-xs uppercase tracking-wider rounded-xl shadow-lg shadow-amber-500/20 active:scale-95 transition-all text-center"
+              >
+                PROCEED TO CLUB RETENTIONS ▶
+              </button>
             </div>
           </div>
         )}
@@ -1856,6 +1971,10 @@ export const HubScreen: React.FC = () => {
           setCareerPhase('career_decision');
         }}
         userTeam={userTeam}
+        standings={currentLeague.standings}
+        calendarDates={currentLeague.calendarDates}
+        players={players}
+        completedMatchesHistory={completedMatchesHistory}
         userStanding={currentLeague.standings.find(s => s.teamId === userTeam.id)}
         userStandingRank={(() => {
           const sorted = [...(currentLeague.standings || [])].sort((a, b) => b.points - a.points || b.nrr - a.nrr);
@@ -1864,6 +1983,7 @@ export const HubScreen: React.FC = () => {
         })()}
         seasonYear={activeSeasonYear}
         reviewData={careerBoardReview}
+        onSaveReview={setCareerBoardReview}
       />
 
       {/* 2. Set Up Your Next Season (Offers / Career Decision) */}
@@ -1872,7 +1992,7 @@ export const HubScreen: React.FC = () => {
         onClose={() => setIsNextSeasonSetupOpen(false)}
         onProceed={(selectedClubId, selectedCountryId) => {
           if (selectedClubId !== userTeam.id) {
-            selectUserTeam(selectedClubId);
+            switchUserClub(selectedClubId);
           }
           if (selectedCountryId && selectedCountryId !== 'none') {
             coachProfile.nationalTeamId = selectedCountryId;
@@ -1891,9 +2011,13 @@ export const HubScreen: React.FC = () => {
         nationName={coachProfile.nationalTeamId ? (nations.find(n => n.id === coachProfile.nationalTeamId)?.name || 'National Team') : 'National Team'}
         playerPool={players}
         onConfirmSquad={(selectedPlayerIds) => {
-          setNationalSquadIds(selectedPlayerIds);
-          setCareerPhase('retention');
-          showToast('15-Man National Squad confirmed!');
+          const res = confirmNationalSquad(coachProfile.nationalTeamId || '', selectedPlayerIds);
+          if (res.success) {
+            setCareerPhase('international_series');
+            showToast('15-Man National Squad confirmed! International tour underway.');
+          } else {
+            showToast(res.error || 'Failed to confirm national squad');
+          }
         }}
       />
 
@@ -1951,6 +2075,7 @@ export const HubScreen: React.FC = () => {
         userTeam={userTeam}
         userSquad={userTeamPlayers}
         currentPurseCr={postSeasonPurseCr}
+        seasonYear={activeSeasonYear}
       />
 
       {/* 6. Auction Hall Overview Screen */}
@@ -1977,8 +2102,13 @@ export const HubScreen: React.FC = () => {
         squad={userTeamPlayers}
         nextSeasonYear={activeSeasonYear + 1}
         onConfirmNextSeason={() => {
-          setCareerPhase('off_season_rest');
-          showToast('Squad confirmed! Resting team during off-season.');
+          const res = confirmClubSquad(userTeam.id, userTeamPlayers.map(p => p.id));
+          if (res.success) {
+            setCareerPhase('off_season_rest');
+            showToast('Squad confirmed! Resting team during off-season.');
+          } else {
+            showToast(res.error || 'Squad does not meet IPL requirements.');
+          }
         }}
       />
 

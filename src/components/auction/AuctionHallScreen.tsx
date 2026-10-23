@@ -46,7 +46,7 @@ export const AuctionHallScreen: React.FC<AuctionHallScreenProps> = ({
           ? userReleasedNames
           : c.releasedPlayers;
       const effectivePurse =
-        typeof userPurseCr === 'number' && userPurseCr <= 65
+        typeof userPurseCr === 'number'
           ? userPurseCr
           : c.purseCr;
 

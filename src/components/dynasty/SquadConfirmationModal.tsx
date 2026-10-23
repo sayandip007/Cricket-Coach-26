@@ -11,6 +11,32 @@ interface SquadConfirmationModalProps {
   onConfirmNextSeason: () => void;
 }
 
+export function validateFranchiseSquadLimits(squad: Player[]): {
+  isValid: boolean;
+  totalCount: number;
+  overseasCount: number;
+  isSquadSizeValid: boolean;
+  isOverseasValid: boolean;
+  errors: string[];
+} {
+  const totalCount = squad.length;
+  const overseasCount = squad.filter(p => p.isOverseas || (p.country && p.country.toLowerCase() !== 'india')).length;
+  const isSquadSizeValid = totalCount >= 16 && totalCount <= 25;
+  const isOverseasValid = overseasCount <= 8;
+  const errors: string[] = [];
+  if (totalCount < 16) errors.push(`Squad size (${totalCount}) is below minimum of 16 players`);
+  if (totalCount > 25) errors.push(`Squad size (${totalCount}) exceeds maximum of 25 players`);
+  if (overseasCount > 8) errors.push(`Overseas count (${overseasCount}) exceeds maximum of 8`);
+  return {
+    isValid: isSquadSizeValid && isOverseasValid,
+    totalCount,
+    overseasCount,
+    isSquadSizeValid,
+    isOverseasValid,
+    errors
+  };
+}
+
 export const SquadConfirmationModal: React.FC<SquadConfirmationModalProps> = ({
   isOpen,
   userTeam,
@@ -20,12 +46,8 @@ export const SquadConfirmationModal: React.FC<SquadConfirmationModalProps> = ({
 }) => {
   if (!isOpen) return null;
 
-  const totalCount = squad.length;
-  const overseasCount = squad.filter(p => p.isOverseas || p.country !== 'India').length;
-
-  const isSquadSizeValid = totalCount >= 16 && totalCount <= 25;
-  const isOverseasValid = overseasCount <= 8;
-  const isValid = isSquadSizeValid && isOverseasValid;
+  const validation = validateFranchiseSquadLimits(squad);
+  const { totalCount, overseasCount, isSquadSizeValid, isOverseasValid, isValid } = validation;
 
   return (
     <div className="fixed inset-0 z-50 bg-[#070b12] text-slate-100 flex flex-col justify-between max-w-md mx-auto overflow-hidden animate-in fade-in duration-200">

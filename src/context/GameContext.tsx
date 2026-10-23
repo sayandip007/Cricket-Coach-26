@@ -1347,6 +1347,10 @@ interface GameContextType {
   jobOffers: JobOffer[];
   acceptJobOffer: (offer: JobOffer) => void;
   resignNationalJob: () => void;
+  confirmNationalSquad: (nationIdOrName: string, selectedPlayerIds: string[]) => { success: boolean; error?: string };
+  switchUserClub: (newClubId: string) => void;
+  validateClubSquad: (teamId?: string) => { isValid: boolean; errors: string[] };
+  confirmClubSquad: (teamId: string, squadPlayerIds: string[]) => { success: boolean; error?: string };
   advanceCalendarDay: () => void;
   setCalendarDateIndex: (idx: number) => void;
   // Phase 13 Settings & Multi-Slot Save Manager
@@ -1942,6 +1946,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       nationalSquadIds: string[];
       internationalSeries: InternationalSeriesState;
       tournamentHonors: TournamentHonor[];
+      careerPhase?: CareerPhase;
+      careerBoardReview?: CareerBoardReview | null;
     }
   ) => {
     const nowStr = new Date().toLocaleString([], {
@@ -1998,7 +2004,9 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       inboxMessages: (snap.inboxMessages || []).slice(0, 8),
       nationalSquadIds: snap.nationalSquadIds,
       internationalSeries: snap.internationalSeries,
-      tournamentHonors: sanitizeTournamentHonors(snap.tournamentHonors)
+      tournamentHonors: sanitizeTournamentHonors(snap.tournamentHonors),
+      careerPhase: snap.careerPhase || careerPhase,
+      careerBoardReview: snap.careerBoardReview !== undefined ? snap.careerBoardReview : careerBoardReview
     };
 
     const serialized = JSON.stringify(payload);
@@ -2109,6 +2117,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (Array.isArray(parsed.inboxMessages)) setInboxMessages(parsed.inboxMessages);
       if (Array.isArray(parsed.nationalSquadIds)) setNationalSquadIds(parsed.nationalSquadIds);
       if (parsed.internationalSeries) setInternationalSeries(parsed.internationalSeries);
+      if (parsed.careerPhase) setCareerPhase(parsed.careerPhase);
+      if (parsed.careerBoardReview !== undefined) setCareerBoardReview(parsed.careerBoardReview);
       const cleanedHonors = sanitizeTournamentHonors(parsed.tournamentHonors);
       setTournamentHonors(cleanedHonors);
       localStorage.setItem('ms_tournament_honors_v6', JSON.stringify(cleanedHonors));
@@ -2416,9 +2426,51 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     sound.playTap();
   }, [activeSaveSlot, coachProfile.name, coachProfile.age, coachProfile.nationality, coachProfile.difficulty, setActiveSaveSlot, setHomePitch, setNationalSquadIds, writeSlotSnapshot]);
 
+  const switchUserClub = useCallback((newClubId: string) => {
+    const targetClub = teams.find(t => t.id === newClubId);
+    if (!targetClub) return;
+
+    setTeams(prev => prev.map(t => ({
+      ...t,
+      isUserTeam: t.id === newClubId
+    })));
+
+    setCoachProfile(prev => {
+      const prevStints = prev.clubStints || [];
+      const activeLeague = leagues.find(l => l.id === currentLeagueId) || leagues[0];
+      const currentYearStr = normalizeSeasonYear(activeLeague?.seasonName || activeLeague?.seasonYear);
+      const updatedStints = [
+        ...prevStints.map((s, idx) =>
+          idx === prevStints.length - 1 && s.teamId !== newClubId
+            ? { ...s, period: s.period.replace('–present', `–${currentYearStr}`) }
+            : s
+        ),
+        ...(prevStints.some(s => s.teamId === newClubId) ? [] : [{
+          id: `stint_${newClubId}_${Date.now()}`,
+          teamId: newClubId,
+          teamName: targetClub.city || targetClub.name,
+          period: `${currentYearStr}–present`,
+          seasons: 1,
+          matches: 0,
+          wins: 0,
+          losses: 0,
+          winPct: 0,
+          titles: 0
+        }])
+      ];
+
+      return {
+        ...prev,
+        clubTeamId: newClubId,
+        clubStints: updatedStints
+      };
+    });
+    sound.playTap();
+  }, [teams, leagues, currentLeagueId]);
+
   const selectUserTeam = useCallback((teamId: string) => {
-    startNewCareer(teamId);
-  }, [startNewCareer]);
+    switchUserClub(teamId);
+  }, [switchUserClub]);
 
   const replyToInboxMessage = useCallback((
     messageId: string,
@@ -2577,13 +2629,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           ...n,
           isUserManaging: n.id === nation.id
         })));
-        const natPlayers = players.filter(p => p.country === nation.name).slice(0, 15).map(p => p.id);
-        if (natPlayers.length >= 11) {
-          setNationalSquadIds(natPlayers);
-        } else {
-          const fallbackIds = [...natPlayers, ...players.filter(p => !natPlayers.includes(p.id)).slice(0, 15 - natPlayers.length).map(p => p.id)];
-          setNationalSquadIds(fallbackIds);
-        }
+        const natPlayers = players.filter(p => p.country.toLowerCase() === nation.name.toLowerCase()).slice(0, 15).map(p => p.id);
+        setNationalSquadIds(natPlayers);
         setInternationalSeries(buildInitialSeriesForNation(nation, nations));
         unlockAchievement('ach_55');
         if ((nation.rankT20 ?? 99) <= 4 || (nation.rankODI ?? 99) <= 4 || (nation.rankTest ?? 99) <= 4) {
@@ -2601,12 +2648,99 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     sound.playTap();
   }, []);
 
+  const confirmNationalSquad = useCallback((nationIdOrName: string, selectedPlayerIds: string[]): { success: boolean; error?: string } => {
+    const targetNation = nations.find(n => n.id === nationIdOrName || n.name.toLowerCase() === nationIdOrName.toLowerCase());
+    if (!targetNation) {
+      return { success: false, error: `Nation "${nationIdOrName}" was not found.` };
+    }
+
+    if (!selectedPlayerIds || selectedPlayerIds.length !== 15) {
+      return { success: false, error: `A national squad must contain exactly 15 players (selected: ${selectedPlayerIds?.length || 0}).` };
+    }
+
+    const uniqueIds = new Set(selectedPlayerIds);
+    if (uniqueIds.size !== 15) {
+      return { success: false, error: 'Duplicate players selected in national squad.' };
+    }
+
+    const nationLower = targetNation.name.toLowerCase();
+    for (const pid of selectedPlayerIds) {
+      const p = players.find(pl => pl.id === pid);
+      if (!p) {
+        return { success: false, error: `Player ID ${pid} does not exist in player database.` };
+      }
+      if (p.country.toLowerCase() !== nationLower) {
+        return { success: false, error: `Player ${p.name} (${p.country}) does not represent ${targetNation.name}. Foreign players are strictly prohibited.` };
+      }
+    }
+
+    setNationalSquadIds(selectedPlayerIds);
+    setCoachProfile(prev => ({ ...prev, nationalTeamId: targetNation.id }));
+    setNations(prev => prev.map(n => ({
+      ...n,
+      isUserManaging: n.id === targetNation.id
+    })));
+    setInternationalSeries(buildInitialSeriesForNation(targetNation, nations));
+    setCareerPhase('international_series');
+    sound.playCrowdCheer(0.8);
+    return { success: true };
+  }, [nations, players, setNationalSquadIds, setCareerPhase]);
+
+  const validateClubSquad = useCallback((teamId?: string): { isValid: boolean; errors: string[] } => {
+    const targetId = teamId || userTeam.id;
+    const targetTeam = teams.find(t => t.id === targetId) || userTeam;
+    const squad = targetTeam.squad || [];
+    const errors: string[] = [];
+
+    if (squad.length < 16) {
+      errors.push(`Squad size (${squad.length}) is below the minimum IPL limit of 16 players.`);
+    } else if (squad.length > 25) {
+      errors.push(`Squad size (${squad.length}) exceeds the maximum IPL limit of 25 players.`);
+    }
+
+    const overseasCount = squad.filter(p => p.isOverseas || (p.country && p.country.toLowerCase() !== 'india')).length;
+    if (overseasCount > 8) {
+      errors.push(`Overseas player count (${overseasCount}) exceeds the maximum IPL limit of 8.`);
+    }
+
+    return { isValid: errors.length === 0, errors };
+  }, [teams, userTeam]);
+
+  const confirmClubSquad = useCallback((teamId: string, squadPlayerIds: string[]): { success: boolean; error?: string } => {
+    const targetTeam = teams.find(t => t.id === teamId);
+    if (!targetTeam) return { success: false, error: `Team ${teamId} not found.` };
+
+    const squadPlayers = squadPlayerIds.map(id => players.find(p => p.id === id)).filter((p): p is Player => Boolean(p));
+    if (squadPlayers.length !== squadPlayerIds.length) {
+      return { success: false, error: 'One or more player IDs are invalid.' };
+    }
+
+    if (squadPlayers.length < 16 || squadPlayers.length > 25) {
+      return { success: false, error: `Squad size (${squadPlayers.length}) must be between 16 and 25 players.` };
+    }
+
+    const overseas = squadPlayers.filter(p => p.isOverseas || (p.country && p.country.toLowerCase() !== 'india')).length;
+    if (overseas > 8) {
+      return { success: false, error: `Overseas players (${overseas}) exceeds maximum IPL limit of 8.` };
+    }
+
+    setTeams(prev => prev.map(t => {
+      if (t.id !== teamId) return t;
+      return {
+        ...t,
+        squad: squadPlayers
+      };
+    }));
+
+    setCareerPhase('off_season_rest');
+    sound.playTap();
+    return { success: true };
+  }, [teams, players, setCareerPhase]);
+
   const buildTempNationalTeam = useCallback((nationName: string, playerPool: Player[]): Team => {
     const natObj = nations.find(n => n.name.toLowerCase() === nationName.toLowerCase());
     const countryMatches = playerPool.filter(p => p.country.toLowerCase() === nationName.toLowerCase());
-    const squad = countryMatches.length >= 11
-      ? countryMatches.slice(0, 15)
-      : [...countryMatches, ...playerPool.filter(p => p.country.toLowerCase() !== nationName.toLowerCase()).slice(0, 15 - countryMatches.length)];
+    const squad = countryMatches.slice(0, 15);
     return {
       id: natObj?.id || `nat_${nationName.toLowerCase().replace(/\s+/g, '_')}`,
       name: nationName,
@@ -5953,6 +6087,10 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         jobOffers,
         acceptJobOffer,
         resignNationalJob,
+        confirmNationalSquad,
+        switchUserClub,
+        validateClubSquad,
+        confirmClubSquad,
         advanceCalendarDay,
         setCalendarDateIndex,
         settings,

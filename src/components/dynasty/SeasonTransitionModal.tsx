@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Gavel, RefreshCw, Play } from 'lucide-react';
 import { sound } from '../../utils/soundEffects';
+import { getAuctionCycleInfo } from '../../utils/auctionSandboxEngine';
 
 interface SeasonTransitionModalProps {
   isOpen: boolean;
@@ -34,8 +35,8 @@ export const SeasonTransitionModal: React.FC<SeasonTransitionModalProps> = ({
           <h2 className="text-base font-black font-display text-white mt-2.5">
             How do you want to start the new season?
           </h2>
-          <p className="text-xs text-slate-400 mt-0.5">
-            Mega auction in 2 years.
+          <p className="text-xs text-slate-300 mt-0.5">
+            {getAuctionCycleInfo(nextSeasonYear).megaAuctionNotice}
           </p>
         </div>
 

@@ -18,14 +18,10 @@ export const InternationalSquadModal: React.FC<InternationalSquadModalProps> = (
   initialSelectedIds = [],
   onConfirmSquad
 }) => {
-  // Filter eligible players for this nation
+  // Filter eligible players strictly for this nation (never supplement with players from other countries)
   const eligiblePlayers = useMemo(() => {
     const nationLower = nationName.toLowerCase();
-    const matches = playerPool.filter(p => p.country.toLowerCase() === nationLower);
-    if (matches.length >= 15) return matches;
-    // Supplement if nation pool is smaller than 15
-    const supplement = playerPool.filter(p => p.country.toLowerCase() !== nationLower);
-    return [...matches, ...supplement].slice(0, 30);
+    return playerPool.filter(p => p.country.toLowerCase() === nationLower);
   }, [nationName, playerPool]);
 
   // Initial 15 selection

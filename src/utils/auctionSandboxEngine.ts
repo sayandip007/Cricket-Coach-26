@@ -602,3 +602,42 @@ export function buildAuctionSandboxState(params: {
     retainedPlayerIdsAllTeams: Array.from(allRetainedIds)
   };
 }
+
+export function getAuctionCycleInfo(seasonYear: number): {
+  isMegaAuction: boolean;
+  auctionTypeLabel: 'MEGA AUCTION' | 'MINI AUCTION';
+  yearsUntilMega: number;
+  megaAuctionNotice: string;
+} {
+  const normalizedYear = typeof seasonYear === 'number' && !isNaN(seasonYear) ? seasonYear : 2026;
+  const offset = ((normalizedYear - 2025) % 3 + 3) % 3;
+  const isMega = offset === 0;
+  const yearsUntilMega = isMega ? 0 : 3 - offset;
+  const targetMegaYear = normalizedYear + yearsUntilMega;
+  const megaAuctionNotice = isMega
+    ? `Mega Auction active for Season ${normalizedYear}`
+    : yearsUntilMega === 1
+    ? `Mega auction next season (Season ${targetMegaYear})`
+    : `Mega auction in ${yearsUntilMega} years (Season ${targetMegaYear})`;
+
+  return {
+    isMegaAuction: isMega,
+    auctionTypeLabel: isMega ? 'MEGA AUCTION' : 'MINI AUCTION',
+    yearsUntilMega,
+    megaAuctionNotice
+  };
+}
+
+export function getPlayerAuthoritativeSalaryCr(p: Player): number {
+  if (typeof p.contractValueCr === 'number' && p.contractValueCr > 0) {
+    return Number(p.contractValueCr.toFixed(2));
+  }
+  if (typeof p.salaryCr === 'number' && p.salaryCr > 0) {
+    return Number(p.salaryCr.toFixed(2));
+  }
+  if (typeof p.basePriceCr === 'number' && p.basePriceCr > 0) {
+    return Number(p.basePriceCr.toFixed(2));
+  }
+  return 0.5;
+}
+

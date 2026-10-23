@@ -3,6 +3,7 @@ import { ArrowLeft, MinusCircle, CheckCircle, Calendar, ChevronRight } from 'luc
 import { Team, Player } from '../../types/cricket';
 import { useGame } from '../../context/GameContext';
 import { sound } from '../../utils/soundEffects';
+import { getAuctionCycleInfo, getPlayerAuthoritativeSalaryCr } from '../../utils/auctionSandboxEngine';
 
 interface MiniAuctionReleasesModalProps {
   isOpen: boolean;
@@ -11,6 +12,7 @@ interface MiniAuctionReleasesModalProps {
   userTeam: Team;
   userSquad: Player[];
   currentPurseCr?: number;
+  seasonYear?: number;
 }
 
 export const MiniAuctionReleasesModal: React.FC<MiniAuctionReleasesModalProps> = ({
@@ -19,35 +21,19 @@ export const MiniAuctionReleasesModal: React.FC<MiniAuctionReleasesModalProps> =
   onProceedToAuctionHall,
   userTeam,
   userSquad,
-  currentPurseCr = 20.85
+  currentPurseCr = 20.85,
+  seasonYear = 2026
 }) => {
   const { releasePlayersForAuction } = useGame();
   const [releasedIds, setReleasedIds] = useState<string[]>([]);
 
   if (!isOpen) return null;
 
-  // Compute player salary in cr
-  const getSalaryCr = (p: Player): number => {
-    if (p.name.includes('Chakravarthy')) return 12.0;
-    if (p.name.includes('Narine')) return 12.0;
-    if (p.name.includes('Ravindra')) return 2.0;
-    if (p.name.includes('Pathirana')) return 18.0;
-    if (p.name.includes('Allen')) return 2.0;
-    if (p.name.includes('Rinku')) return 13.0;
-    if (p.name.includes('Pandya')) return 16.35;
-    if (p.name.includes('Rana')) return 4.0;
-    if (p.name.includes('Ashutosh')) return 3.80;
-    if (p.name.includes('Shepherd')) return 1.50;
-    if (p.name.includes('Malik')) return 0.75;
-    if (p.name.includes('Raghuvanshi')) return 3.0;
-    if (p.name.includes('Arora')) return 1.80;
-    if (p.name.includes('Saurabh')) return 2.0;
-    if (p.name.includes('Ramandeep')) return 4.0;
-    if (p.name.includes('Pandey')) return 0.75;
-    if (p.name.includes('Ranjan')) return 0.30;
-    if (p.name.includes('Roy')) return 0.40;
-    return p.basePriceCr || 1.5;
-  };
+  // Determine auction cycle and upcoming mega auction dynamically
+  const cycle = getAuctionCycleInfo(seasonYear + 1);
+
+  // Authoritative player salary from contract/retention values
+  const getSalaryCr = (p: Player): number => getPlayerAuthoritativeSalaryCr(p);
 
   const totalRefundCr = releasedIds.reduce((sum, id) => {
     const p = userSquad.find(pl => pl.id === id);
@@ -77,7 +63,7 @@ export const MiniAuctionReleasesModal: React.FC<MiniAuctionReleasesModalProps> =
           <ArrowLeft className="w-5 h-5" />
         </button>
         <h2 className="text-xs font-black font-display tracking-widest text-white uppercase">
-          MINI AUCTION RELEASES
+          {cycle.auctionTypeLabel} RELEASES
         </h2>
       </div>
 
@@ -92,15 +78,15 @@ export const MiniAuctionReleasesModal: React.FC<MiniAuctionReleasesModalProps> =
               {userTeam.name.toUpperCase()}
             </h3>
             <p className="text-[11px] text-slate-400">
-              Tap a player to release them and free their salary
+              Tap a player to release them and free their contract salary
             </p>
           </div>
         </div>
 
-        {/* Mega auction alert box */}
-        <div className="bg-[#0f172a] rounded-xl border border-slate-800/80 px-3 py-2 flex items-center gap-2 text-slate-400 text-xs">
-          <Calendar className="w-4 h-4 text-slate-500 shrink-0" />
-          <span>Mega auction in 2 years.</span>
+        {/* Dynamic auction alert box */}
+        <div className="bg-[#0f172a] rounded-xl border border-slate-800/80 px-3 py-2 flex items-center gap-2 text-slate-300 text-xs">
+          <Calendar className="w-4 h-4 text-amber-400 shrink-0" />
+          <span>{cycle.megaAuctionNotice}</span>
         </div>
       </div>
 

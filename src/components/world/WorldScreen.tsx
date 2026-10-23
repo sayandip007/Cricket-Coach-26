@@ -38,16 +38,10 @@ export const WorldScreen: React.FC = () => {
 
   const currentRank = coachedNation ? sortedNations.findIndex(n => n.id === coachedNation.id) + 1 : 1;
 
-  // Candidate pool for the coached nation (or top domestic/overseas players if < 15 exist for that country)
-  const nationPool = (() => {
-    if (!coachedNation) return [];
-    const exact = players.filter(p => p.country.toLowerCase() === coachedNation.name.toLowerCase());
-    if (exact.length >= 15) return exact;
-    const extras = players
-      .filter(p => p.country.toLowerCase() !== coachedNation.name.toLowerCase())
-      .slice(0, 18 - exact.length);
-    return [...exact, ...extras];
-  })();
+  // Candidate pool strictly for the coached nation (never supplemented with foreign players)
+  const nationPool = coachedNation
+    ? players.filter(p => p.country.toLowerCase() === coachedNation.name.toLowerCase())
+    : [];
 
   const handleToggleNationalPlayer = (id: string) => {
     sound.playTap();

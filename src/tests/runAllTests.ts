@@ -98,7 +98,7 @@ function runTest(suite: 'UNIT' | 'SMOKE' | 'REGRESSION', name: string, fn: () =>
 
 runTest('SMOKE', 'CSV_PLAYERS contains all 265 verified players with complete 18-attribute ratings & stats', () => {
   assert.equal(CSV_PLAYERS.length, 265, `Expected 265 CSV players, got ${CSV_PLAYERS.length}`);
-  assert.equal(INITIAL_PLAYERS.length, 265);
+  assert.ok(INITIAL_PLAYERS.length >= 265, `Expected at least 265 players in INITIAL_PLAYERS, got ${INITIAL_PLAYERS.length}`);
 
   const ids = new Set<string>();
   for (const p of CSV_PLAYERS) {
@@ -1950,7 +1950,7 @@ runTest('REGRESSION', 'Phase 26: Cricket Engine Bugfixes — Bowler Selection, 5
   assert.equal(bugRes.passed, bugRes.total, `Expected all ${bugRes.total} cricket bugs regression tests to pass`);
 });
 
-runTest('REGRESSION', 'Phase 27: Career Mode Progression, Playoff Brackets, Board Review & Next-Season Advancement (Scenarios 1–30)', () => {
+runTest('REGRESSION', 'Phase 27: Career Mode Progression, Playoff Brackets, Board Review & Next-Season Advancement (Scenarios 1–40)', () => {
   const careerRes = runCareerProgressionTests();
   assert.equal(careerRes.passed, careerRes.total, `Expected all ${careerRes.total} career progression regression scenarios to pass`);
 });

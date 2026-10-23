@@ -540,6 +540,7 @@ export type CareerPhase =
   | 'squad_confirmation'
   | 'off_season_rest'
   | 'international_squad_selection'
+  | 'international_series'
   | 'next_season_ready';
 
 export interface ObjectiveResult {
