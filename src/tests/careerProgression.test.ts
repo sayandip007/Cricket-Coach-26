@@ -2019,6 +2019,43 @@ export function runCareerProgressionTests() {
     'Scenario 3: Restoring existing series preserves its original ID without generating a new one'
   );
 
+  // Part 4 Scenarios: International Series Validity
+  // Part 4 Scenario 7: Empty nation dataset fails safely
+  assert.throws(
+    () => buildInitialSeriesForNation(ausNation, [], undefined, 1),
+    /nations dataset is empty/i,
+    'Part 4 Scenario 7: Empty nation dataset fails safely'
+  );
+
+  // Part 4 Scenario 8: A single nation cannot play itself
+  assert.throws(
+    () => buildInitialSeriesForNation(ausNation, [ausNation], undefined, 1),
+    /no eligible opponent nation available/i,
+    'Part 4 Scenario 8: A single nation cannot play itself'
+  );
+
+  // Part 4 Scenario 9: Missing coached nation fails safely
+  assert.throws(
+    () => buildInitialSeriesForNation(null as any, baseNations, undefined, 1),
+    /coached nation is missing or invalid/i,
+    'Part 4 Scenario 9: Missing coached nation fails safely'
+  );
+
+  // Part 4 Scenario 10: Invalid opponent fails without state mutation
+  assert.throws(
+    () => buildInitialSeriesForNation(ausNation, [ausNation], 'non_existent_opp_999', 1),
+    /no eligible opponent nation available/i,
+    'Part 4 Scenario 10: Invalid opponent fails safely without creating an opponent'
+  );
+
+  // Part 4 Scenario 11: Valid opponent produces valid schedule
+  const validScheduleSeries = buildInitialSeriesForNation(ausNation, baseNations, indNation.id, 1);
+  assert.equal(validScheduleSeries.matches.length, 5, 'Part 4 Scenario 11: Valid opponent produces 5 scheduled fixtures');
+  assert.ok(
+    validScheduleSeries.matches.every((m, idx) => m.matchNumber === idx + 1 && m.city.length > 0 && m.venue.length > 0 && m.completed === false),
+    'Part 4 Scenario 11: Scheduled fixtures have valid numbers, cities, venues, and completed: false'
+  );
+
   // Scenario 4: Two series between same nations have distinct IDs
   const seriesNationPair1 = buildInitialSeriesForNation(
     ausNation,

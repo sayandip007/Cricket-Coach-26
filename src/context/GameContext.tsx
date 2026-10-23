@@ -1386,14 +1386,39 @@ export function buildInitialSeriesForNation(
   existingSeriesIds: Iterable<string> = [],
   options?: BuildInitialSeriesOptions
 ): InternationalSeriesState {
-  const candidates = allNations.filter(n => n.id !== userNat.id && n.name.toLowerCase() !== userNat.name.toLowerCase());
+  if (!userNat || typeof userNat !== 'object' || !userNat.id || !userNat.name) {
+    throw new Error('Cannot create international series: coached nation is missing or invalid.');
+  }
+
+  if (!Array.isArray(allNations) || allNations.length === 0) {
+    throw new Error('Cannot create international series: nations dataset is empty.');
+  }
+
+  const userNatNameLower = userNat.name.trim().toLowerCase();
+  const candidates = allNations.filter(
+    n => n && typeof n === 'object' && n.id !== userNat.id && n.name && n.name.trim().toLowerCase() !== userNatNameLower
+  );
+
+  if (candidates.length === 0) {
+    throw new Error(`Cannot create international series: no eligible opponent nation available against ${userNat.name}.`);
+  }
+
   const oppNat =
-    (preferredOpponentId ? candidates.find(n => n.id === preferredOpponentId || n.name.toLowerCase() === preferredOpponentId.toLowerCase()) : undefined) ||
+    (preferredOpponentId
+      ? candidates.find(
+          n =>
+            n.id === preferredOpponentId ||
+            n.name.trim().toLowerCase() === preferredOpponentId.trim().toLowerCase()
+        )
+      : undefined) ||
     (userNat.name === 'South Africa'
       ? candidates.find(n => n.name === 'India')
       : candidates.find(n => n.name === 'South Africa')) ||
-    candidates[0] ||
-    allNations[0];
+    candidates[0];
+
+  if (!oppNat || oppNat.id === userNat.id || oppNat.name.trim().toLowerCase() === userNatNameLower) {
+    throw new Error(`Cannot create international series: resolved opponent nation is invalid or identical to coached nation ${userNat.name}.`);
+  }
 
   const uCode = userNat.code || userNat.name.slice(0, 3).toUpperCase();
   const oCode = oppNat.code || oppNat.name.slice(0, 3).toUpperCase();
