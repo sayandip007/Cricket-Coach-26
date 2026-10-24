@@ -6435,68 +6435,108 @@ export function runCareerProgressionTests() {
     assert.equal(loaded41.league.calendarDates[0].matchFixture.completed, true, 'REQ 41.12c: Loaded save preserves calendar completed state');
     assert.equal(loaded41.nations.find((n: any) => n.id === 'nat_ind').ratingT20, step1.nations.find(n => n.id === 'nat_ind')?.ratingT20, 'REQ 41.12d: Loaded save preserves ratingT20');
 
-    // 13. An unrelated league contains the supplied fixture ID with the same matchNumber as an unfinished international series match
-    const unrelatedLeagueWithOverlap: League = {
-      ...INITIAL_LEAGUES[1],
-      id: 'league_domestic_overlap_41',
-      calendarDates: [
+    // 13. Unsafe recovery bypass closed: arbitrary explicit fixture ID cannot complete match when series match has missing fixtureId and calendar metadata is unproven
+    const seriesMissingFixId: InternationalSeriesState = {
+      ...step1.internationalSeries,
+      matches: [
+        step1.internationalSeries.matches[0],
         {
-          id: 'cal_overlap_1',
-          dateStr: '2026-09-01',
-          dayNumber: 1,
-          month: 'September',
-          dayOfWeek: 'Tuesday',
-          type: 'match',
+          matchNumber: 2,
+          format: 'T20',
+          venue: 'Eden Gardens, Kolkata',
+          city: 'Kolkata',
+          completed: false,
+          fixtureId: undefined // Unfinished series match has missing fixtureId
+        },
+        step1.internationalSeries.matches[2]
+      ]
+    };
+
+    const leagueUnprovenMetadata: League = {
+      ...step1.leagues[0],
+      calendarDates: [
+        step1.leagues[0].calendarDates[0],
+        {
+          ...step1.leagues[0].calendarDates[1],
           matchFixture: {
-            id: 'unrelated_overlap_fixture_101',
-            homeTeamId: 'team_mum',
-            awayTeamId: 'team_kol',
-            homeTeamName: 'Mumbai Lions',
-            awayTeamName: 'Kolkata Knights',
-            venue: 'Wankhede Stadium, Mumbai',
+            ...step1.leagues[0].calendarDates[1].matchFixture!,
+            id: 'unproven_explicit_fix_999',
             completed: false,
-            format: 'T20',
-            isInternational: false,
+            seriesId: 'tour_ind_aus_2026',
             matchNumber: 2
+            // Lacks expectedFixtureId / canonicalFixtureId link!
           } as any
-        }
-      ],
-      currentDateIndex: 0
+        },
+        step1.leagues[0].calendarDates[2]
+      ]
     };
-    const overlapMatchCallback: MatchLiveState = {
+
+    const unprovenCallbackMatch: MatchLiveState = {
       ...finishedMatch41_1,
-      id: 'unrelated_overlap_fixture_101',
-      fixtureId: 'unrelated_overlap_fixture_101',
-      leagueId: 'league_domestic_overlap_41',
-      homeTeam: {
-        ...finishedMatch41_1.homeTeam,
-        id: 'team_mum',
-        name: 'Mumbai Lions'
-      },
-      awayTeam: {
-        ...finishedMatch41_1.awayTeam,
-        id: 'team_kol',
-        name: 'Kolkata Knights'
-      }
+      id: 'unproven_explicit_fix_999',
+      fixtureId: 'unproven_explicit_fix_999'
+      // Participants match India vs Australia!
     };
+
     const step13 = applyRecordCompletedInternationalMatchState({
-      finishedMatch: overlapMatchCallback,
+      finishedMatch: unprovenCallbackMatch,
       didUserWin: true,
       coachProfile: intlCoach41,
-      internationalSeries: step1.internationalSeries, // Match 2 is unfinished with matchNumber: 2
-      leagues: [step1.leagues[0], unrelatedLeagueWithOverlap],
-      currentLeagueId: step1.leagues[0].id,
+      internationalSeries: seriesMissingFixId,
+      leagues: [leagueUnprovenMetadata],
+      currentLeagueId: leagueUnprovenMetadata.id,
       nations: step1.nations
     });
-    assert.equal(step13.matchedFixtureId, null, 'REQ 41.13a: Callback for unrelated fixture ID with overlapping matchNumber rejected');
-    assert.equal(step13.internationalSeries.matches[1].completed, false, 'REQ 41.13b: Unfinished active international series match remains completed: false');
-    assert.equal(step13.internationalSeries.seriesWins, step1.internationalSeries.seriesWins, 'REQ 41.13c: Active series wins unchanged');
-    assert.equal(step13.leagues[0].calendarDates[1].matchFixture?.completed, false, 'REQ 41.13d: Active series calendar fixture remains completed: false');
-    assert.equal(step13.leagues[1].calendarDates[0].matchFixture?.completed, false, 'REQ 41.13e: Unrelated domestic league calendar fixture unmutated');
+
+    assert.equal(step13.matchedFixtureId, null, 'REQ 41.13a: Unproven explicit fixture ID rejected');
+    assert.equal(step13.internationalSeries.matches[1].completed, false, 'REQ 41.13b: Series match 2 remains completed: false');
+    assert.equal(step13.internationalSeries.seriesWins, seriesMissingFixId.seriesWins, 'REQ 41.13c: Active series wins count unchanged');
+    assert.equal(step13.leagues[0].calendarDates[1].matchFixture?.completed, false, 'REQ 41.13d: Calendar fixture remains completed: false');
+    assert.deepEqual(step13.nations, step1.nations, 'REQ 41.13e: Nations ICC rankings unchanged');
+
+    // 14. Authoritative recovery mapping succeeds when explicit expectedFixtureId establishes relationship
+    const leagueProvenMetadata: League = {
+      ...step1.leagues[0],
+      calendarDates: [
+        step1.leagues[0].calendarDates[0],
+        {
+          ...step1.leagues[0].calendarDates[1],
+          matchFixture: {
+            ...step1.leagues[0].calendarDates[1].matchFixture!,
+            id: 'proven_custom_fix_777',
+            completed: false,
+            seriesId: 'tour_ind_aus_2026',
+            matchNumber: 2,
+            expectedFixtureId: 'intl_fix_tour_ind_aus_2026_2' // Explicit link proving identity!
+          } as any
+        },
+        step1.leagues[0].calendarDates[2]
+      ]
+    };
+
+    const provenCallbackMatch: MatchLiveState = {
+      ...finishedMatch41_1,
+      id: 'proven_custom_fix_777',
+      fixtureId: 'proven_custom_fix_777'
+    };
+
+    const step14 = applyRecordCompletedInternationalMatchState({
+      finishedMatch: provenCallbackMatch,
+      didUserWin: true,
+      coachProfile: intlCoach41,
+      internationalSeries: seriesMissingFixId,
+      leagues: [leagueProvenMetadata],
+      currentLeagueId: leagueProvenMetadata.id,
+      nations: step1.nations
+    });
+
+    assert.equal(step14.matchedFixtureId, 'proven_custom_fix_777', 'REQ 41.14a: Authoritative recovery mapping matched fixture ID');
+    assert.equal(step14.internationalSeries.matches[1].completed, true, 'REQ 41.14b: Series match 2 completed via authoritative recovery');
+    assert.equal(step14.leagues[0].calendarDates[1].matchFixture?.completed, true, 'REQ 41.14c: Calendar fixture 2 marked completed');
   }
 
   console.log('✅ ALL Career Progression, Multi-League Recovery, International Series IDs, Transition Idempotency & Verified Defect Tests PASSED!');
-  return { passed: 331, total: 331 };
+  return { passed: 334, total: 334 };
 }
 
 

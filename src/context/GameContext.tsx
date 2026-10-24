@@ -5684,14 +5684,21 @@ export function applyRecordCompletedInternationalMatchState(params: {
 
             if (isSeriesIdentical && isPairMatchingSeries && isValidMatchNum && typeof matchNum === 'number') {
               const candidateSeriesMatch: InternationalSeriesMatch | undefined = internationalSeries.matches[matchNum - 1];
-              if (
-                candidateSeriesMatch &&
-                (candidateSeriesMatch.fixtureId === explicitFixtureId ||
-                  `intl_fix_${internationalSeries.seriesId}_${candidateSeriesMatch.matchNumber}` === explicitFixtureId ||
-                  !candidateSeriesMatch.fixtureId)
-              ) {
-                targetMatchIdx = matchNum - 1;
-                break;
+              if (candidateSeriesMatch) {
+                const expectedCanonicalId = `intl_fix_${internationalSeries.seriesId}_${candidateSeriesMatch.matchNumber}`;
+                // Explicit fixture ID must be proven by matching series match fixtureId, canonical ID, or explicit calendar link.
+                // Missing fixtureId on candidateSeriesMatch must NEVER turn an arbitrary ID into an accepted match completion!
+                const isProvenMatch = Boolean(
+                  (candidateSeriesMatch.fixtureId && candidateSeriesMatch.fixtureId === explicitFixtureId) ||
+                    expectedCanonicalId === explicitFixtureId ||
+                    (candFix as any).expectedFixtureId === expectedCanonicalId ||
+                    (candFix as any).canonicalFixtureId === expectedCanonicalId
+                );
+
+                if (isProvenMatch) {
+                  targetMatchIdx = matchNum - 1;
+                  break;
+                }
               }
             }
           }
