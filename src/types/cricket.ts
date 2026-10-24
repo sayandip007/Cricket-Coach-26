@@ -146,6 +146,7 @@ export interface LeagueRules {
   powerSurge: boolean;
   maxOverseasInXI: number;
   auctionType: 'live_auction' | 'draft';
+  matchesPerTeam?: number;
 }
 
 export interface PlayoffMatchState {
@@ -171,11 +172,16 @@ export interface CalendarMatchFixture {
   id: string;
   homeTeamId: string;
   awayTeamId: string;
+  homeTeamName?: string;
+  awayTeamName?: string;
   homeShortName?: string;
   awayShortName?: string;
   homeLogo?: string;
   awayLogo?: string;
+  homeTeamLogo?: string;
+  awayTeamLogo?: string;
   venue: string;
+  dateStr?: string;
   timeStr?: string;
   completed: boolean;
   resultSummary?: string;

@@ -30,7 +30,14 @@ import {
   applyStartNewFranchiseSeasonState,
   applyAdvanceOffSeasonState,
   enforceSingleCareerInvariant,
-  validatePlayoffEligibility
+  validatePlayoffEligibility,
+  getAuthoritativeDomesticFixtures,
+  isDomesticLeagueStageComplete,
+  syncPlayoffCalendarDates,
+  parseCalendarDateToUtc,
+  addUtcDaysToCalendarDate,
+  applyAdvanceCalendarToNextTourState,
+  InternationalSeriesState
 } from '../context/GameContext';
 import {
   reconcileNationalSelection,
@@ -2701,8 +2708,938 @@ export function runCareerProgressionTests() {
   assert.equal(recoveredSave.requiresLeagueSelection, false, 'Defect 32.10: Valid save requires no manual league selection');
   assert.ok(recoveredSave.coachProfile.clubTeamId === 'team_kol', 'Defect 32.10: Coached club team retained');
 
+  // ==========================================================================
+  // REQ 33: EMPTY-FILTER PLAYOFF COMPLETION & LEAGUE VALIDATION REGRESSION TESTS
+  // ==========================================================================
+  // 33.1: An empty calendar (with uncompleted standings) MUST NOT satisfy league completion
+  const emptyCalendarLeague: League = {
+    ...baseLeagues[0],
+    calendarDates: [],
+    standings: midSeasonStandings,
+    playoffs: qualifiedPlayoffs
+  };
+  const emptyCalendarBeforeSnapshot = JSON.stringify(emptyCalendarLeague);
+  assert.equal(
+    isDomesticLeagueStageComplete(emptyCalendarLeague),
+    false,
+    'REQ 33.1a: Empty calendar with incomplete standings must NOT pass isDomesticLeagueStageComplete'
+  );
+  const emptyCalElig = validatePlayoffEligibility({
+    careerPhase: 'playoffs',
+    league: emptyCalendarLeague,
+    userClubId: 'team_kol',
+    stage: 'q1',
+    isUserAction: true
+  });
+  assert.equal(emptyCalElig.canPlay, false, 'REQ 33.1b: Empty calendar must reject playoff play');
+  assert.equal(emptyCalElig.canSimulate, false, 'REQ 33.1c: Empty calendar must reject playoff simulation');
+  assert.equal(
+    JSON.stringify(emptyCalendarLeague),
+    emptyCalendarBeforeSnapshot,
+    'REQ 33.1d: Attempting playoff validation on empty calendar must not mutate league state'
+  );
+
+  // 33.2: A calendar containing ONLY international fixtures MUST NOT satisfy domestic league completion
+  const intlOnlyCalendarLeague: League = {
+    ...baseLeagues[0],
+    calendarDates: [
+      {
+        id: 'cal_intl_only_1',
+        dateStr: '2026-06-05',
+        dayOfWeek: 'FRI',
+        dayNumber: 5,
+        month: 'Jun',
+        type: 'international',
+        title: '1st T20I: IND vs AUS',
+        isHome: true,
+        matchFixture: {
+          id: 'fix_intl_only_1',
+          homeTeamId: 'nat_ind',
+          awayTeamId: 'nat_aus',
+          homeTeamName: 'India',
+          awayTeamName: 'Australia',
+          homeTeamLogo: '🇮🇳',
+          awayTeamLogo: '🇦🇺',
+          venue: 'Wankhede Stadium',
+          dateStr: '2026-06-05',
+          completed: true,
+          resultSummary: 'India won by 15 runs'
+        }
+      },
+      {
+        id: 'cal_intl_only_2',
+        dateStr: '2026-06-07',
+        dayOfWeek: 'SUN',
+        dayNumber: 7,
+        month: 'Jun',
+        type: 'international',
+        title: '2nd T20I: IND vs AUS',
+        isHome: true,
+        matchFixture: {
+          id: 'fix_intl_only_2',
+          homeTeamId: 'nat_ind',
+          awayTeamId: 'nat_aus',
+          homeTeamName: 'India',
+          awayTeamName: 'Australia',
+          homeTeamLogo: '🇮🇳',
+          awayTeamLogo: '🇦🇺',
+          venue: 'Eden Gardens',
+          dateStr: '2026-06-07',
+          completed: true,
+          resultSummary: 'Australia won by 4 wickets'
+        }
+      }
+    ],
+    standings: midSeasonStandings,
+    playoffs: qualifiedPlayoffs
+  };
+  const intlOnlySnapshot = JSON.stringify(intlOnlyCalendarLeague);
+  assert.equal(
+    getAuthoritativeDomesticFixtures(intlOnlyCalendarLeague).fixtures.length,
+    0,
+    'REQ 33.2a: International-only calendar has 0 authoritative domestic fixtures'
+  );
+  assert.equal(
+    isDomesticLeagueStageComplete(intlOnlyCalendarLeague),
+    false,
+    'REQ 33.2b: International-only calendar must NOT establish domestic league completion'
+  );
+  const intlOnlyElig = validatePlayoffEligibility({
+    careerPhase: 'playoffs',
+    league: intlOnlyCalendarLeague,
+    userClubId: 'team_kol',
+    stage: 'q1',
+    isUserAction: true
+  });
+  assert.equal(intlOnlyElig.canPlay, false, 'REQ 33.2c: International-only calendar rejects playoff play');
+  assert.equal(intlOnlyElig.canSimulate, false, 'REQ 33.2d: International-only calendar rejects playoff simulation');
+  assert.equal(
+    JSON.stringify(intlOnlyCalendarLeague),
+    intlOnlySnapshot,
+    'REQ 33.2e: Failed playoff check on international-only calendar leaves state untouched'
+  );
+
+  // 33.3: A calendar with domestic fixtures but NO completed results (or completed: true without authoritative resultSummary)
+  const fullSeasonCalendar = buildSeasonCalendarForTeam(
+    'team_kol',
+    baseTeams,
+    false,
+    2026
+  );
+  const unplayedDomesticLeague: League = {
+    ...baseLeagues[0],
+    calendarDates: fullSeasonCalendar.map(d => ({
+      ...d,
+      matchFixture:
+        d.type === 'match' && d.matchFixture
+          ? { ...d.matchFixture, completed: false, resultSummary: undefined }
+          : d.matchFixture,
+      otherMatches: (d.otherMatches || []).map(om => ({
+        ...om,
+        completed: false,
+        resultSummary: undefined
+      }))
+    })),
+    standings: midSeasonStandings,
+    playoffs: qualifiedPlayoffs
+  };
+  assert.equal(
+    isDomesticLeagueStageComplete(unplayedDomesticLeague),
+    false,
+    'REQ 33.3a: Calendar with unplayed domestic fixtures must NOT be marked complete'
+  );
+  const fakeCompletedNoSummaryLeague: League = {
+    ...baseLeagues[0],
+    calendarDates: fullSeasonCalendar.map(d =>
+      d.type === 'match' && d.matchFixture
+        ? { ...d, matchFixture: { ...d.matchFixture, completed: true, resultSummary: '' } }
+        : d
+    ),
+    standings: midSeasonStandings,
+    playoffs: qualifiedPlayoffs
+  };
+  assert.equal(
+    isDomesticLeagueStageComplete(fakeCompletedNoSummaryLeague),
+    false,
+    'REQ 33.3b: Domestic fixtures marked completed without authoritative resultSummary or finished match state must fail completion'
+  );
+  const noResultElig = validatePlayoffEligibility({
+    careerPhase: 'playoffs',
+    league: fakeCompletedNoSummaryLeague,
+    userClubId: 'team_kol',
+    stage: 'q1',
+    isUserAction: true
+  });
+  assert.equal(noResultElig.canPlay, false, 'REQ 33.3c: Unverified domestic results reject playoff play');
+  assert.equal(noResultElig.canSimulate, false, 'REQ 33.3d: Unverified domestic results reject playoff simulation');
+
+  // 33.4: A partially completed domestic league
+  let domesticMatchIdx = 0;
+  const partiallyCompletedDomesticLeague: League = {
+    ...baseLeagues[0],
+    calendarDates: fullSeasonCalendar.map(d => {
+      if (d.type === 'match' && d.matchFixture) {
+        domesticMatchIdx++;
+        const isDone = domesticMatchIdx <= 10; // Only 10 of 18 completed
+        return {
+          ...d,
+          matchFixture: {
+            ...d.matchFixture,
+            completed: isDone,
+            resultSummary: isDone ? `${d.matchFixture.homeShortName} won by 5 wickets` : undefined
+          }
+        };
+      }
+      return d;
+    }),
+    standings: midSeasonStandings,
+    playoffs: qualifiedPlayoffs
+  };
+  const partialSnapshot = JSON.stringify(partiallyCompletedDomesticLeague);
+  assert.equal(
+    isDomesticLeagueStageComplete(partiallyCompletedDomesticLeague),
+    false,
+    'REQ 33.4a: Partially completed domestic calendar must return false'
+  );
+  const partialElig = validatePlayoffEligibility({
+    careerPhase: 'playoffs',
+    league: partiallyCompletedDomesticLeague,
+    userClubId: 'team_kol',
+    stage: 'q1',
+    isUserAction: true
+  });
+  assert.equal(partialElig.canPlay, false, 'REQ 33.4b: Partially completed domestic league rejects playoff play');
+  assert.equal(partialElig.canSimulate, false, 'REQ 33.4c: Partially completed domestic league rejects playoff simulation');
+  assert.equal(
+    JSON.stringify(partiallyCompletedDomesticLeague),
+    partialSnapshot,
+    'REQ 33.4d: Partially completed domestic league state is unchanged after rejected eligibility check'
+  );
+
+  // 33.5: A genuinely completed league with valid standings AND completed domestic fixtures (plus custom competition format)
+  const completedDomesticLeague: League = {
+    ...baseLeagues[0],
+    calendarDates: fullSeasonCalendar.map(d => ({
+      ...d,
+      matchFixture:
+        d.type === 'match' && d.matchFixture
+          ? {
+              ...d.matchFixture,
+              completed: true,
+              resultSummary: `${d.matchFixture.homeShortName || 'Home'} beat ${d.matchFixture.awayShortName || 'Away'} by 14 runs`
+            }
+          : d.matchFixture,
+      otherMatches: (d.otherMatches || []).map(om => ({
+        ...om,
+        completed: true,
+        resultSummary: `${om.homeShortName || 'Home'} beat ${om.awayShortName || 'Away'} by 6 wickets`
+      }))
+    })),
+    standings: seededStandings,
+    playoffs: qualifiedPlayoffs
+  };
+  assert.equal(
+    isDomesticLeagueStageComplete(completedDomesticLeague),
+    true,
+    'REQ 33.5a: Genuinely completed domestic calendar + valid standings passes isDomesticLeagueStageComplete'
+  );
+  const genuineElig = validatePlayoffEligibility({
+    careerPhase: 'playoffs',
+    league: completedDomesticLeague,
+    userClubId: 'team_kol',
+    stage: 'q1',
+    isUserAction: true
+  });
+  assert.equal(genuineElig.canPlay, true, 'REQ 33.5b: Genuinely completed league permits eligible user playoff play');
+  assert.equal(genuineElig.canSimulate, true, 'REQ 33.5c: Genuinely completed league permits eligible user playoff simulation');
+
+  // Also verify custom competition format (e.g. 6 teams, 10 matches per team) works without requiring 18 fixtures
+  const sixTeams = baseTeams.slice(0, 6);
+  const customStandings: StandingRow[] = sixTeams.map((t, idx) => ({
+    teamId: t.id,
+    played: 10,
+    won: 10 - idx * 2,
+    lost: idx * 2,
+    tied: 0,
+    nrr: Number((1.0 - idx * 0.35).toFixed(2)),
+    points: (10 - idx * 2) * 2,
+    recentForm: ['W', 'W', 'L', 'W', 'L']
+  }));
+  const customBracket = createInitialPlayoffs(customStandings);
+  const customFormatLeague: League = {
+    ...baseLeagues[0],
+    id: 'custom_6t',
+    teams: sixTeams,
+    rules: { ...baseLeagues[0].rules, matchesPerTeam: 10 },
+    calendarDates: [],
+    standings: customStandings,
+    playoffs: customBracket
+  };
+  assert.equal(
+    isDomesticLeagueStageComplete(customFormatLeague),
+    true,
+    'REQ 33.5d: Custom competition format (10 matches per team) is respected without hardcoding 18'
+  );
+
+  // 33.6: A valid legacy save with completed league records (empty calendarDates, authoritative completed standings)
+  const legacyCompletedSaveLeague: League = {
+    ...baseLeagues[0],
+    calendarDates: [],
+    standings: seededStandings,
+    playoffs: qualifiedPlayoffs
+  };
+  assert.equal(
+    isDomesticLeagueStageComplete(legacyCompletedSaveLeague),
+    true,
+    'REQ 33.6a: Legacy save with authoritative completed 18-match standings passes completion check'
+  );
+  const legacySaveElig = validatePlayoffEligibility({
+    careerPhase: 'playoffs',
+    league: legacyCompletedSaveLeague,
+    userClubId: 'team_kol',
+    stage: 'q1',
+    isUserAction: true
+  });
+  assert.equal(legacySaveElig.canPlay, true, 'REQ 33.6b: Valid legacy save permits playoff play');
+  assert.equal(legacySaveElig.canSimulate, true, 'REQ 33.6c: Valid legacy save permits playoff simulation');
+
+  // ==========================================================================
+  // REQ 34: END-TO-END NEXT-TOUR WORKFLOW (applyAdvanceCalendarToNextTourState)
+  // ==========================================================================
+  // Verify date helper across month, year, and leap-year boundaries
+  const mayEndUtc = parseCalendarDateToUtc('2026-05-30', 2026);
+  assert.ok(mayEndUtc !== null, 'REQ 34.0a: Valid date parsed to UTC');
+  assert.equal(
+    addUtcDaysToCalendarDate(mayEndUtc!, 3).dateStr,
+    '2026-06-02',
+    'REQ 34.0b: Date arithmetic crosses May -> June boundary cleanly'
+  );
+  const decEndUtc = parseCalendarDateToUtc('2026-12-29', 2026);
+  assert.equal(
+    addUtcDaysToCalendarDate(decEndUtc!, 5).dateStr,
+    '2027-01-03',
+    'REQ 34.0c: Date arithmetic crosses December 2026 -> January 2027 year boundary cleanly'
+  );
+  const leapFebUtc = parseCalendarDateToUtc('2028-02-27', 2028);
+  assert.equal(
+    addUtcDaysToCalendarDate(leapFebUtc!, 2).dateStr,
+    '2028-02-29',
+    'REQ 34.0d: Date arithmetic handles 2028 leap year Feb 29 accurately'
+  );
+  assert.equal(
+    addUtcDaysToCalendarDate(leapFebUtc!, 3).dateStr,
+    '2028-03-01',
+    'REQ 34.0e: Date arithmetic crosses Feb 29 -> Mar 1 in leap year'
+  );
+
+  // Helper to build a clean international coach state
+  const indCoachProfile: CoachProfile = enforceSingleCareerInvariant(
+    {
+      ...INITIAL_COACH_PROFILE,
+      clubTeamId: null,
+      nationalTeamId: 'nat_ind',
+      activeCareerMode: 'international'
+    },
+    'international'
+  ).coachProfile;
+
+  // 34.1: Advancing when a valid future tour already exists in the calendar
+  const preExistingTourCalLeague: League = {
+    ...baseLeagues[0],
+    currentDateIndex: 0,
+    calendarDates: [
+      {
+        id: 'cal_rest_1',
+        dateStr: '2026-06-01',
+        dayOfWeek: 'MON',
+        dayNumber: 1,
+        month: 'Jun',
+        type: 'rest',
+        title: 'International Rest Day',
+        isHome: true
+      },
+      {
+        id: 'cal_rest_2',
+        dateStr: '2026-06-02',
+        dayOfWeek: 'TUE',
+        dayNumber: 2,
+        month: 'Jun',
+        type: 'rest',
+        title: 'Travel Day',
+        isHome: true
+      },
+      {
+        id: 'cal_existing_tour_m1',
+        dateStr: '2026-06-03',
+        dayOfWeek: 'WED',
+        dayNumber: 3,
+        month: 'Jun',
+        type: 'international',
+        title: '1st T20I: IND vs AUS',
+        isHome: true,
+        matchFixture: {
+          id: 'fix_existing_tour_1',
+          homeTeamId: 'nat_ind',
+          awayTeamId: 'nat_aus',
+          homeTeamName: 'India',
+          awayTeamName: 'Australia',
+          homeTeamLogo: '🇮🇳',
+          awayTeamLogo: '🇦🇺',
+          venue: 'Wankhede Stadium',
+          dateStr: '2026-06-03',
+          completed: false
+        }
+      },
+      {
+        id: 'cal_existing_tour_m2',
+        dateStr: '2026-06-05',
+        dayOfWeek: 'FRI',
+        dayNumber: 5,
+        month: 'Jun',
+        type: 'international',
+        title: '2nd T20I: IND vs AUS',
+        isHome: true,
+        matchFixture: {
+          id: 'fix_existing_tour_2',
+          homeTeamId: 'nat_ind',
+          awayTeamId: 'nat_aus',
+          homeTeamName: 'India',
+          awayTeamName: 'Australia',
+          homeTeamLogo: '🇮🇳',
+          awayTeamLogo: '🇦🇺',
+          venue: 'Eden Gardens',
+          dateStr: '2026-06-05',
+          completed: false
+        }
+      }
+    ]
+  };
+  const res34_1 = applyAdvanceCalendarToNextTourState({
+    leagues: [preExistingTourCalLeague],
+    currentLeagueId: preExistingTourCalLeague.id,
+    coachProfile: indCoachProfile,
+    nations: baseNations,
+    teams: baseTeams,
+    players: freshPlayers,
+    internationalSeries: null,
+    completedMatchesHistory: [],
+    careerPhase: 'international_series'
+  });
+  assert.equal(res34_1.success, true, 'REQ 34.1a: Advancing to existing future tour succeeds');
+  assert.equal(res34_1.generatedNewTour, false, 'REQ 34.1b: Reuses existing future tour without generating a new one');
+  assert.equal(res34_1.targetDateIndex, 2, 'REQ 34.1c: Advances directly to index 2 (first playable tour match)');
+  assert.equal(
+    res34_1.leagues[0].calendarDates?.length,
+    4,
+    'REQ 34.1d: Does not append duplicate calendar dates when future tour exists'
+  );
+  assert.equal(
+    res34_1.internationalSeries?.opponentNationId,
+    'nat_aus',
+    'REQ 34.1e: Synchronizes internationalSeries with the existing calendar tour opponent'
+  );
+
+  // 34.2: Advancing when NO future tour exists and a new tour must be generated
+  const completedPrevSeries: InternationalSeriesState = {
+    ...buildInitialSeriesForNation(baseNations[0], baseNations, undefined, 1),
+    matches: buildInitialSeriesForNation(baseNations[0], baseNations, undefined, 1).matches.map(m => ({
+      ...m,
+      completed: true,
+      summary: 'India won by 20 runs'
+    }))
+  };
+  const noFutureTourLeague: League = {
+    ...baseLeagues[0],
+    currentDateIndex: 0,
+    calendarDates: [
+      {
+        id: 'cal_anchor_day',
+        dateStr: '2026-07-14',
+        dayOfWeek: 'TUE',
+        dayNumber: 14,
+        month: 'Jul',
+        type: 'rest',
+        title: 'End of Previous Tour',
+        isHome: true
+      }
+    ]
+  };
+  const res34_2 = applyAdvanceCalendarToNextTourState({
+    leagues: [noFutureTourLeague],
+    currentLeagueId: noFutureTourLeague.id,
+    coachProfile: indCoachProfile,
+    nations: baseNations,
+    teams: baseTeams,
+    players: freshPlayers,
+    internationalSeries: completedPrevSeries,
+    completedMatchesHistory: [],
+    careerPhase: 'international_series'
+  });
+  assert.equal(res34_2.success, true, 'REQ 34.2a: Generates new tour when no future tour exists');
+  assert.equal(res34_2.generatedNewTour, true, 'REQ 34.2b: Flags generatedNewTour = true');
+  assert.ok(res34_2.internationalSeries !== null, 'REQ 34.2c: Persists newly generated internationalSeries');
+  const genSeries = res34_2.internationalSeries!;
+  const genCalDates = res34_2.leagues[0].calendarDates || [];
+  const genTourCalEntries = genCalDates.slice(1); // Added after cal_anchor_day
+  assert.equal(
+    genTourCalEntries.length,
+    genSeries.matches.length,
+    'REQ 34.2d: Calendar entries count matches series.matches count (5 T20Is)'
+  );
+  // Check agreement between series state and calendar entries
+  for (let i = 0; i < genSeries.matches.length; i++) {
+    const sMatch = genSeries.matches[i];
+    const cDay = genTourCalEntries[i];
+    assert.ok(cDay.matchFixture, `REQ 34.2e: Calendar entry ${i + 1} has matchFixture`);
+    assert.equal(
+      cDay.matchFixture?.id,
+      sMatch.fixtureId,
+      `REQ 34.2f: Series fixtureId and calendar matchFixture.id agree for match ${i + 1}`
+    );
+    assert.equal(
+      cDay.dateStr,
+      sMatch.dateStr,
+      `REQ 34.2g: Series dateStr and calendar dateStr agree for match ${i + 1}`
+    );
+    assert.equal(
+      cDay.matchFixture?.homeTeamId,
+      genSeries.userNationId,
+      `REQ 34.2h: Calendar fixture homeTeamId matches series userNationId`
+    );
+    assert.equal(
+      cDay.matchFixture?.awayTeamId,
+      genSeries.opponentNationId,
+      `REQ 34.2i: Calendar fixture awayTeamId matches series opponentNationId`
+    );
+    assert.ok(
+      !cDay.dateStr.startsWith('2026-06-'),
+      `REQ 34.2j: Generated tour is anchored to 2026-07-14, NOT hardcoded to June 2026 (got ${cDay.dateStr})`
+    );
+  }
+
+  // 34.3: Advancing across a month boundary (May 29 -> June)
+  const monthBoundaryLeague: League = {
+    ...baseLeagues[0],
+    currentDateIndex: 0,
+    calendarDates: [
+      {
+        id: 'cal_may_29',
+        dateStr: '2026-05-29',
+        dayOfWeek: 'FRI',
+        dayNumber: 29,
+        month: 'May',
+        type: 'rest',
+        title: 'Post-IPL Break',
+        isHome: true
+      }
+    ]
+  };
+  const res34_3 = applyAdvanceCalendarToNextTourState({
+    leagues: [monthBoundaryLeague],
+    currentLeagueId: monthBoundaryLeague.id,
+    coachProfile: indCoachProfile,
+    nations: baseNations,
+    teams: baseTeams,
+    players: freshPlayers,
+    internationalSeries: completedPrevSeries,
+    completedMatchesHistory: [],
+    careerPhase: 'international_series'
+  });
+  assert.equal(res34_3.success, true, 'REQ 34.3a: Month-boundary tour scheduling succeeds');
+  const monthBoundaryDates = (res34_3.leagues[0].calendarDates || []).slice(1).map(d => d.dateStr);
+  assert.deepEqual(
+    monthBoundaryDates,
+    ['2026-05-31', '2026-06-02', '2026-06-04', '2026-06-06', '2026-06-08'],
+    'REQ 34.3b: Tour dates roll smoothly from May 31 into June without invalid May 33/35 dates'
+  );
+
+  // 34.4: Advancing across a year boundary (Dec 28, 2026 -> Jan 2027)
+  const yearBoundaryLeague: League = {
+    ...baseLeagues[0],
+    currentDateIndex: 0,
+    calendarDates: [
+      {
+        id: 'cal_dec_28',
+        dateStr: '2026-12-28',
+        dayOfWeek: 'MON',
+        dayNumber: 28,
+        month: 'Dec',
+        type: 'rest',
+        title: 'Year-End Camp',
+        isHome: true
+      }
+    ]
+  };
+  const res34_4 = applyAdvanceCalendarToNextTourState({
+    leagues: [yearBoundaryLeague],
+    currentLeagueId: yearBoundaryLeague.id,
+    coachProfile: indCoachProfile,
+    nations: baseNations,
+    teams: baseTeams,
+    players: freshPlayers,
+    internationalSeries: completedPrevSeries,
+    completedMatchesHistory: [],
+    careerPhase: 'international_series'
+  });
+  assert.equal(res34_4.success, true, 'REQ 34.4a: Year-boundary tour scheduling succeeds');
+  const yearBoundaryDates = (res34_4.leagues[0].calendarDates || []).slice(1).map(d => d.dateStr);
+  assert.deepEqual(
+    yearBoundaryDates,
+    ['2026-12-30', '2027-01-01', '2027-01-03', '2027-01-05', '2027-01-07'],
+    'REQ 34.4b: Tour dates roll smoothly across Dec 2026 into Jan 2027'
+  );
+
+  // 34.5: Calling the next-tour action twice in a row does NOT create duplicate tours or duplicate fixtures
+  const res34_5_secondCall = applyAdvanceCalendarToNextTourState({
+    leagues: res34_2.leagues,
+    currentLeagueId: res34_2.leagues[0].id,
+    coachProfile: res34_2.coachProfile,
+    nations: baseNations,
+    teams: baseTeams,
+    players: res34_2.players,
+    internationalSeries: res34_2.internationalSeries,
+    completedMatchesHistory: res34_2.completedMatchesHistory,
+    careerPhase: res34_2.careerPhase
+  });
+  assert.equal(res34_5_secondCall.success, true, 'REQ 34.5a: Second consecutive call succeeds idempotently');
+  assert.equal(
+    res34_5_secondCall.generatedNewTour,
+    false,
+    'REQ 34.5b: Second consecutive call does NOT generate a duplicate tour'
+  );
+  assert.equal(
+    res34_5_secondCall.leagues[0].calendarDates?.length,
+    res34_2.leagues[0].calendarDates?.length,
+    'REQ 34.5c: Calendar date count remains identical on repeated next-tour invocation'
+  );
+  assert.equal(
+    res34_5_secondCall.internationalSeries?.seriesId,
+    res34_2.internationalSeries?.seriesId,
+    'REQ 34.5d: Series ID is preserved without duplication'
+  );
+
+  // 34.6: An unfinished tour is NOT overwritten
+  const activeOngoingSeries: InternationalSeriesState = {
+    ...buildInitialSeriesForNation(baseNations[0], baseNations, undefined, 3),
+    seriesId: 'intl_series_unfinished_preserve',
+    seriesWins: 1,
+    seriesLosses: 0
+  };
+  activeOngoingSeries.matches[0] = {
+    ...activeOngoingSeries.matches[0],
+    completed: true,
+    summary: 'India won 1st T20I by 8 wickets'
+  };
+  const unfinishedTourLeague: League = {
+    ...baseLeagues[0],
+    currentDateIndex: 0,
+    calendarDates: [
+      {
+        id: 'cal_unfinished_anchor',
+        dateStr: '2026-08-10',
+        dayOfWeek: 'MON',
+        dayNumber: 10,
+        month: 'Aug',
+        type: 'rest',
+        title: 'Mid-Series Recovery',
+        isHome: true
+      }
+    ]
+  };
+  const res34_6 = applyAdvanceCalendarToNextTourState({
+    leagues: [unfinishedTourLeague],
+    currentLeagueId: unfinishedTourLeague.id,
+    coachProfile: indCoachProfile,
+    nations: baseNations,
+    teams: baseTeams,
+    players: freshPlayers,
+    internationalSeries: activeOngoingSeries,
+    completedMatchesHistory: [],
+    careerPhase: 'international_series'
+  });
+  assert.equal(res34_6.success, true, 'REQ 34.6a: Advancing with unfinished tour succeeds');
+  assert.equal(
+    res34_6.internationalSeries?.seriesId,
+    'intl_series_unfinished_preserve',
+    'REQ 34.6b: Unfinished internationalSeries is preserved, NOT overwritten with a new seriesId'
+  );
+  assert.equal(
+    res34_6.internationalSeries?.seriesWins,
+    1,
+    'REQ 34.6c: Completed match progress (1-0 lead) in unfinished series is preserved'
+  );
+  assert.equal(
+    res34_6.leagues[0].calendarDates?.[res34_6.targetDateIndex]?.matchFixture?.id,
+    res34_6.internationalSeries?.matches[1].fixtureId,
+    'REQ 34.6d: Calendar stops at the next unplayed match (Match 2) of the unfinished series'
+  );
+
+  // 34.7: Intervening fixtures are processed in chronological order and only once
+  const interveningCalLeague: League = {
+    ...baseLeagues[0],
+    currentDateIndex: 0,
+    calendarDates: [
+      {
+        id: 'cal_int_ai_1',
+        dateStr: '2026-06-01',
+        dayOfWeek: 'MON',
+        dayNumber: 1,
+        month: 'Jun',
+        type: 'international',
+        title: 'Neutral T20I: AUS vs ENG',
+        isHome: false,
+        matchFixture: {
+          id: 'fix_neutral_1',
+          homeTeamId: 'nat_aus',
+          awayTeamId: 'nat_eng',
+          homeTeamName: 'Australia',
+          awayTeamName: 'England',
+          homeTeamLogo: '🇦🇺',
+          awayTeamLogo: '🏴󠁧󠁢󠁥󠁮󠁧󠁿',
+          venue: 'MCG',
+          dateStr: '2026-06-01',
+          completed: false
+        }
+      },
+      {
+        id: 'cal_int_ai_2',
+        dateStr: '2026-06-03',
+        dayOfWeek: 'WED',
+        dayNumber: 3,
+        month: 'Jun',
+        type: 'international',
+        title: 'Neutral T20I: RSA vs NZL',
+        isHome: false,
+        matchFixture: {
+          id: 'fix_neutral_2',
+          homeTeamId: 'nat_rsa',
+          awayTeamId: 'nat_nzl',
+          homeTeamName: 'South Africa',
+          awayTeamName: 'New Zealand',
+          homeTeamLogo: '🇿🇦',
+          awayTeamLogo: '🇳🇿',
+          venue: 'Wanderers',
+          dateStr: '2026-06-03',
+          completed: false
+        }
+      },
+      {
+        id: 'cal_user_tour_target',
+        dateStr: '2026-06-05',
+        dayOfWeek: 'FRI',
+        dayNumber: 5,
+        month: 'Jun',
+        type: 'international',
+        title: '1st T20I: IND vs AUS',
+        isHome: true,
+        matchFixture: {
+          id: 'fix_user_target_1',
+          homeTeamId: 'nat_ind',
+          awayTeamId: 'nat_aus',
+          homeTeamName: 'India',
+          awayTeamName: 'Australia',
+          homeTeamLogo: '🇮🇳',
+          awayTeamLogo: '🇦🇺',
+          venue: 'Wankhede Stadium',
+          dateStr: '2026-06-05',
+          completed: false
+        }
+      }
+    ]
+  };
+  const res34_7 = applyAdvanceCalendarToNextTourState({
+    leagues: [interveningCalLeague],
+    currentLeagueId: interveningCalLeague.id,
+    coachProfile: indCoachProfile,
+    nations: baseNations,
+    teams: baseTeams,
+    players: freshPlayers,
+    internationalSeries: null,
+    completedMatchesHistory: [],
+    careerPhase: 'international_series'
+  });
+  assert.equal(res34_7.success, true, 'REQ 34.7a: Advancing past intervening AI fixtures succeeds');
+  assert.deepEqual(
+    res34_7.processedInterveningFixtureIds,
+    ['fix_neutral_1', 'fix_neutral_2'],
+    'REQ 34.7b: Intervening AI fixtures are processed in exact chronological order'
+  );
+  assert.equal(
+    res34_7.leagues[0].calendarDates?.[0]?.matchFixture?.completed,
+    true,
+    'REQ 34.7c: First intervening fixture is marked completed'
+  );
+  assert.equal(
+    res34_7.leagues[0].calendarDates?.[1]?.matchFixture?.completed,
+    true,
+    'REQ 34.7d: Second intervening fixture is marked completed'
+  );
+  assert.equal(
+    res34_7.completedMatchesHistory.length,
+    2,
+    'REQ 34.7e: Exactly 2 intervening matches recorded in completedMatchesHistory (processed once each)'
+  );
+
+  // 34.8: A playable fixture involving the user's nation is NOT skipped
+  assert.equal(res34_7.targetDateIndex, 2, 'REQ 34.8a: Stops at index 2 (user nation fixture)');
+  assert.equal(
+    res34_7.leagues[0].calendarDates?.[2]?.matchFixture?.completed,
+    false,
+    'REQ 34.8b: Playable fixture involving user nation remains unplayed so user can play or sim it'
+  );
+
+  // 34.9: A calendar with ONLY unrelated international fixtures does not cause an infinite advance or overwrite user career state
+  const unrelatedOnlyCalLeague: League = {
+    ...baseLeagues[0],
+    currentDateIndex: 0,
+    calendarDates: [
+      {
+        id: 'cal_unrel_1',
+        dateStr: '2026-09-01',
+        dayOfWeek: 'TUE',
+        dayNumber: 1,
+        month: 'Sep',
+        type: 'international',
+        title: 'Neutral T20I: AUS vs ENG',
+        isHome: false,
+        matchFixture: {
+          id: 'fix_unrel_1',
+          homeTeamId: 'nat_aus',
+          awayTeamId: 'nat_eng',
+          homeTeamName: 'Australia',
+          awayTeamName: 'England',
+          homeTeamLogo: '🇦🇺',
+          awayTeamLogo: '🏴󠁧󠁢󠁥󠁮󠁧󠁿',
+          venue: 'MCG',
+          dateStr: '2026-09-01',
+          completed: false
+        }
+      }
+    ]
+  };
+  const res34_9 = applyAdvanceCalendarToNextTourState({
+    leagues: [unrelatedOnlyCalLeague],
+    currentLeagueId: unrelatedOnlyCalLeague.id,
+    coachProfile: indCoachProfile,
+    nations: baseNations,
+    teams: baseTeams,
+    players: freshPlayers,
+    internationalSeries: completedPrevSeries,
+    completedMatchesHistory: [],
+    careerPhase: 'international_series'
+  });
+  assert.equal(res34_9.success, true, 'REQ 34.9a: Calendar with unrelated fixtures advances cleanly without infinite loop');
+  assert.equal(res34_9.coachProfile.nationalTeamId, 'nat_ind', 'REQ 34.9b: User nationalTeamId is preserved');
+  assert.equal(res34_9.coachProfile.clubTeamId, null, 'REQ 34.9c: Single-career mode invariant preserved');
+  assert.equal(res34_9.targetDateIndex, 1, 'REQ 34.9d: Stops at first newly scheduled user tour match after unrelated fixture');
+
+  // Also verify calling advanceCalendarToNextTour when NOT in international mode fails cleanly without mutating state
+  const franchiseModeReject = applyAdvanceCalendarToNextTourState({
+    leagues: [unrelatedOnlyCalLeague],
+    currentLeagueId: unrelatedOnlyCalLeague.id,
+    coachProfile: { ...INITIAL_COACH_PROFILE, clubTeamId: 'team_kol', nationalTeamId: null, activeCareerMode: 'franchise' },
+    nations: baseNations,
+    teams: baseTeams,
+    players: freshPlayers,
+    internationalSeries: null,
+    completedMatchesHistory: [],
+    careerPhase: 'league_stage'
+  });
+  assert.equal(franchiseModeReject.success, false, 'REQ 34.9e: Rejects next-tour scheduling when coach is in franchise mode');
+
+  // 34.10: Save/load or state recovery preserves the generated tour and calendar fixtures
+  const validIndSquadIds = res34_2.players
+    .filter(p => p.country === 'India')
+    .slice(0, 15)
+    .map(p => p.id);
+  const recoveredNextTourState = validateAndRecoverCareerState({
+    rawPhase: res34_2.careerPhase,
+    coachProfile: res34_2.coachProfile,
+    teams: baseTeams,
+    leagues: res34_2.leagues,
+    currentLeagueId: res34_2.leagues[0].id,
+    nations: baseNations,
+    nationalSquadIds: validIndSquadIds,
+    careerBoardReview: null,
+    players: res34_2.players,
+    internationalSeries: res34_2.internationalSeries!
+  });
+  assert.equal(
+    recoveredNextTourState.careerPhase,
+    'international_series',
+    'REQ 34.10a: Recovery preserves international_series phase'
+  );
+  assert.equal(
+    recoveredNextTourState.internationalSeries?.seriesId,
+    res34_2.internationalSeries?.seriesId,
+    'REQ 34.10b: Recovery preserves generated tour seriesId'
+  );
+  assert.equal(
+    recoveredNextTourState.internationalSeries?.matches.length,
+    5,
+    'REQ 34.10c: Recovery preserves all 5 tour fixtures'
+  );
+  assert.equal(
+    recoveredNextTourState.coachProfile.nationalTeamId,
+    'nat_ind',
+    'REQ 34.10d: Recovery preserves coached nation'
+  );
+  assert.equal(
+    recoveredNextTourState.coachProfile.clubTeamId,
+    null,
+    'REQ 34.10e: Recovery preserves single-career mode invariant'
+  );
+
+  // ==========================================================================
+  // REQ 35: PLAYOFF CALENDAR SYNCHRONIZATION & DOUBLE-SIMULATION PREVENTION
+  // ==========================================================================
+  const syncCalendarLeague: League = {
+    ...completedDomesticLeague,
+    calendarDates: syncPlayoffCalendarDates(
+      completedDomesticLeague.calendarDates || [],
+      qualifiedPlayoffs,
+      baseTeams
+    )
+  };
+  const q1AfterSync = applyCompletePlayoffMatchState(
+    {
+      leagues: [syncCalendarLeague],
+      currentLeagueId: syncCalendarLeague.id,
+      teams: baseTeams,
+      coachProfile: { ...INITIAL_COACH_PROFILE, clubTeamId: 'team_kol', nationalTeamId: null, activeCareerMode: 'franchise' },
+      tournamentHonors: [],
+      careerPhase: 'playoffs',
+      careerBoardReview: null
+    },
+    {
+      leagueId: syncCalendarLeague.id,
+      stage: 'q1',
+      homeTeamId: 'team_kol',
+      awayTeamId: 'team_che',
+      winnerTeamId: 'team_kol',
+      resultSummary: 'KKR beat CSK by 18 runs'
+    }
+  );
+  const syncedQ1CalDay = q1AfterSync.leagues[0].calendarDates?.find(d => d.id === 'cal_playoff_q1');
+  const syncedQ2CalDay = q1AfterSync.leagues[0].calendarDates?.find(d => d.id === 'cal_playoff_q2');
+  const syncedFinalCalDay = q1AfterSync.leagues[0].calendarDates?.find(d => d.id === 'cal_playoff_final');
+  assert.equal(syncedQ1CalDay?.matchFixture?.completed, true, 'REQ 35.1: Completing Q1 marks cal_playoff_q1 completed in calendarDates');
+  assert.equal(syncedQ2CalDay?.matchFixture?.homeTeamId, 'team_che', 'REQ 35.2: Completing Q1 seeds Q1 loser (CSK) into cal_playoff_q2 homeTeamId');
+  assert.equal(syncedFinalCalDay?.matchFixture?.homeTeamId, 'team_kol', 'REQ 35.3: Completing Q1 seeds Q1 winner (KKR) into cal_playoff_final homeTeamId');
+
+  // Verify validatePlayoffEligibility rejects a stage whose calendar fixture is already marked completed
+  const q1EligAfterSync = validatePlayoffEligibility({
+    careerPhase: 'playoffs',
+    league: q1AfterSync.leagues[0],
+    userClubId: 'team_kol',
+    stage: 'q1',
+    isUserAction: true
+  });
+  assert.equal(q1EligAfterSync.canPlay, false, 'REQ 35.4: Playoff stage completed in calendar cannot be played again');
+  assert.equal(q1EligAfterSync.canSimulate, false, 'REQ 35.5: Playoff stage completed in calendar cannot be simulated again');
+
   console.log('✅ ALL Career Progression, Multi-League Recovery, International Series IDs, Transition Idempotency & Verified Defect Tests PASSED!');
-  return { passed: 135, total: 135 };
+  return { passed: 165, total: 165 };
 }
 
 

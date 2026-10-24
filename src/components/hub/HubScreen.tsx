@@ -4,7 +4,7 @@ import {
   PlayCircle, Search, Binoculars, Trophy, Database, Clock, MapPin, Globe, BookOpen,
   Shield, Sparkles
 } from 'lucide-react';
-import { useGame, TrainingTraineeGain } from '../../context/GameContext';
+import { useGame, TrainingTraineeGain, isDomesticLeagueStageComplete } from '../../context/GameContext';
 import { sound } from '../../utils/soundEffects';
 import { MenuDrawerModal } from './MenuDrawerModal';
 import { InboxModal } from './InboxModal';
@@ -180,12 +180,8 @@ export const HubScreen: React.FC = () => {
   }, [calendarDays, activeSeasonYear]);
 
   const isLeagueStageCompleted = useMemo(() => {
-    const leagueMatches = calendarDays.filter(d => d.type === 'match' && d.matchFixture);
-    if (leagueMatches.length > 0) {
-      return leagueMatches.every(d => Boolean(d.matchFixture?.completed));
-    }
-    return (currentLeague.standings?.length ?? 0) > 0 && currentLeague.standings.every(s => s.played >= 18);
-  }, [calendarDays, currentLeague.standings]);
+    return isDomesticLeagueStageComplete(currentLeague);
+  }, [currentLeague]);
 
   const shouldShowPlayoffs = careerPhase === 'playoffs' || careerPhase === 'season_final' || (isLeagueStageCompleted && (currentLeague.standings?.length ?? 0) > 0);
 
