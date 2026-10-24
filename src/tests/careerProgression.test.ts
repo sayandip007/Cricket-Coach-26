@@ -7078,10 +7078,95 @@ export function runCareerProgressionTests() {
     assert.deepEqual(stateAfter2ndPass.nations, stateAfter1stPass.nations, 'REQ 43.5b: Idempotent 2nd pass leaves nations strictly identical');
     assert.deepEqual(stateAfter2ndPass.leagues, stateAfter1stPass.leagues, 'REQ 43.5c: Idempotent 2nd pass leaves leagues strictly identical');
     assert.equal(stateAfter2ndPass.matchedFixtureId, stateAfter1stPass.matchedFixtureId, 'REQ 43.5d: Idempotent 2nd pass preserves matchedFixtureId');
+
+    // ==========================================================================
+    // SCENARIO 44: Phase 5.3 — Reject Ambiguous Cross-League Custom Fixture IDs
+    // ==========================================================================
+    const sharedCustomId = 'ambiguous_shared_custom_fix_777';
+
+    const leagueA_ambiguous: League = {
+      ...step1.leagues[0],
+      id: 'league_A_tour',
+      calendarDates: [
+        {
+          dateStr: '2026-04-01',
+          dayOfWeek: 'WED',
+          dayNumber: 1,
+          month: 'Apr',
+          type: 'match',
+          matchFixture: {
+            id: sharedCustomId,
+            homeTeamId: 'nat_ind',
+            awayTeamId: 'nat_aus',
+            homeTeamName: 'India',
+            awayTeamName: 'Australia',
+            seriesId: 'tour_ind_aus_2026',
+            matchNumber: 1,
+            expectedFixtureId: 'intl_fix_tour_ind_aus_2026_1', // Valid mapping
+            isInternational: true,
+            completed: false
+          } as any
+        }
+      ]
+    };
+
+    const leagueB_ambiguous: League = {
+      ...step1.leagues[0],
+      id: 'league_B_tour',
+      calendarDates: [
+        {
+          dateStr: '2026-04-01',
+          dayOfWeek: 'WED',
+          dayNumber: 1,
+          month: 'Apr',
+          type: 'match',
+          matchFixture: {
+            id: sharedCustomId,
+            homeTeamId: 'nat_ind',
+            awayTeamId: 'nat_aus',
+            homeTeamName: 'India',
+            awayTeamName: 'Australia',
+            seriesId: 'tour_ind_aus_2026',
+            matchNumber: 1,
+            expectedFixtureId: 'intl_fix_tour_ind_aus_2026_999', // Conflicting/invalid mapping!
+            isInternational: true,
+            completed: false
+          } as any
+        }
+      ]
+    };
+
+    const ambiguousCallback: MatchLiveState = {
+      ...finishedMatch41_1,
+      id: sharedCustomId,
+      fixtureId: sharedCustomId
+    };
+
+    const snapAmbSeries = {
+      ...reorderedSeriesNoFixIds,
+      matches: reorderedSeriesNoFixIds.matches.map(m => ({ ...m }))
+    };
+    const snapAmbLeagues = JSON.parse(JSON.stringify([leagueA_ambiguous, leagueB_ambiguous]));
+    const snapAmbNations = JSON.parse(JSON.stringify(step1.nations));
+
+    const step44_res = applyRecordCompletedInternationalMatchState({
+      finishedMatch: ambiguousCallback,
+      didUserWin: true,
+      coachProfile: intlCoach41,
+      internationalSeries: reorderedSeriesNoFixIds,
+      leagues: [leagueA_ambiguous, leagueB_ambiguous],
+      currentLeagueId: leagueA_ambiguous.id,
+      nations: step1.nations
+    });
+
+    assert.equal(step44_res.matchedFixtureId, null, 'REQ 44.1a: Ambiguous cross-league custom fixture ID rejected safely');
+    assert.deepEqual(step44_res.internationalSeries, snapAmbSeries, 'REQ 44.1b: Active series matches completely unmutated');
+    assert.deepEqual(step44_res.leagues, snapAmbLeagues, 'REQ 44.1c: Both leagues calendar fixtures remain completed: false');
+    assert.deepEqual(step44_res.nations, snapAmbNations, 'REQ 44.1d: ICC rankings completely unmutated');
   }
 
   console.log('✅ ALL Career Progression, Multi-League Recovery, International Series IDs, Transition Idempotency & Verified Defect Tests PASSED!');
-  return { passedScenarios: 43, totalScenarios: 43 };
+  return { passedScenarios: 44, totalScenarios: 44 };
 }
 
 

@@ -5654,6 +5654,8 @@ export function applyRecordCompletedInternationalMatchState(params: {
 
       // 2. Authoritative fixture-mapping recovery path with strict series identity and participant verification
       if (targetMatchIdx === -1 && internationalSeries.seriesId && matchedIndexes.length === 0) {
+        const candidateMatches: { candidateIndex: number; expectedFixtureId: string; isProven: boolean }[] = [];
+
         for (const league of leagues) {
           if (!league || !Array.isArray(league.calendarDates)) continue;
           for (const cd of league.calendarDates) {
@@ -5710,14 +5712,32 @@ export function applyRecordCompletedInternationalMatchState(params: {
                       (candFix as any).canonicalFixtureId === expectedCanonicalId)
                 );
 
-                if (isDirectMatch || isExplicitCalendarLink) {
-                  targetMatchIdx = candidateIndex;
-                  break;
-                }
+                const isProven = isDirectMatch || isExplicitCalendarLink;
+                const calExpectedId = (candFix as any).expectedFixtureId || (candFix as any).canonicalFixtureId || expectedCanonicalId;
+
+                candidateMatches.push({
+                  candidateIndex,
+                  expectedFixtureId: calExpectedId,
+                  isProven
+                });
               }
             }
           }
-          if (targetMatchIdx !== -1) break;
+        }
+
+        if (candidateMatches.length === 1 && candidateMatches[0].isProven) {
+          targetMatchIdx = candidateMatches[0].candidateIndex;
+        } else if (candidateMatches.length > 1) {
+          // Reject ambiguous or conflicting cross-league custom fixture IDs safely
+          const first = candidateMatches[0];
+          const allProvenAndAgree = candidateMatches.every(
+            c => c.isProven && c.candidateIndex === first.candidateIndex && c.expectedFixtureId === first.expectedFixtureId
+          );
+          if (allProvenAndAgree) {
+            targetMatchIdx = first.candidateIndex;
+          } else {
+            targetMatchIdx = -1;
+          }
         }
       }
 
