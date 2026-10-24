@@ -5727,17 +5727,9 @@ export function applyRecordCompletedInternationalMatchState(params: {
 
         if (candidateMatches.length === 1 && candidateMatches[0].isProven) {
           targetMatchIdx = candidateMatches[0].candidateIndex;
-        } else if (candidateMatches.length > 1) {
-          // Reject ambiguous or conflicting cross-league custom fixture IDs safely
-          const first = candidateMatches[0];
-          const allProvenAndAgree = candidateMatches.every(
-            c => c.isProven && c.candidateIndex === first.candidateIndex && c.expectedFixtureId === first.expectedFixtureId
-          );
-          if (allProvenAndAgree) {
-            targetMatchIdx = first.candidateIndex;
-          } else {
-            targetMatchIdx = -1;
-          }
+        } else {
+          // Reject duplicate custom fixture IDs across different leagues (candidateMatches.length > 1 or unproven)
+          targetMatchIdx = -1;
         }
       }
 
