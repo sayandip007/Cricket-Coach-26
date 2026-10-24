@@ -5009,23 +5009,36 @@ export function resolveInternationalMatchParticipant(
   );
   if (direct) return direct;
 
-  // Common cricket code aliases (e.g. nat_south_africa -> South Africa, SA <-> RSA, WI <-> WIN, NZ <-> NZL, SL <-> SRI)
-  const normalizedSlug = clean.startsWith('nat_') ? clean.slice(4).replace(/_/g, ' ') : clean.replace(/_/g, ' ');
+  // Common cricket code aliases (e.g. nat_south_africa -> South Africa, SA <-> RSA, WI <-> WIN, NZ <-> NZL, SL <-> SRI, nat_rsa, nat_nzl)
+  const slug = clean.startsWith('nat_') ? clean.slice(4).replace(/_/g, ' ') : clean.replace(/_/g, ' ');
   for (const n of nations) {
     if (!n || typeof n.name !== 'string') continue;
     const nLower = n.name.trim().toLowerCase();
     const cLower = (n.code || '').trim().toLowerCase();
-    if (nLower === normalizedSlug) return n;
-    if ((clean === 'sa' || clean === 'rsa' || clean === 'nat_south_africa') && (cLower === 'rsa' || cLower === 'sa' || nLower === 'south africa')) {
+    const idSlug = (n.id || '').startsWith('nat_') ? n.id.slice(4).toLowerCase() : (n.id || '').toLowerCase();
+    if (nLower === slug || cLower === slug || idSlug === slug) return n;
+    if (
+      (clean === 'sa' || clean === 'rsa' || clean === 'nat_rsa' || clean === 'nat_sa' || clean === 'nat_south_africa' || slug === 'sa' || slug === 'rsa' || slug === 'south africa') &&
+      (cLower === 'rsa' || cLower === 'sa' || nLower === 'south africa' || n.id === 'nat_sa')
+    ) {
       return n;
     }
-    if ((clean === 'nz' || clean === 'nzl' || clean === 'nat_new_zealand') && (cLower === 'nz' || cLower === 'nzl' || nLower === 'new zealand')) {
+    if (
+      (clean === 'nz' || clean === 'nzl' || clean === 'nat_nzl' || clean === 'nat_nz' || clean === 'nat_new_zealand' || slug === 'nz' || slug === 'nzl' || slug === 'new zealand') &&
+      (cLower === 'nz' || cLower === 'nzl' || nLower === 'new zealand' || n.id === 'nat_nz')
+    ) {
       return n;
     }
-    if ((clean === 'wi' || clean === 'win' || clean === 'nat_west_indies') && (cLower === 'wi' || cLower === 'win' || nLower === 'west indies')) {
+    if (
+      (clean === 'wi' || clean === 'win' || clean === 'nat_win' || clean === 'nat_wi' || clean === 'nat_west_indies' || slug === 'wi' || slug === 'win' || slug === 'west indies') &&
+      (cLower === 'wi' || cLower === 'win' || nLower === 'west indies' || n.id === 'nat_wi')
+    ) {
       return n;
     }
-    if ((clean === 'sl' || clean === 'sri' || clean === 'nat_sri_lanka') && (cLower === 'sl' || cLower === 'sri' || nLower === 'sri lanka')) {
+    if (
+      (clean === 'sl' || clean === 'sri' || clean === 'nat_sri' || clean === 'nat_sl' || clean === 'nat_sri_lanka' || slug === 'sl' || slug === 'sri' || slug === 'sri lanka') &&
+      (cLower === 'sl' || cLower === 'sri' || nLower === 'sri lanka' || n.id === 'nat_sl')
+    ) {
       return n;
     }
   }
@@ -5048,7 +5061,21 @@ export function classifyInternationalCompetition(params: {
   const compId = (finishedMatch as any).competitionId || '';
   const seriesName = (finishedMatch as any).seriesName || '';
 
-  // 1. Explicit fixture match in active bilateral series matches
+  // 1. Explicit WTC competition markers (checked before generic ID prefixes)
+  const isExplicitWtc =
+    compId === 'wtc_test' ||
+    compId === 'wtc' ||
+    leagueId === 'wtc_test' ||
+    leagueId === 'wtc' ||
+    fixtureId.startsWith('wtc_') ||
+    seriesName.toLowerCase().includes('world test championship') ||
+    seriesName.toLowerCase().includes('wtc');
+
+  if (isExplicitWtc) {
+    return 'wtc';
+  }
+
+  // 2. Explicit fixture match in active bilateral series matches
   if (internationalSeries && Array.isArray(internationalSeries.matches)) {
     const isExplicitSeriesFixture = internationalSeries.matches.some(
       m =>
@@ -5062,7 +5089,7 @@ export function classifyInternationalCompetition(params: {
     }
   }
 
-  // 2. Explicit bilateral league or fixture ID markers
+  // 3. Explicit bilateral league or fixture ID markers
   if (
     leagueId === 'test_bilateral' ||
     leagueId === 't20i_bilateral' ||
@@ -5073,20 +5100,6 @@ export function classifyInternationalCompetition(params: {
     fixtureId.startsWith('cal_intl_')
   ) {
     return 'bilateral';
-  }
-
-  // 3. Explicit WTC competition markers
-  const isExplicitWtc =
-    compId === 'wtc_test' ||
-    compId === 'wtc' ||
-    leagueId === 'wtc_test' ||
-    leagueId === 'wtc' ||
-    fixtureId.startsWith('wtc_') ||
-    seriesName.toLowerCase().includes('world test championship') ||
-    seriesName.toLowerCase().includes('wtc');
-
-  if (isExplicitWtc) {
-    return 'wtc';
   }
 
   // 4. If series exists and teams match active internationalSeries:
@@ -5499,6 +5512,17 @@ export function applyRecordCompletedInternationalMatchState(params: {
         const cd = league.calendarDates[idx];
         if (!cd) continue;
         const mf = cd.matchFixture;
+        const isCalEntryWtc = Boolean(
+          cd.id?.startsWith('wtc_') ||
+          (mf && (mf.id?.startsWith('wtc_') || (mf as any).competitionId === 'wtc_test' || (mf as any).leagueId === 'wtc_test'))
+        );
+        if (competitionType === 'wtc' && !isCalEntryWtc && mf?.id !== matchedFixtureId) {
+          continue;
+        }
+        if (competitionType === 'bilateral' && isCalEntryWtc) {
+          continue;
+        }
+
         const mfMatches =
           mf &&
           (mf.isInternational || cd.type === 'international') &&
@@ -5522,6 +5546,17 @@ export function applyRecordCompletedInternationalMatchState(params: {
           const cd = league.calendarDates[idx];
           if (!cd) continue;
           const mf = cd.matchFixture;
+          const isCalEntryWtc = Boolean(
+            cd.id?.startsWith('wtc_') ||
+            (mf && (mf.id?.startsWith('wtc_') || (mf as any).competitionId === 'wtc_test' || (mf as any).leagueId === 'wtc_test'))
+          );
+          if (competitionType === 'wtc' && !isCalEntryWtc && mf?.id !== matchedFixtureId) {
+            continue;
+          }
+          if (competitionType === 'bilateral' && isCalEntryWtc) {
+            continue;
+          }
+
           const mfMatches =
             mf &&
             (mf.isInternational || cd.type === 'international') &&
@@ -6058,15 +6093,23 @@ export function applyAdvanceCalendarDayState(params: {
     // CRITICAL: Never simulate user-controlled international matches in background!
     if (isUserControlledInternationalFixture(im, coachProfile, nations)) return;
 
-    const homeNat = buildTempNationalTeamFromPool(im.homeTeamId || im.homeTeamName || 'Home XI', nations, workingPlayers);
-    const awayNat = buildTempNationalTeamFromPool(im.awayTeamId || im.awayTeamName || 'Away XI', nations, workingPlayers);
+    const homeNatObj =
+      resolveInternationalMatchParticipant(im.homeTeamId, nations) ||
+      resolveInternationalMatchParticipant(im.homeTeamName, nations);
+    const awayNatObj =
+      resolveInternationalMatchParticipant(im.awayTeamId, nations) ||
+      resolveInternationalMatchParticipant(im.awayTeamName, nations);
+    if (!homeNatObj || !awayNatObj || homeNatObj.id === awayNatObj.id) return;
+
+    const homeNat = buildTempNationalTeamFromPool(homeNatObj.id, nations, workingPlayers);
+    const awayNat = buildTempNationalTeamFromPool(awayNatObj.id, nations, workingPlayers);
     if (!homeNat || !awayNat || homeNat.id === awayNat.id) return;
 
     const simRes = simulateAiFixtureScorecard(
       im.id,
       homeNat,
       awayNat,
-      im.venue || `${im.homeTeamId} Stadium`,
+      im.venue || `${homeNat.name} Stadium`,
       im.format || 'T20',
       'intl',
       workingPlayers,
@@ -6141,11 +6184,23 @@ export function applyAdvanceCalendarDayState(params: {
       };
     });
 
+    const mfHomeNat = d.matchFixture
+      ? resolveInternationalMatchParticipant(d.matchFixture.homeTeamId, nations) ||
+        resolveInternationalMatchParticipant(d.matchFixture.homeTeamName, nations)
+      : null;
+    const mfAwayNat = d.matchFixture
+      ? resolveInternationalMatchParticipant(d.matchFixture.awayTeamId, nations) ||
+        resolveInternationalMatchParticipant(d.matchFixture.awayTeamName, nations)
+      : null;
     const canCompleteMf =
       d.type === 'international' &&
       d.matchFixture &&
       !d.matchFixture.completed &&
-      !isUserControlledInternationalFixture(d.matchFixture, coachProfile, nations);
+      !(d.matchFixture.completedMatchState && d.matchFixture.completedMatchState.status === 'finished') &&
+      !isUserControlledInternationalFixture(d.matchFixture, coachProfile, nations) &&
+      Boolean(mfHomeNat && mfAwayNat && mfHomeNat.id !== mfAwayNat.id);
+
+    const matchingSimulatedIntl = nextIntlMatches.find(im => im && im.id === d.matchFixture?.id && (im.completed || im.completedMatchState?.status === 'finished'));
 
     return {
       ...d,
@@ -6155,8 +6210,8 @@ export function applyAdvanceCalendarDayState(params: {
         ? {
             ...d.matchFixture,
             completed: true,
-            resultSummary: nextIntlMatches[0]?.resultSummary || 'Match completed',
-            completedMatchState: nextIntlMatches[0]?.completedMatchState
+            resultSummary: matchingSimulatedIntl?.resultSummary || nextIntlMatches[0]?.resultSummary || 'Match completed',
+            completedMatchState: matchingSimulatedIntl?.completedMatchState || nextIntlMatches[0]?.completedMatchState
           }
         : d.matchFixture
     };
@@ -6720,20 +6775,7 @@ export function applyAdvanceCalendarToNextTourState(
     m: League['calendarDates'][number]['matchFixture'] | undefined | null
   ): boolean => {
     if (!m) return false;
-    const homeIdLower = (m.homeTeamId || '').trim().toLowerCase();
-    const awayIdLower = (m.awayTeamId || '').trim().toLowerCase();
-    const homeShortLower = (m.homeShortName || '').trim().toLowerCase();
-    const awayShortLower = (m.awayShortName || '').trim().toLowerCase();
-    return (
-      m.homeTeamId === userNat.id ||
-      m.awayTeamId === userNat.id ||
-      homeIdLower === userNatNameLower ||
-      awayIdLower === userNatNameLower ||
-      homeShortLower === userNatNameLower ||
-      awayShortLower === userNatNameLower ||
-      (userNatCodeLower.length > 0 &&
-        (homeShortLower === userNatCodeLower || awayShortLower === userNatCodeLower))
-    );
+    return isUserControlledInternationalFixture(m, enforcedCoachProfile, nations);
   };
 
   const getDayIntlFixtures = (cd: League['calendarDates'][number] | undefined) => {
@@ -7860,9 +7902,19 @@ export function applyAdvanceCalendarToNextTourState(
     });
 
     const nextIntlMatches = (dayObj.internationalMatches || []).map((im, imIdx) => {
-      if (!im || im.completed || doesFixtureInvolveUserNat(im)) return im;
-      const homeNat = buildTempNationalTeamFromPool(im.homeTeamId, nations, workingPlayers);
-      const awayNat = buildTempNationalTeamFromPool(im.awayTeamId, nations, workingPlayers);
+      if (!im || im.completed || (im.completedMatchState && im.completedMatchState.status === 'finished') || doesFixtureInvolveUserNat(im)) return im;
+      const homeNatObj =
+        resolveInternationalMatchParticipant(im.homeTeamId, nations) ||
+        resolveInternationalMatchParticipant(im.homeTeamName, nations);
+      const awayNatObj =
+        resolveInternationalMatchParticipant(im.awayTeamId, nations) ||
+        resolveInternationalMatchParticipant(im.awayTeamName, nations);
+      if (!homeNatObj || !awayNatObj || homeNatObj.id === awayNatObj.id) return im;
+
+      const homeNat = buildTempNationalTeamFromPool(homeNatObj.id, nations, workingPlayers);
+      const awayNat = buildTempNationalTeamFromPool(awayNatObj.id, nations, workingPlayers);
+      if (!homeNat || !awayNat || homeNat.id === awayNat.id) return im;
+
       const simRes = simulateAiFixtureScorecard(
         im.id,
         homeNat,
@@ -7912,10 +7964,11 @@ export function applyAdvanceCalendarToNextTourState(
       dayObj.type === 'international' &&
       nextMatchFixture &&
       !nextMatchFixture.completed &&
+      !(nextMatchFixture.completedMatchState && nextMatchFixture.completedMatchState.status === 'finished') &&
       !doesFixtureInvolveUserNat(nextMatchFixture)
     ) {
-      const matchingIntl = nextIntlMatches.find(im => im.id === nextMatchFixture!.id) || nextIntlMatches[0];
-      if (matchingIntl && matchingIntl.completed) {
+      const matchingIntl = nextIntlMatches.find(im => im && im.id === nextMatchFixture!.id);
+      if (matchingIntl && (matchingIntl.completed || matchingIntl.completedMatchState?.status === 'finished')) {
         nextMatchFixture = {
           ...nextMatchFixture,
           completed: true,
@@ -7923,50 +7976,60 @@ export function applyAdvanceCalendarToNextTourState(
           completedMatchState: matchingIntl.completedMatchState
         };
       } else {
-        const homeNat = buildTempNationalTeamFromPool(nextMatchFixture.homeTeamId, nations, workingPlayers);
-        const awayNat = buildTempNationalTeamFromPool(nextMatchFixture.awayTeamId, nations, workingPlayers);
-        const simRes = simulateAiFixtureScorecard(
-          nextMatchFixture.id,
-          homeNat,
-          awayNat,
-          nextMatchFixture.venue || `${homeNat.name} Stadium`,
-          nextMatchFixture.format || 'T20',
-          'intl',
-          workingPlayers,
-          dIdx * 29 + 5
-        );
-        workingPlayers = applyMatchToPlayerList(workingPlayers, simRes.matchState, activeSeasonKey);
-        simulatedFixtureIds.push(nextMatchFixture.id);
-        nextCompletedHistory.push({
-          id: nextMatchFixture.id,
-          dateStr: dayObj.dateStr,
-          homeTeam: homeNat.shortName,
-          awayTeam: awayNat.shortName,
-          summary: simRes.summary,
-          playerOfMatch: simRes.matchState.innings1?.batters?.[0]?.name || 'Player of the Match',
-          innings1: {
-            team: homeNat.shortName,
-            runs: simRes.matchState.innings1?.runs || 0,
-            wickets: simRes.matchState.innings1?.wickets || 0,
-            overs: String(simRes.matchState.innings1?.overs || 20),
-            batters: [],
-            bowlers: []
-          },
-          innings2: {
-            team: awayNat.shortName,
-            runs: simRes.matchState.innings2?.runs || 0,
-            wickets: simRes.matchState.innings2?.wickets || 0,
-            overs: String(simRes.matchState.innings2?.overs || 20),
-            batters: [],
-            bowlers: []
+        const homeNatObj =
+          resolveInternationalMatchParticipant(nextMatchFixture.homeTeamId, nations) ||
+          resolveInternationalMatchParticipant(nextMatchFixture.homeTeamName, nations);
+        const awayNatObj =
+          resolveInternationalMatchParticipant(nextMatchFixture.awayTeamId, nations) ||
+          resolveInternationalMatchParticipant(nextMatchFixture.awayTeamName, nations);
+        if (homeNatObj && awayNatObj && homeNatObj.id !== awayNatObj.id) {
+          const homeNat = buildTempNationalTeamFromPool(homeNatObj.id, nations, workingPlayers);
+          const awayNat = buildTempNationalTeamFromPool(awayNatObj.id, nations, workingPlayers);
+          if (homeNat && awayNat && homeNat.id !== awayNat.id) {
+            const simRes = simulateAiFixtureScorecard(
+              nextMatchFixture.id,
+              homeNat,
+              awayNat,
+              nextMatchFixture.venue || `${homeNat.name} Stadium`,
+              nextMatchFixture.format || 'T20',
+              'intl',
+              workingPlayers,
+              dIdx * 29 + 5
+            );
+            workingPlayers = applyMatchToPlayerList(workingPlayers, simRes.matchState, activeSeasonKey);
+            simulatedFixtureIds.push(nextMatchFixture.id);
+            nextCompletedHistory.push({
+              id: nextMatchFixture.id,
+              dateStr: dayObj.dateStr,
+              homeTeam: homeNat.shortName,
+              awayTeam: awayNat.shortName,
+              summary: simRes.summary,
+              playerOfMatch: simRes.matchState.innings1?.batters?.[0]?.name || 'Player of the Match',
+              innings1: {
+                team: homeNat.shortName,
+                runs: simRes.matchState.innings1?.runs || 0,
+                wickets: simRes.matchState.innings1?.wickets || 0,
+                overs: String(simRes.matchState.innings1?.overs || 20),
+                batters: [],
+                bowlers: []
+              },
+              innings2: {
+                team: awayNat.shortName,
+                runs: simRes.matchState.innings2?.runs || 0,
+                wickets: simRes.matchState.innings2?.wickets || 0,
+                overs: String(simRes.matchState.innings2?.overs || 20),
+                batters: [],
+                bowlers: []
+              }
+            });
+            nextMatchFixture = {
+              ...nextMatchFixture,
+              completed: true,
+              resultSummary: simRes.summary,
+              completedMatchState: simRes.matchState
+            };
           }
-        });
-        nextMatchFixture = {
-          ...nextMatchFixture,
-          completed: true,
-          resultSummary: simRes.summary,
-          completedMatchState: simRes.matchState
-        };
+        }
       }
     }
 
@@ -10265,13 +10328,22 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       overRuns: []
     };
 
-    const isExplicitWtc = competitionId === 'wtc_test' || competitionId === 'wtc';
-    const isExplicitBilateral = competitionId === 'test_bilateral' || competitionId === 't20i_bilateral' || competitionId === 'odi_bilateral';
+    const isExplicitWtc =
+      competitionId === 'wtc_test' ||
+      competitionId === 'wtc' ||
+      Boolean(fixtureId && fixtureId.startsWith('wtc_'));
+    const isExplicitBilateral =
+      competitionId === 'test_bilateral' ||
+      competitionId === 't20i_bilateral' ||
+      competitionId === 'odi_bilateral' ||
+      competitionId === 'bilateral' ||
+      Boolean(fixtureId && (fixtureId.startsWith('intl_fix_') || fixtureId.startsWith('cal_intl_')));
+
     let assignedLeagueId = 'intl';
     if (isExplicitWtc) {
       assignedLeagueId = 'wtc_test';
     } else if (isExplicitBilateral) {
-      assignedLeagueId = competitionId!;
+      assignedLeagueId = format === 'TEST' ? 'test_bilateral' : format === 'ODI' ? 'odi_bilateral' : 't20i_bilateral';
     } else {
       const isSeriesMatch = Boolean(
         internationalSeries && Array.isArray(internationalSeries.matches) && (
@@ -10284,12 +10356,9 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       );
       if (isSeriesMatch) {
         assignedLeagueId = format === 'TEST' ? 'test_bilateral' : format === 'ODI' ? 'odi_bilateral' : 't20i_bilateral';
-      } else if (format === 'TEST') {
-        assignedLeagueId = 'wtc_test';
-      } else if (format === 'ODI') {
-        assignedLeagueId = 'odi_bilateral';
       } else {
-        assignedLeagueId = 't20i_bilateral';
+        // Unknown or ambiguous competition identity: keep as 'intl', do not assume WTC solely because format is 'TEST'
+        assignedLeagueId = 'intl';
       }
     }
 
@@ -10948,6 +11017,9 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       finishedMatch.leagueId === 'intl' ||
       Boolean(finishedMatch.fixtureId?.startsWith('intl_fix_')) ||
       Boolean(finishedMatch.fixtureId?.startsWith('cal_intl_')) ||
+      Boolean(finishedMatch.fixtureId?.startsWith('wtc_')) ||
+      (finishedMatch as any).competitionId === 'wtc_test' ||
+      (finishedMatch as any).competitionId === 'bilateral' ||
       (finishedMatch.homeTeam?.leagueId === 'intl' && finishedMatch.awayTeam?.leagueId === 'intl');
     let userUpdatedStandingRank = 1;
     let userUpdatedNrr = 0.5;
