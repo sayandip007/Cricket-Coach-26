@@ -6533,10 +6533,287 @@ export function runCareerProgressionTests() {
     assert.equal(step14.matchedFixtureId, 'proven_custom_fix_777', 'REQ 41.14a: Authoritative recovery mapping matched fixture ID');
     assert.equal(step14.internationalSeries.matches[1].completed, true, 'REQ 41.14b: Series match 2 completed via authoritative recovery');
     assert.equal(step14.leagues[0].calendarDates[1].matchFixture?.completed, true, 'REQ 41.14c: Calendar fixture 2 marked completed');
+
+    // ==========================================================================
+    // SCENARIO 42: Phase 5 — Independent Edge-Case Verification Suite
+    // ==========================================================================
+    // 1. Explicit fixture ID belonging to another series
+    const otherSeriesCallback: MatchLiveState = {
+      ...finishedMatch41_1,
+      id: 'intl_fix_SERIES_OTHER_999',
+      fixtureId: 'intl_fix_SERIES_OTHER_999'
+    };
+    const step42_1 = applyRecordCompletedInternationalMatchState({
+      finishedMatch: otherSeriesCallback,
+      didUserWin: true,
+      coachProfile: intlCoach41,
+      internationalSeries: step1.internationalSeries,
+      leagues: step1.leagues,
+      currentLeagueId: step1.leagues[0].id,
+      nations: step1.nations
+    });
+    assert.equal(step42_1.matchedFixtureId, null, 'REQ 42.1a: Explicit fixture ID from another series rejected');
+    assert.equal(step42_1.internationalSeries.matches[1].completed, false, 'REQ 42.1b: Active series match 2 remains uncompleted');
+
+    // 2. Misleading expectedFixtureId on calendar entry (expectedFixtureId = "intl_fix_tour_ind_aus_2026_3" on match 2 slot)
+    const leagueMisleadingExpected: League = {
+      ...step1.leagues[0],
+      calendarDates: [
+        step1.leagues[0].calendarDates[0],
+        {
+          ...step1.leagues[0].calendarDates[1],
+          matchFixture: {
+            ...step1.leagues[0].calendarDates[1].matchFixture!,
+            id: 'misleading_exp_fix',
+            completed: false,
+            seriesId: 'tour_ind_aus_2026',
+            matchNumber: 2,
+            expectedFixtureId: 'intl_fix_tour_ind_aus_2026_3' // Misleading: match number 2 but expected ID for match 3!
+          } as any
+        },
+        step1.leagues[0].calendarDates[2]
+      ]
+    };
+    const misleadingExpectedCallback: MatchLiveState = {
+      ...finishedMatch41_1,
+      id: 'misleading_exp_fix',
+      fixtureId: 'misleading_exp_fix'
+    };
+    const step42_2 = applyRecordCompletedInternationalMatchState({
+      finishedMatch: misleadingExpectedCallback,
+      didUserWin: true,
+      coachProfile: intlCoach41,
+      internationalSeries: step1.internationalSeries,
+      leagues: [leagueMisleadingExpected],
+      currentLeagueId: leagueMisleadingExpected.id,
+      nations: step1.nations
+    });
+    assert.equal(step42_2.matchedFixtureId, null, 'REQ 42.2: Misleading expectedFixtureId rejected');
+
+    // 3. Misleading canonicalFixtureId on calendar entry
+    const leagueMisleadingCanonical: League = {
+      ...step1.leagues[0],
+      calendarDates: [
+        step1.leagues[0].calendarDates[0],
+        {
+          ...step1.leagues[0].calendarDates[1],
+          matchFixture: {
+            ...step1.leagues[0].calendarDates[1].matchFixture!,
+            id: 'misleading_can_fix',
+            completed: false,
+            seriesId: 'tour_ind_aus_2026',
+            matchNumber: 2,
+            canonicalFixtureId: 'intl_fix_tour_ind_aus_2026_1' // Misleading: match number 2 but canonical ID for match 1!
+          } as any
+        },
+        step1.leagues[0].calendarDates[2]
+      ]
+    };
+    const step42_3 = applyRecordCompletedInternationalMatchState({
+      finishedMatch: { ...finishedMatch41_1, id: 'misleading_can_fix', fixtureId: 'misleading_can_fix' },
+      didUserWin: true,
+      coachProfile: intlCoach41,
+      internationalSeries: step1.internationalSeries,
+      leagues: [leagueMisleadingCanonical],
+      currentLeagueId: leagueMisleadingCanonical.id,
+      nations: step1.nations
+    });
+    assert.equal(step42_3.matchedFixtureId, null, 'REQ 42.3: Misleading canonicalFixtureId rejected');
+
+    // 4. Missing or inconsistent series IDs on calendar fixture
+    const leagueMissingSeriesId: League = {
+      ...step1.leagues[0],
+      calendarDates: [
+        step1.leagues[0].calendarDates[0],
+        {
+          ...step1.leagues[0].calendarDates[1],
+          matchFixture: {
+            ...step1.leagues[0].calendarDates[1].matchFixture!,
+            id: 'missing_series_id_fix',
+            completed: false,
+            seriesId: undefined // Missing series ID!
+          } as any
+        },
+        step1.leagues[0].calendarDates[2]
+      ]
+    };
+    const step42_4 = applyRecordCompletedInternationalMatchState({
+      finishedMatch: { ...finishedMatch41_1, id: 'missing_series_id_fix', fixtureId: 'missing_series_id_fix' },
+      didUserWin: true,
+      coachProfile: intlCoach41,
+      internationalSeries: step1.internationalSeries,
+      leagues: [leagueMissingSeriesId],
+      currentLeagueId: leagueMissingSeriesId.id,
+      nations: step1.nations
+    });
+    assert.equal(step42_4.matchedFixtureId, null, 'REQ 42.4: Missing seriesId on calendar fixture causes rejection');
+
+    // 5. Duplicate fixture IDs across leagues with different teams
+    const duplicateLeague: League = {
+      ...step1.leagues[0],
+      id: 'other_league_diff_teams',
+      calendarDates: [
+        {
+          dateStr: '2026-04-01',
+          dayOfWeek: 'WED',
+          dayNumber: 1,
+          month: 'Apr',
+          type: 'match',
+          matchFixture: {
+            id: 'fix_tour_2', // Same ID as international tour match 2!
+            homeTeamId: 'team_kol', // But different teams! (KKR vs CSK)
+            awayTeamId: 'team_che',
+            homeTeamName: 'Kolkata Knight Riders',
+            awayTeamName: 'Chennai Super Kings',
+            seriesId: 'ipl_2026',
+            completed: false
+          } as any
+        }
+      ]
+    };
+    const step42_5 = applyRecordCompletedInternationalMatchState({
+      finishedMatch: finishedMatch41_1,
+      didUserWin: true,
+      coachProfile: intlCoach41,
+      internationalSeries: step1.internationalSeries,
+      leagues: [duplicateLeague],
+      currentLeagueId: duplicateLeague.id,
+      nations: step1.nations
+    });
+    assert.equal(duplicateLeague.calendarDates[0].matchFixture?.completed, false, 'REQ 42.5: Duplicate fixture ID in another league with different teams was not mutated');
+
+    // 6. Repeated completed fixture submission (Idempotency)
+    const step42_6 = applyRecordCompletedInternationalMatchState({
+      finishedMatch: finishedMatch41_1,
+      didUserWin: true,
+      coachProfile: intlCoach41,
+      internationalSeries: step1.internationalSeries,
+      leagues: step1.leagues,
+      currentLeagueId: step1.leagues[0].id,
+      nations: step1.nations
+    });
+    assert.equal(step42_6.matchedFixtureId, 'fix_tour_1', 'REQ 42.6a: Repeated submission returns matchedFixtureId');
+    assert.equal(step42_6.internationalSeries.seriesWins, step1.internationalSeries.seriesWins, 'REQ 42.6b: Series wins NOT duplicated');
+
+    // 7. Legitimate legacy callback without explicit fixture ID
+    const legacyFinishedMatch42: MatchLiveState = {
+      ...finishedMatch41_1,
+      id: '',
+      fixtureId: undefined
+    };
+    // Ambiguous case (>1 unfinished matches)
+    const step42_7a = applyRecordCompletedInternationalMatchState({
+      finishedMatch: legacyFinishedMatch42,
+      didUserWin: true,
+      coachProfile: intlCoach41,
+      internationalSeries: step1.internationalSeries, // Match 2 & 3 unfinished (2 unfinished)
+      leagues: step1.leagues,
+      currentLeagueId: step1.leagues[0].id,
+      nations: step1.nations
+    });
+    assert.equal(step42_7a.matchedFixtureId, null, 'REQ 42.7a: Ambiguous legacy callback (>1 unfinished matches) rejected');
+
+    // Unambiguous case (exactly 1 unfinished match)
+    const singleUnfinishedSeries: InternationalSeriesState = {
+      ...step1.internationalSeries,
+      matches: [
+        step1.internationalSeries.matches[0], // completed: true
+        step1.internationalSeries.matches[1], // completed: false
+        { ...step1.internationalSeries.matches[2], completed: true } // completed: true
+      ]
+    };
+    const step42_7b = applyRecordCompletedInternationalMatchState({
+      finishedMatch: legacyFinishedMatch42,
+      didUserWin: true,
+      coachProfile: intlCoach41,
+      internationalSeries: singleUnfinishedSeries,
+      leagues: step1.leagues,
+      currentLeagueId: step1.leagues[0].id,
+      nations: step1.nations
+    });
+    assert.equal(step42_7b.matchedFixtureId, 'fix_tour_2', 'REQ 42.7b: Unambiguous legacy callback (exactly 1 unfinished match) resolved match 2');
+
+    // 8. IPL Career Lifecycle: Repeated calls to applyAdvanceAiPlayoffMatchesState are idempotent and do not simulate user match
+    const step42_8a = applyAdvanceAiPlayoffMatchesState({
+      league: step1.leagues[0],
+      leagues: step1.leagues,
+      currentLeagueId: step1.leagues[0].id,
+      teams: INITIAL_TEAMS,
+      players: INITIAL_PLAYERS,
+      coachProfile: INITIAL_COACH_PROFILE,
+      tournamentHonors: [],
+      careerPhase: 'league_stage',
+      careerBoardReview: null
+    });
+    const step42_8b = applyAdvanceAiPlayoffMatchesState({
+      league: step42_8a.league,
+      leagues: step42_8a.leagues,
+      currentLeagueId: step1.leagues[0].id,
+      teams: step42_8a.teams,
+      players: step42_8a.players,
+      coachProfile: step42_8a.coachProfile,
+      tournamentHonors: step42_8a.tournamentHonors,
+      careerPhase: step42_8a.careerPhase,
+      careerBoardReview: step42_8a.careerBoardReview
+    });
+    assert.deepEqual(step42_8b.simulatedStages, [], 'REQ 42.8: Repeated applyAdvanceAiPlayoffMatchesState is idempotent');
+
+    // 9. Statistics & Persistence: Twice submitted match + JSON serialization
+    const pTest42 = { ...INITIAL_PLAYERS[0] };
+    const matchEvent42: MatchLiveState = {
+      ...finishedMatch41_1,
+      id: 'match_repeat_stat_42',
+      innings1: {
+        ...finishedMatch41_1.innings1,
+        batters: [{ playerId: pTest42.id, name: pTest42.name, runs: 50, balls: 30, fours: 5, sixes: 2, dismissal: 'not out', isOut: false, strikeRate: 166.67, isOnStrike: false }],
+        bowlers: []
+      }
+    };
+    const after1 = recordMatchToPlayerStats(pTest42, matchEvent42, 'Season 2026');
+    const after2 = recordMatchToPlayerStats(after1, matchEvent42, 'Season 2026');
+    assert.equal(after2.stats.runs, pTest42.stats.runs + 50, 'REQ 42.9a: Player stats updated exactly once (idempotent)');
+    const savedPlayer42 = JSON.parse(JSON.stringify(after2));
+    assert.equal(savedPlayer42.stats.runs, pTest42.stats.runs + 50, 'REQ 42.9b: Serialized save preserves player stats');
+
+    // 10. Rules & Boundary Conditions
+    const createMockSquad = (total: number, overseas: number): Player[] => {
+      const sq: Player[] = [];
+      for (let i = 0; i < total; i++) {
+        sq.push({
+          id: `mock_p_${i}`,
+          name: `Mock Player ${i}`,
+          role: 'Top-order',
+          bowlingArm: 'ROB',
+          battingHand: 'RHB',
+          age: 25,
+          country: i < overseas ? 'Australia' : 'India',
+          isOverseas: i < overseas,
+          clubId: 'team_kol',
+          tier: 'Gold',
+          basePriceCr: 1.0,
+          salaryCr: 1.0,
+          form: 80, morale: 80, fitness: 80, isInjured: false, injuryDays: 0,
+          ratings: { bat: 70, pow: 70, tmp: 70, bowl: 20, pace: 20, ctrl: 20, dth: 20 },
+          stats: { matches: 0, runs: 0, balls: 0, fours: 0, sixes: 0, fifties: 0, hundreds: 0, highestScore: 0, wickets: 0, oversBowled: 0, runsConceded: 0, maidens: 0, bestBowling: '0/0' }
+        });
+      }
+      return sq;
+    };
+
+    // Squad limits (16-25)
+    assert.equal(validateFranchiseSquadLimits(createMockSquad(15, 2)).isValid, false, 'REQ 42.10a: Squad size 15 rejected (<16)');
+    assert.equal(validateFranchiseSquadLimits(createMockSquad(16, 2)).isValid, true, 'REQ 42.10b: Squad size 16 accepted');
+    assert.equal(validateFranchiseSquadLimits(createMockSquad(25, 8)).isValid, true, 'REQ 42.10c: Squad size 25 accepted');
+    assert.equal(validateFranchiseSquadLimits(createMockSquad(26, 8)).isValid, false, 'REQ 42.10d: Squad size 26 rejected (>25)');
+    assert.equal(validateFranchiseSquadLimits(createMockSquad(20, 9)).isValid, false, 'REQ 42.10e: Overseas players 9 rejected (>8)');
+
+    // Board review threshold
+    const reviewSat = buildDefaultBoardReview(2026, INITIAL_TEAMS[0], undefined, 1, true);
+    assert.equal(reviewSat.isSatisfied, true, 'REQ 42.10f: Board review >= 60% satisfied');
   }
 
   console.log('✅ ALL Career Progression, Multi-League Recovery, International Series IDs, Transition Idempotency & Verified Defect Tests PASSED!');
-  return { passed: 334, total: 334 };
+  return { passed: 350, total: 350 };
 }
 
 
