@@ -38,6 +38,10 @@ import {
   addUtcDaysToCalendarDate,
   applyAdvanceCalendarToNextTourState,
   resolveInternationalMatchParticipant,
+  classifyInternationalCompetition,
+  isUserControlledInternationalFixture,
+  isUserControlledFranchiseFixture,
+  applyAdvanceCalendarDayState,
   applyRecordCompletedInternationalMatchState,
   applyAdvanceAiPlayoffMatchesState,
   applySwitchUserClubState,
@@ -4857,9 +4861,613 @@ export function runCareerProgressionTests() {
     assert.equal(switchedFromIntl.coachProfile.clubTeamId, 'team_che', 'REQ 38.5m: clubTeamId updated to team_che');
     assert.equal(switchedFromIntl.coachProfile.nationalTeamId, null, 'REQ 38.5n: nationalTeamId cleared to null');
     assert.equal(switchedFromIntl.nations.some(n => n.isUserManaging), false, 'REQ 38.5o: No nation marked isUserManaging');
+
+    // ==========================================================================
+    // SCENARIO 39: International Test-Series Completion vs WTC Isolation, Idempotency & Calendar Simulation Eligibility
+    // ==========================================================================
+    console.log('Testing Scenario 39: International Test-Series Completion vs WTC Isolation, Idempotency & Calendar Simulation Eligibility...');
+
+    const freshNations = INITIAL_NATIONS.map(n => ({ ...n }));
+    const baseInd = freshNations.find(n => n.id === 'nat_ind')!;
+    const baseSa = freshNations.find(n => n.id === 'nat_sa')!;
+    const initialIndTestRating = baseInd.ratingTest;
+    const initialSaTestRating = baseSa.ratingTest;
+
+    const testSeries: InternationalSeriesState = {
+      seriesId: 'series_ind_sa_test_2026',
+      userNationId: 'nat_ind',
+      opponentNationId: 'nat_sa',
+      userNationName: 'India',
+      opponentNationName: 'South Africa',
+      userNationCode: 'IND',
+      opponentNationCode: 'SA',
+      userNationFlag: '🇮🇳',
+      opponentNationFlag: '🇿🇦',
+      format: 'TEST',
+      seriesWins: 0,
+      seriesLosses: 0,
+      matches: [
+        {
+          matchNumber: 1,
+          venue: 'SuperSport Park',
+          city: 'Centurion',
+          completed: false,
+          fixtureId: 'intl_fix_test_1',
+          homeNationId: 'nat_sa',
+          awayNationId: 'nat_ind',
+          format: 'TEST'
+        },
+        {
+          matchNumber: 2,
+          venue: 'Wanderers Stadium',
+          city: 'Johannesburg',
+          completed: false,
+          fixtureId: 'intl_fix_test_2',
+          homeNationId: 'nat_sa',
+          awayNationId: 'nat_ind',
+          format: 'TEST'
+        }
+      ]
+    };
+
+    const targetLeagueCalDates = [
+      {
+        id: 'cal_intl_day_1',
+        dateStr: '2026-12-15',
+        dayNumber: 15,
+        month: 'December',
+        dayOfWeek: 'Tuesday',
+        type: 'international' as const,
+        matchFixture: {
+          id: 'intl_fix_test_1',
+          homeTeamId: 'nat_sa',
+          awayTeamId: 'nat_ind',
+          homeShortName: 'SA',
+          awayShortName: 'IND',
+          homeTeamName: 'South Africa',
+          awayTeamName: 'India',
+          venue: 'SuperSport Park',
+          completed: false,
+          isInternational: true
+        },
+        internationalMatches: [
+          {
+            id: 'intl_fix_test_1',
+            homeTeamId: 'nat_sa',
+            awayTeamId: 'nat_ind',
+            homeTeamName: 'South Africa',
+            awayTeamName: 'India',
+            venue: 'SuperSport Park',
+            completed: false,
+            isInternational: true,
+            format: 'TEST' as const
+          }
+        ]
+      },
+      {
+        id: 'cal_intl_day_2',
+        dateStr: '2026-12-22',
+        dayNumber: 22,
+        month: 'December',
+        dayOfWeek: 'Tuesday',
+        type: 'international' as const,
+        matchFixture: {
+          id: 'intl_fix_test_2',
+          homeTeamId: 'nat_sa',
+          awayTeamId: 'nat_ind',
+          homeShortName: 'SA',
+          awayShortName: 'IND',
+          homeTeamName: 'South Africa',
+          awayTeamName: 'India',
+          venue: 'Wanderers Stadium',
+          completed: false,
+          isInternational: true
+        },
+        internationalMatches: [
+          {
+            id: 'intl_fix_test_2',
+            homeTeamId: 'nat_sa',
+            awayTeamId: 'nat_ind',
+            homeTeamName: 'South Africa',
+            awayTeamName: 'India',
+            venue: 'Wanderers Stadium',
+            completed: false,
+            isInternational: true,
+            format: 'TEST' as const
+          }
+        ]
+      }
+    ];
+
+    const activeIntlLeague: League = {
+      ...INITIAL_LEAGUES[0],
+      id: 'active_intl_league',
+      calendarDates: targetLeagueCalDates,
+      currentDateIndex: 0
+    };
+
+    const unrelatedLeagueCalDates = [
+      {
+        id: 'cal_unrelated_1',
+        dateStr: '2026-12-15',
+        dayNumber: 15,
+        month: 'December',
+        dayOfWeek: 'Tuesday',
+        type: 'match' as const,
+        matchFixture: {
+          id: 'unrelated_fix_1',
+          homeTeamId: 'team_syd',
+          awayTeamId: 'team_mel',
+          homeTeamName: 'Sydney',
+          awayTeamName: 'Melbourne',
+          venue: 'SCG',
+          completed: false
+        }
+      }
+    ];
+
+    const unrelatedLeague: League = {
+      ...INITIAL_LEAGUES[0],
+      id: 'unrelated_bbl_league',
+      calendarDates: unrelatedLeagueCalDates,
+      currentDateIndex: 0
+    };
+
+    const finishedBilateralTestMatch: MatchLiveState = {
+      id: 'intl_fix_test_1',
+      fixtureId: 'intl_fix_test_1',
+      leagueId: 'test_bilateral',
+      format: 'TEST',
+      homeTeam: {
+        id: 'nat_sa',
+        name: 'South Africa',
+        shortName: 'SA',
+        logoEmoji: '🇿🇦',
+        primaryColor: '#007749',
+        secondaryColor: '#FFB81C',
+        leagueId: 'intl',
+        city: 'Centurion',
+        purseCr: 100,
+        rtmCards: 0,
+        captainId: 'p_sa1',
+        playingXIIds: [],
+        squad: [],
+        isUserTeam: false
+      },
+      awayTeam: {
+        id: 'nat_ind',
+        name: 'India',
+        shortName: 'IND',
+        logoEmoji: '🇮🇳',
+        primaryColor: '#0080FF',
+        secondaryColor: '#FF9933',
+        leagueId: 'intl',
+        city: 'Mumbai',
+        purseCr: 100,
+        rtmCards: 0,
+        captainId: 'p_ind1',
+        playingXIIds: [],
+        squad: [],
+        isUserTeam: true
+      },
+      winnerTeamId: 'nat_ind',
+      resultText: 'India won by 142 runs',
+      venue: 'SuperSport Park, Centurion',
+      pitchType: 'Green Seamer',
+      weather: 'Sunny & Hot',
+      currentInningsIndex: 2,
+      innings1: {
+        battingTeamId: 'nat_ind',
+        bowlingTeamId: 'nat_sa',
+        runs: 380,
+        wickets: 10,
+        overs: 90,
+        ballsCompleted: 540,
+        maxOvers: 90,
+        currentOverRuns: 0,
+        extras: { total: 10, wides: 2, noBalls: 1, byes: 4, legByes: 3 },
+        batters: [],
+        bowlers: [],
+        currentStrikerId: '',
+        currentNonStrikerId: '',
+        currentBowlerId: '',
+        ballHistory: [],
+        fallOfWickets: [],
+        overRuns: []
+      },
+      innings2: {
+        battingTeamId: 'nat_sa',
+        bowlingTeamId: 'nat_ind',
+        runs: 238,
+        wickets: 10,
+        overs: 72.4,
+        ballsCompleted: 436,
+        maxOvers: 90,
+        currentOverRuns: 0,
+        extras: { total: 8, wides: 1, noBalls: 1, byes: 2, legByes: 4 },
+        batters: [],
+        bowlers: [],
+        currentStrikerId: '',
+        currentNonStrikerId: '',
+        currentBowlerId: '',
+        ballHistory: [],
+        fallOfWickets: [],
+        overRuns: []
+      },
+      targetRuns: 381,
+      status: 'finished',
+      lastBallOutcome: null,
+      isBallInFlight: false,
+      reviewsRemaining: { home: 2, away: 2 },
+      activeDrsReview: null,
+      dlsState: null,
+      hasDew: false,
+      tacticalTrapAlert: null,
+      powerSurgeTaken: false,
+      powerSurgeOversLeft: 0,
+      bowlingTactics: {
+        length: 'good',
+        line: 'outside_off',
+        angle: 'over',
+        variation: 'Stock ball',
+        fielders: []
+      },
+      battingTactics: {
+        approach: 'balanced',
+        targetSide: 'all',
+        runningRisk: 'normal'
+      }
+    };
+
+    const intlCoachProfile: CoachProfile = {
+      ...INITIAL_COACH_PROFILE,
+      activeCareerMode: 'international',
+      nationalTeamId: 'nat_ind',
+      clubTeamId: null
+    };
+
+    // 1. Bilateral Test match completes correct series fixture and active league calendar
+    const bilateralTestRes = applyRecordCompletedInternationalMatchState({
+      finishedMatch: finishedBilateralTestMatch,
+      didUserWin: true,
+      coachProfile: intlCoachProfile,
+      internationalSeries: testSeries,
+      leagues: [activeIntlLeague, unrelatedLeague],
+      currentLeagueId: activeIntlLeague.id,
+      nations: freshNations
+    });
+
+    assert.equal(bilateralTestRes.matchedFixtureId, 'intl_fix_test_1', 'REQ 39.1a: Bilateral Test matches intl_fix_test_1');
+    assert.equal(bilateralTestRes.internationalSeries.matches[0].completed, true, 'REQ 39.1b: Match 1 is marked completed');
+    assert.equal(bilateralTestRes.internationalSeries.matches[1].completed, false, 'REQ 39.1c: Match 2 remains unfinished');
+    assert.equal(bilateralTestRes.internationalSeries.seriesWins, 1, 'REQ 39.1d: User seriesWins incremented to 1');
+    assert.equal(bilateralTestRes.internationalSeries.seriesLosses, 0, 'REQ 39.1e: seriesLosses remains 0');
+    assert.equal(bilateralTestRes.internationalSeries.wtcTestCompleted, undefined, 'REQ 39.1f: wtcTestCompleted is NOT set for bilateral Test');
+
+    const updatedActiveLeague = bilateralTestRes.leagues.find(l => l.id === activeIntlLeague.id)!;
+    assert.equal(updatedActiveLeague.calendarDates[0].matchFixture?.completed, true, 'REQ 39.1g: Calendar date 0 matchFixture is completed');
+    assert.equal(updatedActiveLeague.calendarDates[0].internationalMatches?.[0]?.completed, true, 'REQ 39.1h: Calendar date 0 internationalMatch is completed');
+    assert.equal(updatedActiveLeague.calendarDates[1].matchFixture?.completed, false, 'REQ 39.1i: Calendar date 1 matchFixture remains uncompleted');
+
+    // Unrelated league's calendar remains unchanged
+    const updatedUnrelatedLeague = bilateralTestRes.leagues.find(l => l.id === unrelatedLeague.id)!;
+    assert.equal(updatedUnrelatedLeague.calendarDates[0].matchFixture?.completed, false, 'REQ 39.1j: Unrelated league calendar remains unchanged');
+
+    // Rankings updated (+3 / -2)
+    const indAfterWin = bilateralTestRes.nations.find(n => n.id === 'nat_ind')!;
+    const saAfterLoss = bilateralTestRes.nations.find(n => n.id === 'nat_sa')!;
+    assert.equal(indAfterWin.ratingTest, initialIndTestRating + 3, 'REQ 39.1k: India Test rating gained +3');
+    assert.equal(saAfterLoss.ratingTest, initialSaTestRating - 2, 'REQ 39.1l: South Africa Test rating lost -2');
+
+    // 2. Repeated completion callbacks do not duplicate results or player-stat updates (Idempotency)
+    const repeatedRes = applyRecordCompletedInternationalMatchState({
+      finishedMatch: finishedBilateralTestMatch,
+      didUserWin: true,
+      coachProfile: intlCoachProfile,
+      internationalSeries: bilateralTestRes.internationalSeries,
+      leagues: bilateralTestRes.leagues,
+      currentLeagueId: activeIntlLeague.id,
+      nations: bilateralTestRes.nations
+    });
+    assert.equal(repeatedRes.internationalSeries.seriesWins, 1, 'REQ 39.2a: seriesWins does NOT duplicate on repeated callback');
+    assert.equal(
+      repeatedRes.nations.find(n => n.id === 'nat_ind')!.ratingTest,
+      indAfterWin.ratingTest,
+      'REQ 39.2b: India Test rating does NOT duplicate +3 on repeated callback'
+    );
+    assert.equal(
+      repeatedRes.nations.find(n => n.id === 'nat_sa')!.ratingTest,
+      saAfterLoss.ratingTest,
+      'REQ 39.2c: South Africa Test rating does NOT duplicate -2 on repeated callback'
+    );
+
+    // 3. WTC Test match follows the existing WTC completion path
+    const wtcTestMatch: MatchLiveState = {
+      ...finishedBilateralTestMatch,
+      id: 'wtc_aus_ind_2026',
+      fixtureId: 'wtc_aus_ind_2026',
+      leagueId: 'wtc_test',
+      homeTeam: {
+        ...finishedBilateralTestMatch.homeTeam,
+        id: 'nat_aus',
+        name: 'Australia',
+        shortName: 'AUS'
+      },
+      winnerTeamId: 'nat_ind',
+      resultText: 'India won by 5 wickets'
+    };
+    const wtcRes = applyRecordCompletedInternationalMatchState({
+      finishedMatch: wtcTestMatch,
+      didUserWin: true,
+      coachProfile: intlCoachProfile,
+      internationalSeries: bilateralTestRes.internationalSeries,
+      leagues: bilateralTestRes.leagues,
+      currentLeagueId: activeIntlLeague.id,
+      nations: bilateralTestRes.nations
+    });
+    assert.equal(wtcRes.internationalSeries.wtcTestCompleted, true, 'REQ 39.3a: WTC test completion sets wtcTestCompleted: true');
+    assert.ok(Boolean(wtcRes.internationalSeries.wtcTestSummary), 'REQ 39.3b: WTC test summary is recorded');
+    assert.equal(wtcRes.internationalSeries.matches[1].completed, false, 'REQ 39.3c: Bilateral tour matches are not touched by WTC match');
+
+    // Repeated WTC callback is also idempotent
+    const repeatedWtcRes = applyRecordCompletedInternationalMatchState({
+      finishedMatch: wtcTestMatch,
+      didUserWin: true,
+      coachProfile: intlCoachProfile,
+      internationalSeries: wtcRes.internationalSeries,
+      leagues: wtcRes.leagues,
+      currentLeagueId: activeIntlLeague.id,
+      nations: wtcRes.nations
+    });
+    assert.equal(
+      repeatedWtcRes.nations.find(n => n.id === 'nat_ind')!.ratingTest,
+      wtcRes.nations.find(n => n.id === 'nat_ind')!.ratingTest,
+      'REQ 39.3d: WTC repeated callback does not duplicate nation ranking changes'
+    );
+
+    // 4. Ambiguous or missing competition identity fails safely without state mutation
+    const ambiguousTestMatch: MatchLiveState = {
+      ...finishedBilateralTestMatch,
+      id: 'unknown_test_match_99',
+      fixtureId: 'unknown_test_match_99',
+      leagueId: '',
+      homeTeam: {
+        ...finishedBilateralTestMatch.homeTeam,
+        id: 'nat_unknown_1',
+        name: 'Unknown Land'
+      },
+      awayTeam: {
+        ...finishedBilateralTestMatch.awayTeam,
+        id: 'nat_unknown_2',
+        name: 'Mystery Nation'
+      }
+    };
+    const ambiguousRes = applyRecordCompletedInternationalMatchState({
+      finishedMatch: ambiguousTestMatch,
+      didUserWin: true,
+      coachProfile: intlCoachProfile,
+      internationalSeries: bilateralTestRes.internationalSeries,
+      leagues: bilateralTestRes.leagues,
+      currentLeagueId: activeIntlLeague.id,
+      nations: bilateralTestRes.nations
+    });
+    assert.equal(ambiguousRes.matchedFixtureId, null, 'REQ 39.4a: Ambiguous competition yields null matchedFixtureId');
+    assert.deepEqual(ambiguousRes.internationalSeries, bilateralTestRes.internationalSeries, 'REQ 39.4b: Ambiguous match fails safely without mutating series');
+    assert.deepEqual(ambiguousRes.nations, bilateralTestRes.nations, 'REQ 39.4c: Ambiguous match fails safely without mutating nation rankings');
+
+    // 5. Prevent background calendar simulation from consuming user-controlled fixtures
+    // 5a: Coached nation international fixture on current day blocks advancement
+    const uncompletedIntlDayLeague: League = {
+      ...activeIntlLeague,
+      calendarDates: [
+        {
+          id: 'cal_user_intl_today',
+          dateStr: '2026-11-10',
+          dayNumber: 10,
+          month: 'November',
+          dayOfWeek: 'Saturday',
+          type: 'international',
+          matchFixture: {
+            id: 'intl_fix_user_1',
+            homeTeamId: 'nat_ind',
+            awayTeamId: 'nat_sa',
+            homeTeamName: 'India',
+            awayTeamName: 'South Africa',
+            venue: 'SuperSport Park, Centurion',
+            completed: false,
+            isInternational: true
+          },
+          internationalMatches: [
+            {
+              id: 'intl_fix_user_1',
+              homeTeamId: 'nat_ind',
+              awayTeamId: 'nat_sa',
+              homeTeamName: 'India',
+              awayTeamName: 'South Africa',
+              venue: 'SuperSport Park, Centurion',
+              completed: false,
+              isInternational: true,
+              format: 'T20'
+            }
+          ]
+        },
+        {
+          id: 'cal_user_intl_tomorrow',
+          dateStr: '2026-11-11',
+          dayNumber: 11,
+          month: 'November',
+          dayOfWeek: 'Sunday',
+          type: 'rest'
+        }
+      ],
+      currentDateIndex: 0
+    };
+
+    assert.equal(
+      isUserControlledInternationalFixture(uncompletedIntlDayLeague.calendarDates[0].matchFixture, intlCoachProfile, freshNations),
+      true,
+      'REQ 39.5a: Match involving coached nation India is user-controlled in international mode'
+    );
+
+    const intlAdvanceBlocked = applyAdvanceCalendarDayState({
+      league: uncompletedIntlDayLeague,
+      teams: INITIAL_TEAMS,
+      players: freshPlayers,
+      coachProfile: intlCoachProfile,
+      nations: freshNations,
+      careerPhase: 'international_series',
+      tournamentHonors: [],
+      careerBoardReview: null
+    });
+    assert.equal(intlAdvanceBlocked.advanced, false, 'REQ 39.5b: Background advance is blocked on uncompleted user international fixture');
+    assert.equal(intlAdvanceBlocked.blockedReason, 'user_international_fixture_pending', 'REQ 39.5c: Blocked reason specifies user international fixture pending');
+    assert.equal(intlAdvanceBlocked.league.currentDateIndex, 0, 'REQ 39.5d: currentDateIndex does NOT advance past uncompleted fixture');
+    assert.equal(intlAdvanceBlocked.league.calendarDates[0].matchFixture?.completed, false, 'REQ 39.5e: User international fixture is not consumed by AI');
+
+    // 5b: AI-only international fixtures between other nations simulate normally
+    const aiOnlyIntlDayLeague: League = {
+      ...activeIntlLeague,
+      calendarDates: [
+        {
+          id: 'cal_ai_intl_today',
+          dateStr: '2026-11-10',
+          dayNumber: 10,
+          month: 'November',
+          dayOfWeek: 'Saturday',
+          type: 'international',
+          matchFixture: {
+            id: 'intl_fix_ai_1',
+            homeTeamId: 'nat_aus',
+            awayTeamId: 'nat_eng',
+            homeTeamName: 'Australia',
+            awayTeamName: 'England',
+            venue: 'MCG, Melbourne',
+            completed: false,
+            isInternational: true
+          },
+          internationalMatches: [
+            {
+              id: 'intl_fix_ai_1',
+              homeTeamId: 'nat_aus',
+              awayTeamId: 'nat_eng',
+              homeTeamName: 'Australia',
+              awayTeamName: 'England',
+              venue: 'MCG, Melbourne',
+              completed: false,
+              isInternational: true,
+              format: 'T20'
+            }
+          ]
+        },
+        {
+          id: 'cal_ai_intl_tomorrow',
+          dateStr: '2026-11-11',
+          dayNumber: 11,
+          month: 'November',
+          dayOfWeek: 'Sunday',
+          type: 'rest'
+        }
+      ],
+      currentDateIndex: 0
+    };
+
+    assert.equal(
+      isUserControlledInternationalFixture(aiOnlyIntlDayLeague.calendarDates[0].matchFixture, intlCoachProfile, freshNations),
+      false,
+      'REQ 39.5f: Australia vs England is not user-controlled when coaching India'
+    );
+
+    const aiAdvanceAllowed = applyAdvanceCalendarDayState({
+      league: aiOnlyIntlDayLeague,
+      teams: INITIAL_TEAMS,
+      players: freshPlayers,
+      coachProfile: intlCoachProfile,
+      nations: freshNations,
+      careerPhase: 'international_series',
+      tournamentHonors: [],
+      careerBoardReview: null
+    });
+    assert.equal(aiAdvanceAllowed.advanced, true, 'REQ 39.5g: Background advance succeeds for AI-only international fixtures');
+    assert.equal(aiAdvanceAllowed.league.calendarDates[0].matchFixture?.completed, true, 'REQ 39.5h: AI international fixture completes');
+    assert.equal(aiAdvanceAllowed.league.currentDateIndex, 1, 'REQ 39.5i: Advances to next calendar day');
+
+    // 5c: In franchise mode, international fixtures simulate normally without diversion
+    const franchiseCoachProfile: CoachProfile = {
+      ...INITIAL_COACH_PROFILE,
+      activeCareerMode: 'franchise',
+      clubTeamId: 'team_mum',
+      nationalTeamId: null
+    };
+
+    assert.equal(
+      isUserControlledInternationalFixture(uncompletedIntlDayLeague.calendarDates[0].matchFixture, franchiseCoachProfile, freshNations),
+      false,
+      'REQ 39.5j: In franchise mode, international matches are never user-controlled'
+    );
+
+    // 5d: In franchise mode, uncompleted club fixture on current day blocks advancement
+    const uncompletedClubDayLeague: League = {
+      ...activeIntlLeague,
+      calendarDates: [
+        {
+          id: 'cal_club_today',
+          dateStr: '2026-04-05',
+          dayNumber: 5,
+          month: 'April',
+          dayOfWeek: 'Friday',
+          type: 'match',
+          matchFixture: {
+            id: 'fix_club_1',
+            homeTeamId: 'team_mum',
+            awayTeamId: 'team_che',
+            homeTeamName: 'Mumbai',
+            awayTeamName: 'Chennai',
+            venue: 'Wankhede Stadium, Mumbai',
+            completed: false
+          }
+        },
+        {
+          id: 'cal_club_tomorrow',
+          dateStr: '2026-04-06',
+          dayNumber: 6,
+          month: 'April',
+          dayOfWeek: 'Saturday',
+          type: 'rest'
+        }
+      ],
+      currentDateIndex: 0
+    };
+
+    const clubAdvanceBlocked = applyAdvanceCalendarDayState({
+      league: uncompletedClubDayLeague,
+      teams: INITIAL_TEAMS,
+      players: freshPlayers,
+      coachProfile: franchiseCoachProfile,
+      userTeamId: 'team_mum',
+      nations: freshNations,
+      careerPhase: 'league_stage',
+      tournamentHonors: [],
+      careerBoardReview: null
+    });
+    assert.equal(clubAdvanceBlocked.advanced, false, 'REQ 39.5k: Advance blocked on uncompleted club match in franchise mode');
+    assert.equal(clubAdvanceBlocked.blockedReason, 'user_franchise_fixture_pending', 'REQ 39.5l: Blocked reason indicates franchise match pending');
+
+    // 5e: Ambiguous or missing participant identities fail safely (do not auto-simulate)
+    const ambiguousIntlFixture = {
+      id: 'fix_ambiguous',
+      homeTeamId: '',
+      awayTeamId: '',
+      homeTeamName: '',
+      awayTeamName: ''
+    };
+    assert.equal(
+      isUserControlledInternationalFixture(ambiguousIntlFixture, intlCoachProfile, freshNations),
+      true,
+      'REQ 39.5m: Missing participant identities fail safely (treated as protected from auto-simulation)'
+    );
   }
 
   console.log('✅ ALL Career Progression, Multi-League Recovery, International Series IDs, Transition Idempotency & Verified Defect Tests PASSED!');
-  return { passed: 235, total: 235 };
+  return { passed: 270, total: 270 };
 }
 

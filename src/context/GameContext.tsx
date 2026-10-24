@@ -4729,7 +4729,7 @@ interface GameContextType {
   matchLiveState: MatchLiveState | null;
   startMatch: (opponentTeamId?: string, format?: 'T20' | 'ODI' | 'TEST', isAwayMatch?: boolean, fixtureId?: string) => void;
   createFranchiseMatchState: (homeTeamObj: Team, awayTeamObj: Team, leagueId: string, format: 'T20' | 'ODI' | 'TEST', playoffStage?: 'q1' | 'eliminator' | 'q2' | 'final', fixtureId?: string) => MatchLiveState;
-  startInternationalMatch: (homeCountry?: string, awayCountry?: string, venue?: string, format?: 'T20' | 'ODI' | 'TEST', fixtureId?: string) => void;
+  startInternationalMatch: (homeCountry?: string, awayCountry?: string, venue?: string, format?: 'T20' | 'ODI' | 'TEST', fixtureId?: string, competitionId?: string) => void;
   playPlayoffMatch: (leagueId: string, stage: 'q1' | 'eliminator' | 'q2' | 'final') => { success: boolean; reason?: string };
   simPlayoffMatch: (leagueId: string, stage: 'q1' | 'eliminator' | 'q2' | 'final', isUserAction?: boolean) => { success: boolean; reason?: string };
   resetPlayoffBracket: (leagueId: string) => void;
@@ -5033,11 +5033,200 @@ export function resolveInternationalMatchParticipant(
 }
 
 /**
+ * Authoritatively classifies the international competition identity of a match as
+ * 'bilateral', 'wtc', or 'unknown' (ambiguous/unrecognized).
+ * Distinguishes WTC competition identity from match format ('TEST').
+ */
+export function classifyInternationalCompetition(params: {
+  finishedMatch: MatchLiveState;
+  internationalSeries?: InternationalSeriesState | null;
+  nations: Nation[];
+}): 'bilateral' | 'wtc' | 'unknown' {
+  const { finishedMatch, internationalSeries, nations } = params;
+  const fixtureId = finishedMatch.fixtureId || finishedMatch.id || '';
+  const leagueId = finishedMatch.leagueId || '';
+  const compId = (finishedMatch as any).competitionId || '';
+  const seriesName = (finishedMatch as any).seriesName || '';
+
+  // 1. Explicit fixture match in active bilateral series matches
+  if (internationalSeries && Array.isArray(internationalSeries.matches)) {
+    const isExplicitSeriesFixture = internationalSeries.matches.some(
+      m =>
+        m &&
+        (m.fixtureId === fixtureId ||
+          (internationalSeries.seriesId &&
+            `intl_fix_${internationalSeries.seriesId}_${m.matchNumber}` === fixtureId))
+    );
+    if (isExplicitSeriesFixture) {
+      return 'bilateral';
+    }
+  }
+
+  // 2. Explicit bilateral league or fixture ID markers
+  if (
+    leagueId === 'test_bilateral' ||
+    leagueId === 't20i_bilateral' ||
+    leagueId === 'odi_bilateral' ||
+    compId === 'bilateral' ||
+    compId === 'bilateral_series' ||
+    fixtureId.startsWith('intl_fix_') ||
+    fixtureId.startsWith('cal_intl_')
+  ) {
+    return 'bilateral';
+  }
+
+  // 3. Explicit WTC competition markers
+  const isExplicitWtc =
+    compId === 'wtc_test' ||
+    compId === 'wtc' ||
+    leagueId === 'wtc_test' ||
+    leagueId === 'wtc' ||
+    fixtureId.startsWith('wtc_') ||
+    seriesName.toLowerCase().includes('world test championship') ||
+    seriesName.toLowerCase().includes('wtc');
+
+  if (isExplicitWtc) {
+    return 'wtc';
+  }
+
+  // 4. If series exists and teams match active internationalSeries:
+  if (internationalSeries && internationalSeries.userNationId && internationalSeries.opponentNationId) {
+    const homeNat =
+      resolveInternationalMatchParticipant(finishedMatch.homeTeam.id, nations) ||
+      resolveInternationalMatchParticipant(finishedMatch.homeTeam.name, nations);
+    const awayNat =
+      resolveInternationalMatchParticipant(finishedMatch.awayTeam.id, nations) ||
+      resolveInternationalMatchParticipant(finishedMatch.awayTeam.name, nations);
+    const sHomeNat =
+      resolveInternationalMatchParticipant(internationalSeries.userNationId, nations) ||
+      resolveInternationalMatchParticipant(internationalSeries.userNationName, nations);
+    const sAwayNat =
+      resolveInternationalMatchParticipant(internationalSeries.opponentNationId, nations) ||
+      resolveInternationalMatchParticipant(internationalSeries.opponentNationName, nations);
+
+    if (homeNat && awayNat && sHomeNat && sAwayNat) {
+      const matchBoth =
+        (homeNat.id === sHomeNat.id && awayNat.id === sAwayNat.id) ||
+        (homeNat.id === sAwayNat.id && awayNat.id === sHomeNat.id);
+      if (matchBoth) {
+        return 'bilateral';
+      }
+    }
+  }
+
+  return 'unknown';
+}
+
+/**
+ * Determines whether an international fixture belongs to the user's coached national team:
+ * - In franchise mode, returns false (international fixtures simulate normally without diversion).
+ * - In international mode, resolves the coached nation authoritatively.
+ * - If fixture involves the coached nation, returns true (must be preserved for the user to play).
+ * - Fails safely if team or fixture identity is missing or ambiguous (returns true to prevent auto-simulating ambiguous fixtures).
+ */
+export function isUserControlledInternationalFixture(
+  fixture: {
+    homeTeamId?: string;
+    awayTeamId?: string;
+    homeTeamName?: string;
+    awayTeamName?: string;
+    homeTeam?: { id?: string; name?: string };
+    awayTeam?: { id?: string; name?: string };
+    isInternational?: boolean;
+    format?: string;
+  } | null | undefined,
+  coachProfile: CoachProfile | undefined | null,
+  nations: Nation[]
+): boolean {
+  if (!fixture) return false;
+
+  const activeMode =
+    coachProfile?.activeCareerMode ||
+    (coachProfile?.nationalTeamId && !coachProfile?.clubTeamId ? 'international' : 'franchise');
+  if (activeMode !== 'international') {
+    return false;
+  }
+
+  const coachedNationId = coachProfile?.nationalTeamId;
+  if (!coachedNationId) {
+    return true; // Fail safely: active international mode but unassigned coached nation
+  }
+
+  const coachedNat = resolveInternationalMatchParticipant(coachedNationId, nations);
+  if (!coachedNat) {
+    return true; // Fail safely: cannot resolve coached nation
+  }
+
+  const homeId = fixture.homeTeamId || fixture.homeTeam?.id || '';
+  const awayId = fixture.awayTeamId || fixture.awayTeam?.id || '';
+  const homeName = fixture.homeTeamName || fixture.homeTeam?.name || '';
+  const awayName = fixture.awayTeamName || fixture.awayTeam?.name || '';
+
+  // Fail safely if participant identity is completely missing or ambiguous
+  if ((!homeId && !homeName) || (!awayId && !awayName)) {
+    return true;
+  }
+
+  const homeNat =
+    resolveInternationalMatchParticipant(homeId, nations) ||
+    resolveInternationalMatchParticipant(homeName, nations);
+  const awayNat =
+    resolveInternationalMatchParticipant(awayId, nations) ||
+    resolveInternationalMatchParticipant(awayName, nations);
+
+  // If either participant cannot be resolved to a known nation, it is ambiguous
+  if (!homeNat || !awayNat) {
+    if (homeNat?.id === coachedNat.id || awayNat?.id === coachedNat.id) {
+      return true;
+    }
+    return true; // Fail safely
+  }
+
+  return homeNat.id === coachedNat.id || awayNat.id === coachedNat.id;
+}
+
+/**
+ * Determines whether a domestic fixture involves the user's coached franchise club.
+ */
+export function isUserControlledFranchiseFixture(
+  fixture: {
+    homeTeamId?: string;
+    awayTeamId?: string;
+    isUserMatch?: boolean;
+    homeTeam?: { id?: string; isUserTeam?: boolean };
+    awayTeam?: { id?: string; isUserTeam?: boolean };
+  } | null | undefined,
+  coachProfile: CoachProfile | undefined | null,
+  userTeamId?: string
+): boolean {
+  if (!fixture) return false;
+  const activeMode =
+    coachProfile?.activeCareerMode ||
+    (coachProfile?.nationalTeamId && !coachProfile?.clubTeamId ? 'international' : 'franchise');
+  if (activeMode === 'international') {
+    return false;
+  }
+  const myClubId = userTeamId || coachProfile?.clubTeamId;
+  if (!myClubId) return true; // fail safely
+  const homeId = fixture.homeTeamId || fixture.homeTeam?.id;
+  const awayId = fixture.awayTeamId || fixture.awayTeam?.id;
+  if (!homeId && !awayId) return true; // ambiguous
+  return (
+    fixture.isUserMatch === true ||
+    fixture.homeTeam?.isUserTeam === true ||
+    fixture.awayTeam?.isUserTeam === true ||
+    homeId === myClubId ||
+    awayId === myClubId
+  );
+}
+
+/**
  * Authoritative pure state helper for recording a completed international match:
- * - Updates ICC rankings for the participating nations.
+ * - Authoritatively determines competition identity (distinguishing bilateral Test matches from WTC).
+ * - Enforces idempotency against repeated completion callbacks (skips ranking and score duplicates).
  * - Reconciles at most ONE matching uncompleted fixture in `internationalSeries.matches` (preferring exact `fixtureId`).
- * - Marks ONLY the corresponding single calendar fixture completed (matching canonical nation IDs `nat_ind` as well as nation names,
- *   and never marking all 5 matches of a bilateral series completed after a single match).
+ * - Marks ONLY the corresponding single calendar fixture completed.
+ * - Fails safely without state corruption if competition identity is unknown/ambiguous.
  */
 export function applyRecordCompletedInternationalMatchState(params: {
   finishedMatch: MatchLiveState;
@@ -5062,6 +5251,24 @@ export function applyRecordCompletedInternationalMatchState(params: {
     currentLeagueId,
     nations
   } = params;
+
+  // 1. Authoritatively classify competition
+  const competitionType = classifyInternationalCompetition({
+    finishedMatch,
+    internationalSeries,
+    nations
+  });
+
+  if (competitionType === 'unknown') {
+    // Fail safely for ambiguous/unrecognized international fixtures:
+    // Do not corrupt active series, do not mutate leagues or rankings
+    return {
+      internationalSeries,
+      leagues,
+      nations,
+      matchedFixtureId: null
+    };
+  }
 
   const winnerId = finishedMatch.winnerTeamId || finishedMatch.homeTeam.id;
   const loserId = winnerId === finishedMatch.homeTeam.id ? finishedMatch.awayTeam.id : finishedMatch.homeTeam.id;
@@ -5105,38 +5312,6 @@ export function applyRecordCompletedInternationalMatchState(params: {
       ? params.intlShortSummary
       : `${awayShort} ${awayScore} vs ${homeShort} ${homeScore} · ${finishedMatch.resultText || ''}`;
 
-  const updatedNationsRaw = nations.map(n => {
-    const isWin = (winnerNat && n.id === winnerNat.id) || n.name.toLowerCase() === winnerNameLower;
-    const isLoss = (loserNat && n.id === loserNat.id) || n.name.toLowerCase() === loserNameLower;
-    if (!isWin && !isLoss) return n;
-    const delta = isWin ? 3 : -2;
-    return {
-      ...n,
-      ratingT20: finishedMatch.format === 'T20' ? Math.max(150, n.ratingT20 + delta) : n.ratingT20,
-      ratingODI: finishedMatch.format === 'ODI' ? Math.max(50, n.ratingODI + delta) : n.ratingODI,
-      ratingTest: finishedMatch.format === 'TEST' ? Math.max(40, n.ratingTest + delta) : n.ratingTest
-    };
-  });
-
-  const byT20 = [...updatedNationsRaw].sort((a, b) => b.ratingT20 - a.ratingT20);
-  const byODI = [...updatedNationsRaw].sort((a, b) => b.ratingODI - a.ratingODI);
-  const byTest = [...updatedNationsRaw].sort((a, b) => b.ratingTest - a.ratingTest);
-
-  const updatedNations = updatedNationsRaw.map(n => {
-    const rT20 = byT20.findIndex(x => x.id === n.id) + 1;
-    const rODI = byODI.findIndex(x => x.id === n.id) + 1;
-    const rTest = byTest.findIndex(x => x.id === n.id) + 1;
-    return {
-      ...n,
-      rankT20: rT20,
-      t20Rank: rT20,
-      rankODI: rODI,
-      odiRank: rODI,
-      rankTest: rTest,
-      testRank: rTest
-    };
-  });
-
   const doesPairMatchFinishedTeams = (
     candHomeId?: string,
     candAwayId?: string,
@@ -5176,14 +5351,32 @@ export function applyRecordCompletedInternationalMatchState(params: {
       ? finishedMatch.fixtureId.trim()
       : null;
 
-  if (internationalSeries && typeof internationalSeries === 'object') {
-    if (finishedMatch.leagueId === 'wtc_test' || finishedMatch.format === 'TEST') {
+  // 2. WTC Completion Handling vs Bilateral Series Completion Handling with Idempotency Guard
+  if (competitionType === 'wtc') {
+    const isAlreadyCompletedWtc = Boolean(
+      internationalSeries?.wtcTestCompleted &&
+      (internationalSeries.wtcTestSummary === intlShortSummary || !params.intlShortSummary)
+    );
+
+    if (isAlreadyCompletedWtc) {
+      // Idempotency: WTC match is already recorded, do not duplicate rankings or state
+      return {
+        internationalSeries,
+        leagues,
+        nations,
+        matchedFixtureId
+      };
+    }
+
+    if (internationalSeries && typeof internationalSeries === 'object') {
       nextSeries = {
         ...internationalSeries,
         wtcTestCompleted: true,
         wtcTestSummary: intlShortSummary
       };
-    } else if (Array.isArray(internationalSeries.matches)) {
+    }
+  } else if (competitionType === 'bilateral') {
+    if (internationalSeries && Array.isArray(internationalSeries.matches)) {
       const seriesMatchesTeams = doesPairMatchFinishedTeams(
         internationalSeries.userNationId,
         internationalSeries.opponentNationId,
@@ -5216,27 +5409,68 @@ export function applyRecordCompletedInternationalMatchState(params: {
           matchedFixtureId = expectedFixId;
         }
 
-        if (!targetMatch.completed) {
-          const updatedMatches = internationalSeries.matches.map((m, idx) =>
-            idx === targetMatchIdx
-              ? {
-                  ...m,
-                  fixtureId: m.fixtureId || expectedFixId,
-                  completed: true,
-                  summary: intlShortSummary
-                }
-              : m
-          );
-          nextSeries = {
-            ...internationalSeries,
-            seriesWins: internationalSeries.seriesWins + (didUserWin ? 1 : 0),
-            seriesLosses: internationalSeries.seriesLosses + (didUserWin ? 0 : 1),
-            matches: updatedMatches
+        if (targetMatch.completed) {
+          // Idempotency: match was already completed in series, do not duplicate rankings or results
+          return {
+            internationalSeries,
+            leagues,
+            nations,
+            matchedFixtureId
           };
         }
+
+        const updatedMatches = internationalSeries.matches.map((m, idx) =>
+          idx === targetMatchIdx
+            ? {
+                ...m,
+                fixtureId: m.fixtureId || expectedFixId,
+                completed: true,
+                summary: intlShortSummary
+              }
+            : m
+        );
+        nextSeries = {
+          ...internationalSeries,
+          seriesWins: internationalSeries.seriesWins + (didUserWin ? 1 : 0),
+          seriesLosses: internationalSeries.seriesLosses + (didUserWin ? 0 : 1),
+          matches: updatedMatches
+        };
       }
     }
   }
+
+  // 3. Update ICC Rankings only for freshly completed matches (idempotency enforced)
+  const updatedNationsRaw = nations.map(n => {
+    const isWin = (winnerNat && n.id === winnerNat.id) || n.name.toLowerCase() === winnerNameLower;
+    const isLoss = (loserNat && n.id === loserNat.id) || n.name.toLowerCase() === loserNameLower;
+    if (!isWin && !isLoss) return n;
+    const delta = isWin ? 3 : -2;
+    return {
+      ...n,
+      ratingT20: finishedMatch.format === 'T20' ? Math.max(150, n.ratingT20 + delta) : n.ratingT20,
+      ratingODI: finishedMatch.format === 'ODI' ? Math.max(50, n.ratingODI + delta) : n.ratingODI,
+      ratingTest: finishedMatch.format === 'TEST' ? Math.max(40, n.ratingTest + delta) : n.ratingTest
+    };
+  });
+
+  const byT20 = [...updatedNationsRaw].sort((a, b) => b.ratingT20 - a.ratingT20);
+  const byODI = [...updatedNationsRaw].sort((a, b) => b.ratingODI - a.ratingODI);
+  const byTest = [...updatedNationsRaw].sort((a, b) => b.ratingTest - a.ratingTest);
+
+  const updatedNations = updatedNationsRaw.map(n => {
+    const rT20 = byT20.findIndex(x => x.id === n.id) + 1;
+    const rODI = byODI.findIndex(x => x.id === n.id) + 1;
+    const rTest = byTest.findIndex(x => x.id === n.id) + 1;
+    return {
+      ...n,
+      rankT20: rT20,
+      t20Rank: rT20,
+      rankODI: rODI,
+      odiRank: rODI,
+      rankTest: rTest,
+      testRank: rTest
+    };
+  });
 
   const updatedLeagues = leagues.map(league => {
     if (!league || !Array.isArray(league.calendarDates)) return league;
@@ -5650,6 +5884,346 @@ export function applyAdvanceAiPlayoffMatchesState(state: {
     tournamentHonors: workingHonors,
     careerPhase: workingPhase,
     careerBoardReview: workingReview
+  };
+}
+
+/**
+ * Authoritative pure state transition for advancing a calendar day in the active league:
+ * - Checks whether the current calendar day contains an uncompleted fixture the user is eligible to play
+ *   (club match in franchise mode, or international match involving coached nation in international mode).
+ * - If so, blocks advancement (`advanced: false`) to preserve user-controlled fixtures from being consumed as AI.
+ * - For eligible AI fixtures on the current day, simulates unfinished domestic and international fixtures.
+ * - Never simulates international fixtures involving the user's coached nation in the background.
+ * - Fails safely if team or fixture identity is missing or ambiguous (does not auto-simulate fixtures with ambiguous user involvement).
+ * - Skips already-completed fixtures to prevent double simulation between calendar and Hub.
+ * - Updates domestic standings, NRR, playoffs qualification, and advances `currentDateIndex`.
+ */
+export function applyAdvanceCalendarDayState(params: {
+  league: League;
+  currentLeagueId?: string;
+  teams: Team[];
+  players: Player[];
+  coachProfile?: CoachProfile;
+  userTeamId?: string;
+  nations: Nation[];
+  careerPhase: CareerPhase;
+  tournamentHonors: TournamentHonor[];
+  careerBoardReview: CareerBoardReview | null;
+  activeSeasonKey?: string;
+}): {
+  advanced: boolean;
+  blockedReason?: string;
+  league: League;
+  players: Player[];
+  careerPhase: CareerPhase;
+  tournamentHonors: TournamentHonor[];
+  careerBoardReview: CareerBoardReview | null;
+  coachProfile?: CoachProfile;
+  simulatedFixturesCount: number;
+} {
+  const {
+    league,
+    currentLeagueId = league.id,
+    teams,
+    players,
+    coachProfile,
+    userTeamId,
+    nations,
+    careerPhase,
+    tournamentHonors,
+    careerBoardReview,
+    activeSeasonKey: providedSeasonKey
+  } = params;
+
+  const curDayIdx = league.currentDateIndex || 0;
+  const curDayObj = Array.isArray(league.calendarDates) ? league.calendarDates[curDayIdx] : undefined;
+
+  if (!curDayObj) {
+    return {
+      advanced: false,
+      blockedReason: 'invalid_current_calendar_day',
+      league,
+      players,
+      careerPhase,
+      tournamentHonors,
+      careerBoardReview,
+      coachProfile,
+      simulatedFixturesCount: 0
+    };
+  }
+
+  // 1. Resolve active coaching mode
+  const activeMode =
+    coachProfile?.activeCareerMode ||
+    (coachProfile?.nationalTeamId && !coachProfile?.clubTeamId ? 'international' : 'franchise');
+
+  // 2. Check if current day has an uncompleted fixture the user is eligible to play
+  if (activeMode === 'international') {
+    // Check internationalMatches on current day
+    const hasUncompletedUserIntl = (curDayObj.internationalMatches || []).some(
+      im =>
+        im &&
+        !im.completed &&
+        !(im.completedMatchState && im.completedMatchState.status === 'finished') &&
+        isUserControlledInternationalFixture(im, coachProfile, nations)
+    );
+    // Check matchFixture if international
+    const hasUncompletedUserMf = Boolean(
+      curDayObj.matchFixture &&
+      !curDayObj.matchFixture.completed &&
+      !(curDayObj.matchFixture.completedMatchState && curDayObj.matchFixture.completedMatchState.status === 'finished') &&
+      (curDayObj.type === 'international' || curDayObj.matchFixture.isInternational) &&
+      isUserControlledInternationalFixture(curDayObj.matchFixture, coachProfile, nations)
+    );
+
+    if (hasUncompletedUserIntl || hasUncompletedUserMf) {
+      return {
+        advanced: false,
+        blockedReason: 'user_international_fixture_pending',
+        league,
+        players,
+        careerPhase,
+        tournamentHonors,
+        careerBoardReview,
+        coachProfile,
+        simulatedFixturesCount: 0
+      };
+    }
+  } else {
+    // Franchise mode: check if current day has an uncompleted user franchise fixture
+    const myClubId = userTeamId || coachProfile?.clubTeamId;
+    const mf = curDayObj.matchFixture;
+    const isUserClubMatch = Boolean(
+      mf &&
+      ((mf as any).isUserMatch ||
+        (myClubId && (mf.homeTeamId === myClubId || mf.awayTeamId === myClubId)) ||
+        curDayObj.type === 'match')
+    );
+    const isUncompleted = Boolean(
+      mf &&
+      !mf.completed &&
+      !(mf.completedMatchState && mf.completedMatchState.status === 'finished')
+    );
+
+    if (isUserClubMatch && isUncompleted) {
+      return {
+        advanced: false,
+        blockedReason: 'user_franchise_fixture_pending',
+        league,
+        players,
+        careerPhase,
+        tournamentHonors,
+        careerBoardReview,
+        coachProfile,
+        simulatedFixturesCount: 0
+      };
+    }
+  }
+
+  // 3. Not blocked: proceed to simulate AI matches on the current day
+  let workingPlayers = [...players];
+  const simulatedOtherMap = new Map<
+    string,
+    { summary: string; winnerId: string; loserId: string; nrrDelta: number; matchState: MatchLiveState }
+  >();
+  const simulatedIntlMap = new Map<string, { summary: string; matchState: MatchLiveState }>();
+
+  const activeSeasonKey = providedSeasonKey || normalizeSeasonYear(league.seasonName || league.seasonYear);
+  const allTeamsPool = [...teams, ...(league.teams || [])];
+
+  // Simulate otherMatches (AI domestic fixtures)
+  (curDayObj.otherMatches || []).forEach((om, omIdx) => {
+    if (om.completed || (om.completedMatchState && om.completedMatchState.status === 'finished')) return;
+    const homeTeamObj = allTeamsPool.find(t => t && t.id === om.homeTeamId) || allTeamsPool[0] || teams[0];
+    const awayTeamObj = allTeamsPool.find(t => t && t.id === om.awayTeamId) || allTeamsPool[1] || teams[1];
+    if (!homeTeamObj || !awayTeamObj || homeTeamObj.id === awayTeamObj.id) return;
+
+    const simRes = simulateAiFixtureScorecard(
+      om.id,
+      homeTeamObj,
+      awayTeamObj,
+      om.venue || `${homeTeamObj.city} Stadium`,
+      'T20',
+      currentLeagueId,
+      workingPlayers,
+      curDayIdx * 17 + omIdx * 11 + 3
+    );
+    workingPlayers = applyMatchToPlayerList(workingPlayers, simRes.matchState, activeSeasonKey);
+    simulatedOtherMap.set(om.id, simRes);
+  });
+
+  // Simulate internationalMatches (AI-only international fixtures)
+  (curDayObj.internationalMatches || []).forEach((im, imIdx) => {
+    if (im.completed || (im.completedMatchState && im.completedMatchState.status === 'finished')) return;
+    // CRITICAL: Never simulate user-controlled international matches in background!
+    if (isUserControlledInternationalFixture(im, coachProfile, nations)) return;
+
+    const homeNat = buildTempNationalTeamFromPool(im.homeTeamId || im.homeTeamName || 'Home XI', nations, workingPlayers);
+    const awayNat = buildTempNationalTeamFromPool(im.awayTeamId || im.awayTeamName || 'Away XI', nations, workingPlayers);
+    if (!homeNat || !awayNat || homeNat.id === awayNat.id) return;
+
+    const simRes = simulateAiFixtureScorecard(
+      im.id,
+      homeNat,
+      awayNat,
+      im.venue || `${im.homeTeamId} Stadium`,
+      im.format || 'T20',
+      'intl',
+      workingPlayers,
+      curDayIdx * 23 + imIdx * 13 + 7
+    );
+    workingPlayers = applyMatchToPlayerList(workingPlayers, simRes.matchState, activeSeasonKey);
+    simulatedIntlMap.set(im.id, { summary: simRes.summary, matchState: simRes.matchState });
+  });
+
+  let updatedStandings = [...(league.standings || [])];
+
+  const updatedCalendarDates = league.calendarDates.map((d, dIdx) => {
+    if (dIdx !== curDayIdx || !d) return d;
+
+    const nextOtherMatches = (d.otherMatches || []).map(om => {
+      if (om.completed) return om;
+      const simRes = simulatedOtherMap.get(om.id);
+      if (!simRes) return om;
+
+      updatedStandings = updatedStandings.map(st => {
+        if (!simRes.winnerId && (st.teamId === om.homeTeamId || st.teamId === om.awayTeamId)) {
+          if (st.played >= 18) return st;
+          return {
+            ...st,
+            played: st.played + 1,
+            tied: (st.tied || 0) + 1,
+            points: st.points + 1,
+            recentForm: ['T' as const, ...st.recentForm].slice(0, 5)
+          };
+        }
+        if (st.teamId === simRes.winnerId) {
+          if (st.played >= 18) return st;
+          return {
+            ...st,
+            played: st.played + 1,
+            won: st.won + 1,
+            points: st.points + 2,
+            nrr: Number((st.nrr + simRes.nrrDelta).toFixed(2)),
+            recentForm: ['W' as const, ...st.recentForm].slice(0, 5)
+          };
+        }
+        if (st.teamId === simRes.loserId) {
+          if (st.played >= 18) return st;
+          return {
+            ...st,
+            played: st.played + 1,
+            lost: st.lost + 1,
+            nrr: Number((st.nrr - simRes.nrrDelta).toFixed(2)),
+            recentForm: ['L' as const, ...st.recentForm].slice(0, 5)
+          };
+        }
+        return st;
+      });
+
+      return {
+        ...om,
+        completed: true,
+        resultSummary: simRes.summary,
+        completedMatchState: simRes.matchState
+      };
+    });
+
+    const nextIntlMatches = (d.internationalMatches || []).map(im => {
+      if (im.completed) return im;
+      const simRes = simulatedIntlMap.get(im.id);
+      if (!simRes) return im;
+      return {
+        ...im,
+        completed: true,
+        resultSummary: simRes.summary,
+        completedMatchState: simRes.matchState
+      };
+    });
+
+    const canCompleteMf =
+      d.type === 'international' &&
+      d.matchFixture &&
+      !d.matchFixture.completed &&
+      !isUserControlledInternationalFixture(d.matchFixture, coachProfile, nations);
+
+    return {
+      ...d,
+      otherMatches: nextOtherMatches,
+      internationalMatches: nextIntlMatches,
+      matchFixture: canCompleteMf && d.matchFixture
+        ? {
+            ...d.matchFixture,
+            completed: true,
+            resultSummary: nextIntlMatches[0]?.resultSummary || 'Match completed',
+            completedMatchState: nextIntlMatches[0]?.completedMatchState
+          }
+        : d.matchFixture
+    };
+  });
+
+  updatedStandings.sort((a, b) => b.points - a.points || b.nrr - a.nrr);
+  const candidateLeagueAfterDay: League = {
+    ...league,
+    standings: updatedStandings,
+    calendarDates: updatedCalendarDates
+  };
+  const leagueNowComplete = isDomesticLeagueStageComplete(candidateLeagueAfterDay);
+  let effectivePhase: CareerPhase =
+    leagueNowComplete && careerPhase === 'league_stage' ? 'playoffs' : careerPhase;
+  const nextPlayoffs = leagueNowComplete
+    ? seedQualifiedPlayoffsFromStandings(updatedStandings, league.playoffs)
+    : league.playoffs;
+  const syncedCalendarDates = nextPlayoffs
+    ? syncPlayoffCalendarDates(updatedCalendarDates, nextPlayoffs, allTeamsPool)
+    : updatedCalendarDates;
+  const nextDayIdx = Math.min(syncedCalendarDates.length - 1, league.currentDateIndex + 1);
+
+  const baseLeagueNext: League = {
+    ...league,
+    standings: updatedStandings,
+    playoffs: nextPlayoffs,
+    calendarDates: syncedCalendarDates,
+    currentDateIndex: nextDayIdx
+  };
+
+  let workingPhase = effectivePhase;
+  let workingHonors = tournamentHonors;
+  let workingReview = careerBoardReview;
+  let workingCoach = coachProfile;
+  let finalLeague = baseLeagueNext;
+
+  if (effectivePhase === 'playoffs') {
+    const aiPlayoffRes = applyAdvanceAiPlayoffMatchesState({
+      league: baseLeagueNext,
+      teams,
+      players: workingPlayers,
+      coachProfile: coachProfile || INITIAL_COACH_PROFILE,
+      careerPhase: effectivePhase,
+      tournamentHonors,
+      careerBoardReview
+    });
+    workingPlayers = aiPlayoffRes.players;
+    workingPhase = aiPlayoffRes.careerPhase;
+    workingReview = aiPlayoffRes.careerBoardReview;
+    if (aiPlayoffRes.stagesSimulated.includes('final')) {
+      workingHonors = aiPlayoffRes.tournamentHonors;
+      workingCoach = aiPlayoffRes.coachProfile;
+    }
+    finalLeague = aiPlayoffRes.league;
+  }
+
+  const simulatedFixturesCount = simulatedOtherMap.size + simulatedIntlMap.size;
+
+  return {
+    advanced: true,
+    league: finalLeague,
+    players: workingPlayers,
+    careerPhase: workingPhase,
+    tournamentHonors: workingHonors,
+    careerBoardReview: workingReview,
+    coachProfile: workingCoach,
+    simulatedFixturesCount
   };
 }
 
@@ -9015,195 +9589,42 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Calendar advancement — dynamically simulates all AI domestic & international fixtures and updates every player's stats
   const advanceCalendarDay = useCallback(() => {
     const activeLeague = leagues.find(l => l.id === currentLeagueId) || leagues[0];
-    const nextIdx = activeLeague
-      ? (activeLeague.currentDateIndex + 1) % Math.max(1, activeLeague.calendarDates.length)
-      : 0;
-    const nextDayType = activeLeague?.calendarDates[nextIdx]?.type || 'training';
+    if (!activeLeague) return;
 
-    let workingPlayers = [...players];
-    const curDayIdx = activeLeague?.currentDateIndex || 0;
-    const curDayObj = activeLeague?.calendarDates[curDayIdx];
+    const res = applyAdvanceCalendarDayState({
+      league: activeLeague,
+      currentLeagueId,
+      teams,
+      players,
+      coachProfile,
+      userTeamId: userTeam?.id,
+      nations,
+      careerPhase,
+      tournamentHonors,
+      careerBoardReview
+    });
 
-    const simulatedOtherMap = new Map<string, { summary: string; winnerId: string; loserId: string; nrrDelta: number; matchState: MatchLiveState }>();
-    const simulatedIntlMap = new Map<string, { summary: string; matchState: MatchLiveState }>();
-
-    const activeSeasonKey = normalizeSeasonYear(activeLeague?.seasonName);
-
-    if (curDayObj) {
-      (curDayObj.otherMatches || []).forEach((om, omIdx) => {
-        if (om.completed) return;
-        const homeTeamObj = teams.find(t => t.id === om.homeTeamId) || teams[0];
-        const awayTeamObj = teams.find(t => t.id === om.awayTeamId) || teams[1];
-        const simRes = simulateAiFixtureScorecard(
-          om.id,
-          homeTeamObj,
-          awayTeamObj,
-          om.venue || `${homeTeamObj.city} Stadium`,
-          'T20',
-          currentLeagueId,
-          workingPlayers,
-          curDayIdx * 17 + omIdx * 11 + 3
-        );
-        workingPlayers = applyMatchToPlayerList(workingPlayers, simRes.matchState, activeSeasonKey);
-        simulatedOtherMap.set(om.id, simRes);
-      });
-
-      (curDayObj.internationalMatches || []).forEach((im, imIdx) => {
-        if (im.completed) return;
-        const homeNat = buildTempNationalTeam(im.homeTeamId, workingPlayers);
-        const awayNat = buildTempNationalTeam(im.awayTeamId, workingPlayers);
-        const simRes = simulateAiFixtureScorecard(
-          im.id,
-          homeNat,
-          awayNat,
-          im.venue || `${im.homeTeamId} Stadium`,
-          im.format || 'T20',
-          'intl',
-          workingPlayers,
-          curDayIdx * 23 + imIdx * 13 + 7
-        );
-        workingPlayers = applyMatchToPlayerList(workingPlayers, simRes.matchState, activeSeasonKey);
-        simulatedIntlMap.set(im.id, { summary: simRes.summary, matchState: simRes.matchState });
-      });
+    if (!res.advanced) {
+      console.log(`[advanceCalendarDay] Advancement prevented: ${res.blockedReason}`);
+      return;
     }
 
-    setLeagues(prev => prev.map(l => {
-      if (l.id === currentLeagueId) {
-        const lDayIdx = l.currentDateIndex;
-        let updatedStandings = [...l.standings];
+    setCareerPhase(res.careerPhase);
+    if (res.careerBoardReview !== careerBoardReview) {
+      setCareerBoardReview(res.careerBoardReview);
+    }
+    if (res.tournamentHonors !== tournamentHonors) {
+      setTournamentHonors(res.tournamentHonors);
+      safeStorageSet('ms_tournament_honors_v6', JSON.stringify(res.tournamentHonors));
+    }
+    if (res.coachProfile && res.coachProfile !== coachProfile) {
+      setCoachProfile(res.coachProfile);
+    }
 
-        const updatedCalendarDates = l.calendarDates.map((d, dIdx) => {
-          if (dIdx !== lDayIdx) return d;
+    setLeagues(prev => prev.map(l => (l.id === currentLeagueId ? res.league : l)));
 
-          const nextOtherMatches = (d.otherMatches || []).map(om => {
-            if (om.completed) return om;
-            const simRes = simulatedOtherMap.get(om.id);
-            if (!simRes) return om;
-
-            updatedStandings = updatedStandings.map(st => {
-              if (!simRes.winnerId && (st.teamId === om.homeTeamId || st.teamId === om.awayTeamId)) {
-                if (st.played >= 18) return st;
-                return {
-                  ...st,
-                  played: st.played + 1,
-                  tied: (st.tied || 0) + 1,
-                  points: st.points + 1,
-                  recentForm: ['T' as const, ...st.recentForm].slice(0, 5)
-                };
-              }
-              if (st.teamId === simRes.winnerId) {
-                if (st.played >= 18) return st;
-                return {
-                  ...st,
-                  played: st.played + 1,
-                  won: st.won + 1,
-                  points: st.points + 2,
-                  nrr: Number((st.nrr + simRes.nrrDelta).toFixed(2)),
-                  recentForm: ['W' as const, ...st.recentForm].slice(0, 5)
-                };
-              }
-              if (st.teamId === simRes.loserId) {
-                if (st.played >= 18) return st;
-                return {
-                  ...st,
-                  played: st.played + 1,
-                  lost: st.lost + 1,
-                  nrr: Number((st.nrr - simRes.nrrDelta).toFixed(2)),
-                  recentForm: ['L' as const, ...st.recentForm].slice(0, 5)
-                };
-              }
-              return st;
-            });
-
-            return {
-              ...om,
-              completed: true,
-              resultSummary: simRes.summary,
-              completedMatchState: simRes.matchState
-            };
-          });
-
-          const nextIntlMatches = (d.internationalMatches || []).map(im => {
-            if (im.completed) return im;
-            const simRes = simulatedIntlMap.get(im.id);
-            if (!simRes) return im;
-            return {
-              ...im,
-              completed: true,
-              resultSummary: simRes.summary,
-              completedMatchState: simRes.matchState
-            };
-          });
-
-          return {
-            ...d,
-            otherMatches: nextOtherMatches,
-            internationalMatches: nextIntlMatches,
-            matchFixture: d.type === 'international' && d.matchFixture && !d.matchFixture.completed
-              ? {
-                  ...d.matchFixture,
-                  completed: true,
-                  resultSummary: nextIntlMatches[0]?.resultSummary || 'Match completed',
-                  completedMatchState: nextIntlMatches[0]?.completedMatchState
-                }
-              : d.matchFixture
-          };
-        });
-
-        updatedStandings.sort((a, b) => b.points - a.points || b.nrr - a.nrr);
-        const candidateLeagueAfterDay: League = {
-          ...l,
-          standings: updatedStandings,
-          calendarDates: updatedCalendarDates
-        };
-        const leagueNowComplete = isDomesticLeagueStageComplete(candidateLeagueAfterDay);
-        const effectivePhase: CareerPhase =
-          leagueNowComplete && careerPhase === 'league_stage' ? 'playoffs' : careerPhase;
-        const nextPlayoffs = leagueNowComplete
-          ? seedQualifiedPlayoffsFromStandings(updatedStandings, l.playoffs)
-          : l.playoffs;
-        const syncedCalendarDates = nextPlayoffs
-          ? syncPlayoffCalendarDates(updatedCalendarDates, nextPlayoffs, [...teams, ...(l.teams || [])])
-          : updatedCalendarDates;
-        const idx = Math.min(syncedCalendarDates.length - 1, l.currentDateIndex + 1);
-        const baseLeagueNext: League = {
-          ...l,
-          standings: updatedStandings,
-          playoffs: nextPlayoffs,
-          calendarDates: syncedCalendarDates,
-          currentDateIndex: idx
-        };
-
-        if (effectivePhase === 'playoffs') {
-          const aiPlayoffRes = applyAdvanceAiPlayoffMatchesState({
-            league: baseLeagueNext,
-            teams,
-            players: workingPlayers,
-            coachProfile,
-            careerPhase: effectivePhase,
-            tournamentHonors,
-            careerBoardReview
-          });
-          workingPlayers = aiPlayoffRes.players;
-          setCareerPhase(aiPlayoffRes.careerPhase);
-          if (aiPlayoffRes.careerBoardReview !== careerBoardReview) {
-            setCareerBoardReview(aiPlayoffRes.careerBoardReview);
-          }
-          if (aiPlayoffRes.stagesSimulated.includes('final')) {
-            setTournamentHonors(aiPlayoffRes.tournamentHonors);
-            safeStorageSet('ms_tournament_honors_v6', JSON.stringify(aiPlayoffRes.tournamentHonors));
-            setCoachProfile(aiPlayoffRes.coachProfile);
-          }
-          return aiPlayoffRes.league;
-        }
-
-        if (leagueNowComplete && careerPhase === 'league_stage') {
-          setCareerPhase('playoffs');
-        }
-        return baseLeagueNext;
-      }
-      return l;
-    }));
+    const nextIdx = res.league.currentDateIndex % Math.max(1, res.league.calendarDates.length);
+    const nextDayType = res.league.calendarDates[nextIdx]?.type || 'training';
 
     // Update squad stamina and replenish sim tokens on rest days
     if (nextDayType === 'rest') {
@@ -9225,7 +9646,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const medCenterTier = userInfra?.medicalCenterTier || 1;
     const fitnessRecovery = 2 + Math.floor(medCenterTier * 1.5);
 
-    const finalPlayers = workingPlayers.map(p => ({
+    const finalPlayers = res.players.map(p => ({
       ...p,
       fitness: Math.min(100, p.fitness + fitnessRecovery),
       injuryDays: Math.max(0, p.injuryDays - (medCenterTier >= 3 ? 2 : 1)),
@@ -9265,7 +9686,19 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     })));
 
     sound.playTap();
-  }, [currentLeagueId, leagues, players, teams, buildTempNationalTeam, userTeam.id]);
+  }, [
+    currentLeagueId,
+    leagues,
+    players,
+    teams,
+    coachProfile,
+    userTeam?.id,
+    nations,
+    careerPhase,
+    tournamentHonors,
+    careerBoardReview,
+    userTeam.id
+  ]);
 
   const setCalendarDateIndex = useCallback((idx: number) => {
     setLeagues(prev => prev.map(l => {
@@ -9708,7 +10141,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     awayCountry: string = 'India',
     venue: string = 'SuperSport Park, Centurion',
     format: 'T20' | 'ODI' | 'TEST' = 'T20',
-    fixtureId?: string
+    fixtureId?: string,
+    competitionId?: string
   ) => {
     const coachedNation = coachProfile.nationalTeamId
       ? nations.find(n => n.id === coachProfile.nationalTeamId)
@@ -9831,10 +10265,38 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       overRuns: []
     };
 
+    const isExplicitWtc = competitionId === 'wtc_test' || competitionId === 'wtc';
+    const isExplicitBilateral = competitionId === 'test_bilateral' || competitionId === 't20i_bilateral' || competitionId === 'odi_bilateral';
+    let assignedLeagueId = 'intl';
+    if (isExplicitWtc) {
+      assignedLeagueId = 'wtc_test';
+    } else if (isExplicitBilateral) {
+      assignedLeagueId = competitionId!;
+    } else {
+      const isSeriesMatch = Boolean(
+        internationalSeries && Array.isArray(internationalSeries.matches) && (
+          internationalSeries.matches.some(m => m && (m.fixtureId === fixtureId || (internationalSeries.seriesId && `intl_fix_${internationalSeries.seriesId}_${m.matchNumber}` === fixtureId))) ||
+          (internationalSeries.format === format && (
+            (resolvedHomeName === internationalSeries.userNationName && resolvedAwayName === internationalSeries.opponentNationName) ||
+            (resolvedAwayName === internationalSeries.userNationName && resolvedHomeName === internationalSeries.opponentNationName)
+          ))
+        )
+      );
+      if (isSeriesMatch) {
+        assignedLeagueId = format === 'TEST' ? 'test_bilateral' : format === 'ODI' ? 'odi_bilateral' : 't20i_bilateral';
+      } else if (format === 'TEST') {
+        assignedLeagueId = 'wtc_test';
+      } else if (format === 'ODI') {
+        assignedLeagueId = 'odi_bilateral';
+      } else {
+        assignedLeagueId = 't20i_bilateral';
+      }
+    }
+
     const newMatch: MatchLiveState = {
       id: fixtureId || `intl_match_${Date.now()}`,
       fixtureId,
-      leagueId: format === 'TEST' ? 'wtc_test' : 't20i_bilateral',
+      leagueId: assignedLeagueId,
       format,
       homeTeam: nationalHomeTeam,
       awayTeam: nationalAwayTeam,
@@ -9871,7 +10333,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     setMatchLiveState(newMatch);
     setActiveTab('live_match');
-  }, [players, nations, coachProfile.nationalTeamId, nationalSquadIds]);
+  }, [players, nations, coachProfile.nationalTeamId, nationalSquadIds, internationalSeries]);
 
   // TACTICAL UPDATERS
   const updateBowlingTactics = useCallback((tactics: Partial<MatchLiveState['bowlingTactics']>) => {
@@ -10478,7 +10940,15 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     })));
 
     // 2. Update League Standings, NRR, Background AI Fixture & Playoff Bracket
-    const isInternational = finishedMatch.leagueId === 'wtc_test' || finishedMatch.leagueId === 't20i_bilateral' || finishedMatch.leagueId === 'intl';
+    const isInternational =
+      finishedMatch.leagueId === 'wtc_test' ||
+      finishedMatch.leagueId === 't20i_bilateral' ||
+      finishedMatch.leagueId === 'odi_bilateral' ||
+      finishedMatch.leagueId === 'test_bilateral' ||
+      finishedMatch.leagueId === 'intl' ||
+      Boolean(finishedMatch.fixtureId?.startsWith('intl_fix_')) ||
+      Boolean(finishedMatch.fixtureId?.startsWith('cal_intl_')) ||
+      (finishedMatch.homeTeam?.leagueId === 'intl' && finishedMatch.awayTeam?.leagueId === 'intl');
     let userUpdatedStandingRank = 1;
     let userUpdatedNrr = 0.5;
 
