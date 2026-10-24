@@ -4729,7 +4729,7 @@ interface GameContextType {
   matchLiveState: MatchLiveState | null;
   startMatch: (opponentTeamId?: string, format?: 'T20' | 'ODI' | 'TEST', isAwayMatch?: boolean, fixtureId?: string) => void;
   createFranchiseMatchState: (homeTeamObj: Team, awayTeamObj: Team, leagueId: string, format: 'T20' | 'ODI' | 'TEST', playoffStage?: 'q1' | 'eliminator' | 'q2' | 'final', fixtureId?: string) => MatchLiveState;
-  startInternationalMatch: (homeCountry?: string, awayCountry?: string, venue?: string, format?: 'T20' | 'ODI' | 'TEST') => void;
+  startInternationalMatch: (homeCountry?: string, awayCountry?: string, venue?: string, format?: 'T20' | 'ODI' | 'TEST', fixtureId?: string) => void;
   playPlayoffMatch: (leagueId: string, stage: 'q1' | 'eliminator' | 'q2' | 'final') => { success: boolean; reason?: string };
   simPlayoffMatch: (leagueId: string, stage: 'q1' | 'eliminator' | 'q2' | 'final', isUserAction?: boolean) => { success: boolean; reason?: string };
   resetPlayoffBracket: (leagueId: string) => void;
@@ -4983,6 +4983,1019 @@ function buildTempNationalTeamFromPool(nationNameOrId: string, nations: Nation[]
     captainId: squad[0]?.id || 'p1',
     playingXIIds: squad.slice(0, 11).map(p => p.id),
     squad
+  };
+}
+
+/**
+ * Resolves a national team from a canonical ID (`nat_ind`), country name (`India`), or short code (`IND`, `RSA`, `SA`)
+ * without ever falling back to `nations[0]`.
+ */
+export function resolveInternationalMatchParticipant(
+  nameOrIdOrCode: string | null | undefined,
+  nations: Nation[]
+): Nation | null {
+  if (typeof nameOrIdOrCode !== 'string' || !Array.isArray(nations) || nations.length === 0) {
+    return null;
+  }
+  const clean = nameOrIdOrCode.trim().toLowerCase();
+  if (!clean) return null;
+
+  const direct = nations.find(
+    n =>
+      n &&
+      ((typeof n.id === 'string' && n.id.trim().toLowerCase() === clean) ||
+        (typeof n.name === 'string' && n.name.trim().toLowerCase() === clean) ||
+        (typeof n.code === 'string' && n.code.trim().toLowerCase() === clean))
+  );
+  if (direct) return direct;
+
+  // Common cricket code aliases (e.g. nat_south_africa -> South Africa, SA <-> RSA, WI <-> WIN, NZ <-> NZL, SL <-> SRI)
+  const normalizedSlug = clean.startsWith('nat_') ? clean.slice(4).replace(/_/g, ' ') : clean.replace(/_/g, ' ');
+  for (const n of nations) {
+    if (!n || typeof n.name !== 'string') continue;
+    const nLower = n.name.trim().toLowerCase();
+    const cLower = (n.code || '').trim().toLowerCase();
+    if (nLower === normalizedSlug) return n;
+    if ((clean === 'sa' || clean === 'rsa' || clean === 'nat_south_africa') && (cLower === 'rsa' || cLower === 'sa' || nLower === 'south africa')) {
+      return n;
+    }
+    if ((clean === 'nz' || clean === 'nzl' || clean === 'nat_new_zealand') && (cLower === 'nz' || cLower === 'nzl' || nLower === 'new zealand')) {
+      return n;
+    }
+    if ((clean === 'wi' || clean === 'win' || clean === 'nat_west_indies') && (cLower === 'wi' || cLower === 'win' || nLower === 'west indies')) {
+      return n;
+    }
+    if ((clean === 'sl' || clean === 'sri' || clean === 'nat_sri_lanka') && (cLower === 'sl' || cLower === 'sri' || nLower === 'sri lanka')) {
+      return n;
+    }
+  }
+  return null;
+}
+
+/**
+ * Authoritative pure state helper for recording a completed international match:
+ * - Updates ICC rankings for the participating nations.
+ * - Reconciles at most ONE matching uncompleted fixture in `internationalSeries.matches` (preferring exact `fixtureId`).
+ * - Marks ONLY the corresponding single calendar fixture completed (matching canonical nation IDs `nat_ind` as well as nation names,
+ *   and never marking all 5 matches of a bilateral series completed after a single match).
+ */
+export function applyRecordCompletedInternationalMatchState(params: {
+  finishedMatch: MatchLiveState;
+  didUserWin?: boolean;
+  intlShortSummary?: string;
+  coachProfile?: CoachProfile;
+  internationalSeries: InternationalSeriesState;
+  leagues: League[];
+  currentLeagueId: string;
+  nations: Nation[];
+}): {
+  internationalSeries: InternationalSeriesState;
+  leagues: League[];
+  nations: Nation[];
+  matchedFixtureId: string | null;
+} {
+  const {
+    finishedMatch,
+    coachProfile,
+    internationalSeries,
+    leagues,
+    currentLeagueId,
+    nations
+  } = params;
+
+  const winnerId = finishedMatch.winnerTeamId || finishedMatch.homeTeam.id;
+  const loserId = winnerId === finishedMatch.homeTeam.id ? finishedMatch.awayTeam.id : finishedMatch.homeTeam.id;
+
+  const homeNat =
+    resolveInternationalMatchParticipant(finishedMatch.homeTeam.id, nations) ||
+    resolveInternationalMatchParticipant(finishedMatch.homeTeam.name, nations);
+  const awayNat =
+    resolveInternationalMatchParticipant(finishedMatch.awayTeam.id, nations) ||
+    resolveInternationalMatchParticipant(finishedMatch.awayTeam.name, nations);
+
+  const winnerNat = winnerId === finishedMatch.homeTeam.id ? homeNat : awayNat;
+  const loserNat = loserId === finishedMatch.homeTeam.id ? homeNat : awayNat;
+  const winnerNameLower = (winnerNat?.name || (winnerId === finishedMatch.homeTeam.id ? finishedMatch.homeTeam.name : finishedMatch.awayTeam.name) || '').toLowerCase();
+  const loserNameLower = (loserNat?.name || (loserId === finishedMatch.homeTeam.id ? finishedMatch.homeTeam.name : finishedMatch.awayTeam.name) || '').toLowerCase();
+
+  const userNatId = coachProfile?.nationalTeamId || internationalSeries?.userNationId || '';
+  const didUserWin =
+    typeof params.didUserWin === 'boolean'
+      ? params.didUserWin
+      : Boolean(
+          (userNatId && (winnerId === userNatId || winnerNat?.id === userNatId)) ||
+            (winnerId === finishedMatch.homeTeam.id && finishedMatch.homeTeam.isUserTeam) ||
+            (winnerId === finishedMatch.awayTeam.id && finishedMatch.awayTeam.isUserTeam)
+        );
+
+  const inn1 = finishedMatch.innings1;
+  const inn2 = finishedMatch.innings2;
+  const homeShort = finishedMatch.homeTeam.shortName || homeNat?.code || 'HOM';
+  const awayShort = finishedMatch.awayTeam.shortName || awayNat?.code || 'AWY';
+  const homeScore =
+    inn1.battingTeamId === finishedMatch.homeTeam.id
+      ? `${inn1.runs}/${inn1.wickets}`
+      : `${inn2?.runs || 0}/${inn2?.wickets || 0}`;
+  const awayScore =
+    inn1.battingTeamId === finishedMatch.awayTeam.id
+      ? `${inn1.runs}/${inn1.wickets}`
+      : `${inn2?.runs || 0}/${inn2?.wickets || 0}`;
+  const intlShortSummary =
+    typeof params.intlShortSummary === 'string' && params.intlShortSummary.trim().length > 0
+      ? params.intlShortSummary
+      : `${awayShort} ${awayScore} vs ${homeShort} ${homeScore} · ${finishedMatch.resultText || ''}`;
+
+  const updatedNationsRaw = nations.map(n => {
+    const isWin = (winnerNat && n.id === winnerNat.id) || n.name.toLowerCase() === winnerNameLower;
+    const isLoss = (loserNat && n.id === loserNat.id) || n.name.toLowerCase() === loserNameLower;
+    if (!isWin && !isLoss) return n;
+    const delta = isWin ? 3 : -2;
+    return {
+      ...n,
+      ratingT20: finishedMatch.format === 'T20' ? Math.max(150, n.ratingT20 + delta) : n.ratingT20,
+      ratingODI: finishedMatch.format === 'ODI' ? Math.max(50, n.ratingODI + delta) : n.ratingODI,
+      ratingTest: finishedMatch.format === 'TEST' ? Math.max(40, n.ratingTest + delta) : n.ratingTest
+    };
+  });
+
+  const byT20 = [...updatedNationsRaw].sort((a, b) => b.ratingT20 - a.ratingT20);
+  const byODI = [...updatedNationsRaw].sort((a, b) => b.ratingODI - a.ratingODI);
+  const byTest = [...updatedNationsRaw].sort((a, b) => b.ratingTest - a.ratingTest);
+
+  const updatedNations = updatedNationsRaw.map(n => {
+    const rT20 = byT20.findIndex(x => x.id === n.id) + 1;
+    const rODI = byODI.findIndex(x => x.id === n.id) + 1;
+    const rTest = byTest.findIndex(x => x.id === n.id) + 1;
+    return {
+      ...n,
+      rankT20: rT20,
+      t20Rank: rT20,
+      rankODI: rODI,
+      odiRank: rODI,
+      rankTest: rTest,
+      testRank: rTest
+    };
+  });
+
+  const doesPairMatchFinishedTeams = (
+    candHomeId?: string,
+    candAwayId?: string,
+    candHomeName?: string,
+    candAwayName?: string
+  ): boolean => {
+    const cHomeNat =
+      resolveInternationalMatchParticipant(candHomeId, nations) ||
+      resolveInternationalMatchParticipant(candHomeName, nations);
+    const cAwayNat =
+      resolveInternationalMatchParticipant(candAwayId, nations) ||
+      resolveInternationalMatchParticipant(candAwayName, nations);
+
+    if (homeNat && awayNat && cHomeNat && cAwayNat) {
+      return (
+        (cHomeNat.id === homeNat.id && cAwayNat.id === awayNat.id) ||
+        (cHomeNat.id === awayNat.id && cAwayNat.id === homeNat.id)
+      );
+    }
+
+    const fHome = (finishedMatch.homeTeam.name || finishedMatch.homeTeam.id || '').trim().toLowerCase();
+    const fAway = (finishedMatch.awayTeam.name || finishedMatch.awayTeam.id || '').trim().toLowerCase();
+    const cH1 = (candHomeId || '').trim().toLowerCase();
+    const cA1 = (candAwayId || '').trim().toLowerCase();
+    const cH2 = (candHomeName || '').trim().toLowerCase();
+    const cA2 = (candAwayName || '').trim().toLowerCase();
+
+    return (
+      ((cH1 === fHome || cH2 === fHome) && (cA1 === fAway || cA2 === fAway)) ||
+      ((cH1 === fAway || cH2 === fAway) && (cA1 === fHome || cA2 === fHome))
+    );
+  };
+
+  let nextSeries = internationalSeries;
+  let matchedFixtureId: string | null =
+    typeof finishedMatch.fixtureId === 'string' && finishedMatch.fixtureId.trim().length > 0
+      ? finishedMatch.fixtureId.trim()
+      : null;
+
+  if (internationalSeries && typeof internationalSeries === 'object') {
+    if (finishedMatch.leagueId === 'wtc_test' || finishedMatch.format === 'TEST') {
+      nextSeries = {
+        ...internationalSeries,
+        wtcTestCompleted: true,
+        wtcTestSummary: intlShortSummary
+      };
+    } else if (Array.isArray(internationalSeries.matches)) {
+      const seriesMatchesTeams = doesPairMatchFinishedTeams(
+        internationalSeries.userNationId,
+        internationalSeries.opponentNationId,
+        internationalSeries.userNationName,
+        internationalSeries.opponentNationName
+      );
+
+      let targetMatchIdx = -1;
+      if (matchedFixtureId) {
+        targetMatchIdx = internationalSeries.matches.findIndex(
+          m =>
+            m &&
+            (m.fixtureId === matchedFixtureId ||
+              (internationalSeries.seriesId &&
+                `intl_fix_${internationalSeries.seriesId}_${m.matchNumber}` === matchedFixtureId))
+        );
+      }
+      if (targetMatchIdx === -1 && seriesMatchesTeams) {
+        targetMatchIdx = internationalSeries.matches.findIndex(m => m && !m.completed);
+      }
+
+      if (targetMatchIdx !== -1) {
+        const targetMatch = internationalSeries.matches[targetMatchIdx];
+        const expectedFixId =
+          targetMatch.fixtureId ||
+          (internationalSeries.seriesId
+            ? `intl_fix_${internationalSeries.seriesId}_${targetMatch.matchNumber}`
+            : undefined);
+        if (!matchedFixtureId && expectedFixId) {
+          matchedFixtureId = expectedFixId;
+        }
+
+        if (!targetMatch.completed) {
+          const updatedMatches = internationalSeries.matches.map((m, idx) =>
+            idx === targetMatchIdx
+              ? {
+                  ...m,
+                  fixtureId: m.fixtureId || expectedFixId,
+                  completed: true,
+                  summary: intlShortSummary
+                }
+              : m
+          );
+          nextSeries = {
+            ...internationalSeries,
+            seriesWins: internationalSeries.seriesWins + (didUserWin ? 1 : 0),
+            seriesLosses: internationalSeries.seriesLosses + (didUserWin ? 0 : 1),
+            matches: updatedMatches
+          };
+        }
+      }
+    }
+  }
+
+  const updatedLeagues = leagues.map(league => {
+    if (!league || !Array.isArray(league.calendarDates)) return league;
+    if (currentLeagueId && league.id !== currentLeagueId) {
+      return league;
+    }
+
+    // Find the single target calendar entry to mark completed (never mark all 5 bilateral series matches at once!)
+    let targetCalIdx = -1;
+    if (matchedFixtureId) {
+      targetCalIdx = league.calendarDates.findIndex(
+        cd =>
+          cd &&
+          (cd.matchFixture?.id === matchedFixtureId ||
+            (Array.isArray(cd.internationalMatches) &&
+              cd.internationalMatches.some(im => im && im.id === matchedFixtureId)))
+      );
+    }
+
+    if (targetCalIdx === -1) {
+      const curIdx = Math.max(0, Math.min(league.currentDateIndex || 0, Math.max(0, league.calendarDates.length - 1)));
+      // Check currentDateIndex first, then forward, then backward for the single earliest uncompleted matching international fixture
+      for (let offset = 0; offset < league.calendarDates.length; offset++) {
+        const idx = curIdx + offset;
+        if (idx >= league.calendarDates.length) break;
+        const cd = league.calendarDates[idx];
+        if (!cd) continue;
+        const mf = cd.matchFixture;
+        const mfMatches =
+          mf &&
+          (mf.isInternational || cd.type === 'international') &&
+          !mf.completed &&
+          doesPairMatchFinishedTeams(mf.homeTeamId, mf.awayTeamId, mf.homeTeamName, mf.awayTeamName);
+        const imMatches =
+          Array.isArray(cd.internationalMatches) &&
+          cd.internationalMatches.some(
+            im =>
+              im &&
+              !im.completed &&
+              doesPairMatchFinishedTeams(im.homeTeamId, im.awayTeamId, im.homeTeamName, im.awayTeamName)
+          );
+        if (mfMatches || imMatches) {
+          targetCalIdx = idx;
+          break;
+        }
+      }
+      if (targetCalIdx === -1) {
+        for (let idx = 0; idx < curIdx; idx++) {
+          const cd = league.calendarDates[idx];
+          if (!cd) continue;
+          const mf = cd.matchFixture;
+          const mfMatches =
+            mf &&
+            (mf.isInternational || cd.type === 'international') &&
+            !mf.completed &&
+            doesPairMatchFinishedTeams(mf.homeTeamId, mf.awayTeamId, mf.homeTeamName, mf.awayTeamName);
+          const imMatches =
+            Array.isArray(cd.internationalMatches) &&
+            cd.internationalMatches.some(
+              im =>
+                im &&
+                !im.completed &&
+                doesPairMatchFinishedTeams(im.homeTeamId, im.awayTeamId, im.homeTeamName, im.awayTeamName)
+            );
+          if (mfMatches || imMatches) {
+            targetCalIdx = idx;
+            break;
+          }
+        }
+      }
+    }
+
+    if (targetCalIdx === -1) return league;
+
+    return {
+      ...league,
+      calendarDates: league.calendarDates.map((cd, idx) => {
+        if (idx !== targetCalIdx || !cd) return cd;
+
+        const mf = cd.matchFixture;
+        const shouldUpdateMf = Boolean(
+          mf &&
+            (mf.isInternational || cd.type === 'international') &&
+            !mf.completed &&
+            ((matchedFixtureId && mf.id === matchedFixtureId) ||
+              doesPairMatchFinishedTeams(mf.homeTeamId, mf.awayTeamId, mf.homeTeamName, mf.awayTeamName))
+        );
+
+        const updatedMatchFixture = shouldUpdateMf && mf
+          ? {
+              ...mf,
+              completed: true,
+              resultSummary: intlShortSummary,
+              completedMatchState: finishedMatch
+            }
+          : mf;
+
+        let updatedOneIm = false;
+        const updatedIntlMatches = Array.isArray(cd.internationalMatches)
+          ? cd.internationalMatches.map(im => {
+              if (!im || im.completed || updatedOneIm) return im;
+              const matchesIm = Boolean(
+                (matchedFixtureId && im.id === matchedFixtureId) ||
+                  doesPairMatchFinishedTeams(im.homeTeamId, im.awayTeamId, im.homeTeamName, im.awayTeamName)
+              );
+              if (matchesIm) {
+                updatedOneIm = true;
+                return {
+                  ...im,
+                  completed: true,
+                  resultSummary: intlShortSummary,
+                  completedMatchState: finishedMatch
+                };
+              }
+              return im;
+            })
+          : cd.internationalMatches;
+
+        return {
+          ...cd,
+          matchFixture: updatedMatchFixture,
+          internationalMatches: updatedIntlMatches
+        };
+      })
+    };
+  });
+
+  return {
+    internationalSeries: nextSeries,
+    leagues: updatedLeagues,
+    nations: updatedNations,
+    matchedFixtureId
+  };
+}
+
+export function buildFranchiseBoardReviewSnapshot(
+  league: League,
+  userTeamObj: Team,
+  _players?: Player[],
+  existingReview?: CareerBoardReview | null
+): CareerBoardReview {
+  const seasonYrStr = normalizeSeasonYear(league.seasonName || league.seasonYear);
+  const seasonYrNum = parseInt(seasonYrStr, 10) || 2026;
+  const userTeamId = userTeamObj.id;
+  if (
+    existingReview &&
+    existingReview.seasonYear === seasonYrNum &&
+    existingReview.teamId === userTeamId &&
+    (existingReview.competitionId || 'pt20') === league.id
+  ) {
+    return existingReview;
+  }
+
+  const sortedStandings = [...(league.standings || [])].sort(
+    (a, b) => b.points - a.points || b.nrr - a.nrr
+  );
+  const userStandingRow = sortedStandings.find(s => s.teamId === userTeamId);
+  const finalWinnerId = league.playoffs?.final?.winnerTeamId || league.playoffs?.championTeamId;
+  const finalLoserId = league.playoffs?.final?.loserTeamId;
+  const userWonFinal = finalWinnerId === userTeamId;
+  const userRank = userWonFinal
+    ? 1
+    : finalLoserId === userTeamId
+    ? 2
+    : Math.max(1, sortedStandings.findIndex(s => s.teamId === userTeamId) + 1);
+
+  const objectives: CareerBoardReview['objectives'] = [
+    {
+      id: 'target_playoffs',
+      category: 'PRIMARY',
+      title: 'Reach Top 4 Playoffs',
+      description: 'Finish in the top 4 to qualify for the playoffs',
+      targetStr: 'Top 4',
+      measuredStr: `#${userRank}`,
+      isFulfilled: userRank <= 4
+    },
+    {
+      id: 'target_nrr',
+      category: 'SECONDARY',
+      title: 'Maintain Positive NRR',
+      description: 'Keep Net Run Rate above 0.00 across the league stage',
+      targetStr: '> 0.00',
+      measuredStr: `${(userStandingRow?.nrr || 0).toFixed(2)}`,
+      isFulfilled: (userStandingRow?.nrr || 0) > 0
+    }
+  ];
+  const fulfilledCount = objectives.filter(o => o.isFulfilled).length;
+  const totalCount = objectives.length;
+  const scorePct = Math.round((fulfilledCount / totalCount) * 100);
+
+  return {
+    seasonYear: seasonYrNum,
+    competitionId: league.id,
+    teamId: userTeamId,
+    teamName: userTeamObj.name || 'Franchise',
+    objectives,
+    fulfilledCount,
+    totalCount,
+    scorePct,
+    isSatisfied: scorePct >= 60,
+    verdictTitle: userWonFinal ? 'CHAMPIONSHIP DYNASTY' : 'SEASON CONCLUDED',
+    verdictDesc: `${league.playoffs?.final?.resultSummary || `${seasonYrStr} Season completed.`}`
+  };
+}
+
+/**
+ * Authoritative pure state transition that automatically simulates ready AI-only playoff matches
+ * (`!isUserMatch` where `canSimulate === true` under `isUserAction: false`) in bracket order (`q1` -> `eliminator` -> `q2` -> `final`).
+ * - Never auto-simulates a playoff match involving the user's coached club.
+ * - Ensures that when the user plays/sims Q1, the AI Eliminator (and AI Q2 if the user won Q1) advances automatically so the bracket never deadlocks.
+ * - Ensures that if the user did not qualify for Top 4 or was eliminated in Eliminator/Q2, the remaining AI playoff matches advance cleanly through the Final to `board_review`.
+ */
+export function applyAdvanceAiPlayoffMatchesState(state: {
+  league?: League;
+  leagues?: League[];
+  currentLeagueId?: string;
+  teams: Team[];
+  players: Player[];
+  coachProfile: CoachProfile;
+  tournamentHonors: TournamentHonor[];
+  careerPhase: CareerPhase;
+  careerBoardReview: CareerBoardReview | null;
+}): {
+  stagesSimulated: ('q1' | 'eliminator' | 'q2' | 'final')[];
+  simulatedStages: ('q1' | 'eliminator' | 'q2' | 'final')[];
+  league: League;
+  leagues: League[];
+  players: Player[];
+  teams: Team[];
+  coachProfile: CoachProfile;
+  tournamentHonors: TournamentHonor[];
+  careerPhase: CareerPhase;
+  careerBoardReview: CareerBoardReview | null;
+} {
+  const {
+    teams,
+    players,
+    coachProfile,
+    tournamentHonors,
+    careerPhase,
+    careerBoardReview
+  } = state;
+
+  const resolvedLeagues =
+    Array.isArray(state.leagues) && state.leagues.length > 0
+      ? state.leagues
+      : state.league
+      ? [state.league]
+      : [];
+  const resolvedLeagueId = state.currentLeagueId || state.league?.id || resolvedLeagues[0]?.id || 'pt20';
+  const targetLeague = resolvedLeagues.find(l => l && l.id === resolvedLeagueId) || state.league || resolvedLeagues[0];
+
+  const unchanged = {
+    stagesSimulated: [] as ('q1' | 'eliminator' | 'q2' | 'final')[],
+    simulatedStages: [] as ('q1' | 'eliminator' | 'q2' | 'final')[],
+    league: targetLeague,
+    leagues: resolvedLeagues,
+    players,
+    teams,
+    coachProfile,
+    tournamentHonors,
+    careerPhase,
+    careerBoardReview
+  };
+
+  if (
+    coachProfile?.activeCareerMode === 'international' ||
+    careerPhase === 'international_squad_selection' ||
+    careerPhase === 'international_series' ||
+    !targetLeague ||
+    !isDomesticLeagueStageComplete(targetLeague)
+  ) {
+    return unchanged;
+  }
+
+  let workingPlayers = [...players];
+  let workingTeams = [...teams];
+  let workingCoach = coachProfile;
+  let workingHonors = tournamentHonors;
+  let workingPhase: CareerPhase = careerPhase === 'league_stage' ? 'playoffs' : careerPhase;
+  let workingReview = careerBoardReview;
+
+  // Ensure Top 4 seeds are seeded into Q1 and Eliminator before evaluating AI matches
+  const seededPlayoffs = seedQualifiedPlayoffsFromStandings(targetLeague.standings, targetLeague.playoffs);
+  let workingLeagues = resolvedLeagues.map(l =>
+    l && l.id === resolvedLeagueId
+      ? {
+          ...l,
+          playoffs: seededPlayoffs,
+          calendarDates: syncPlayoffCalendarDates(
+            l.calendarDates,
+            seededPlayoffs,
+            [...workingTeams, ...(l.teams || [])]
+          )
+        }
+      : l
+  );
+
+  const stagesOrder: ('q1' | 'eliminator' | 'q2' | 'final')[] = ['q1', 'eliminator', 'q2', 'final'];
+  const simulatedStages: ('q1' | 'eliminator' | 'q2' | 'final')[] = [];
+  const activeSeasonKey = normalizeSeasonYear(targetLeague.seasonName || targetLeague.seasonYear);
+
+  for (const stage of stagesOrder) {
+    const curLeague = workingLeagues.find(l => l && l.id === resolvedLeagueId);
+    if (!curLeague) break;
+
+    const elig = validatePlayoffEligibility({
+      careerPhase: workingPhase,
+      league: curLeague,
+      userClubId: workingCoach.clubTeamId,
+      stage,
+      isUserAction: false
+    });
+
+    if (!elig.canSimulate || elig.isUserMatch || !elig.homeTeamId || !elig.awayTeamId) {
+      continue;
+    }
+
+    const allTeamsPool = [...workingTeams, ...(curLeague.teams || [])];
+    const homeTeamObj = allTeamsPool.find(t => t && t.id === elig.homeTeamId);
+    const awayTeamObj = allTeamsPool.find(t => t && t.id === elig.awayTeamId);
+    if (!homeTeamObj || !awayTeamObj || homeTeamObj.id === awayTeamObj.id) {
+      continue;
+    }
+
+    const stageIdx = stagesOrder.indexOf(stage) + 1;
+    const simRes = simulateAiFixtureScorecard(
+      `fix_playoff_${stage}`,
+      homeTeamObj,
+      awayTeamObj,
+      stage === 'final'
+        ? 'Wankhede Stadium · Championship Final'
+        : `${homeTeamObj.city || 'Ahmedabad'} Cricket Stadium`,
+      'T20',
+      resolvedLeagueId,
+      workingPlayers,
+      stageIdx * 37 + 19
+    );
+
+    workingPlayers = applyMatchToPlayerList(workingPlayers, simRes.matchState, activeSeasonKey);
+    const resolvedWinnerId = simRes.winnerId || homeTeamObj.id;
+
+    const completeRes = applyCompletePlayoffMatchState(
+      {
+        leagues: workingLeagues,
+        currentLeagueId: resolvedLeagueId,
+        teams: workingTeams,
+        coachProfile: workingCoach,
+        tournamentHonors: workingHonors,
+        careerPhase: workingPhase,
+        careerBoardReview: workingReview
+      },
+      {
+        leagueId: resolvedLeagueId,
+        stage,
+        homeTeamId: homeTeamObj.id,
+        awayTeamId: awayTeamObj.id,
+        winnerTeamId: resolvedWinnerId,
+        resultSummary: simRes.summary
+      }
+    );
+
+    if (!completeRes.alreadyCompleted) {
+      workingLeagues = completeRes.leagues.map(l =>
+        l && l.id === resolvedLeagueId
+          ? {
+              ...l,
+              calendarDates: l.calendarDates.map(cd =>
+                cd &&
+                (cd.id === `cal_playoff_${stage}` || cd.matchFixture?.id === `fix_playoff_${stage}`) &&
+                cd.matchFixture
+                  ? {
+                      ...cd,
+                      matchFixture: {
+                        ...cd.matchFixture,
+                        completed: true,
+                        resultSummary: simRes.summary,
+                        completedMatchState: simRes.matchState
+                      }
+                    }
+                  : cd
+              )
+            }
+          : l
+      );
+      workingCoach = completeRes.coachProfile;
+      workingHonors = completeRes.tournamentHonors;
+      workingPhase = completeRes.careerPhase;
+      workingReview = completeRes.careerBoardReview;
+      simulatedStages.push(stage);
+    }
+  }
+
+  if (simulatedStages.length > 0) {
+    workingTeams = workingTeams.map(t => ({
+      ...t,
+      squad: (t.squad || []).map(sp => workingPlayers.find(wp => wp.id === sp.id) || sp)
+    }));
+  }
+
+  const finalTargetLeague = workingLeagues.find(l => l && l.id === resolvedLeagueId) || targetLeague;
+
+  return {
+    stagesSimulated: simulatedStages,
+    simulatedStages,
+    league: finalTargetLeague,
+    leagues: workingLeagues,
+    players: workingPlayers,
+    teams: workingTeams,
+    coachProfile: workingCoach,
+    tournamentHonors: workingHonors,
+    careerPhase: workingPhase,
+    careerBoardReview: workingReview
+  };
+}
+
+/**
+ * Authoritative pure state transition for switching the active franchise club (`switchUserClub` / `selectUserTeam`).
+ * Enforces the single-active-career invariant (`activeCareerMode: 'franchise'`, `nationalTeamId: null`),
+ * updates `teams` (`isUserTeam`) and `nations` (`isUserManaging: false`), and preserves `clubStints` history.
+ */
+export function applySwitchUserClubState(
+  state: {
+    coachProfile: CoachProfile;
+    teams: Team[];
+    nations: Nation[];
+    leagues: League[];
+    currentLeagueId: string;
+    careerPhase: CareerPhase;
+  },
+  newClubId: string
+): {
+  success: boolean;
+  coachProfile: CoachProfile;
+  teams: Team[];
+  nations: Nation[];
+  careerPhase: CareerPhase;
+} {
+  const { coachProfile, teams, nations, leagues, currentLeagueId, careerPhase } = state;
+  const targetClub = Array.isArray(teams) ? teams.find(t => t && t.id === newClubId) : undefined;
+  if (!targetClub) {
+    return {
+      success: false,
+      coachProfile,
+      teams,
+      nations,
+      careerPhase
+    };
+  }
+
+  const updatedTeams = teams.map(t => ({
+    ...t,
+    isUserTeam: t.id === newClubId
+  }));
+  const updatedNations = Array.isArray(nations)
+    ? nations.map(n => ({
+        ...n,
+        isUserManaging: false,
+        isCoachedByPlayer: false
+      }))
+    : nations;
+
+  const prevStints = Array.isArray(coachProfile.clubStints) ? coachProfile.clubStints : [];
+  const activeLeague = Array.isArray(leagues)
+    ? leagues.find(l => l && l.id === currentLeagueId) || leagues[0]
+    : undefined;
+  const currentYearStr = normalizeSeasonYear(activeLeague?.seasonName || activeLeague?.seasonYear);
+
+  const updatedStints = [
+    ...prevStints.map((s, idx) =>
+      idx === prevStints.length - 1 && s.teamId !== newClubId && typeof s.period === 'string'
+        ? { ...s, period: s.period.replace('–present', `–${currentYearStr}`) }
+        : s
+    ),
+    ...(prevStints.some(s => s && s.teamId === newClubId && typeof s.period === 'string' && s.period.includes('present'))
+      ? []
+      : [
+          {
+            id: `stint_${newClubId}_${currentYearStr}`,
+            teamId: newClubId,
+            teamName: targetClub.city || targetClub.name,
+            period: `${currentYearStr}–present`,
+            seasons: 1,
+            matches: 0,
+            wins: 0,
+            losses: 0,
+            winPct: 0,
+            titles: 0
+          }
+        ])
+  ];
+
+  const nextPhase: CareerPhase =
+    careerPhase === 'international_squad_selection' || careerPhase === 'international_series'
+      ? 'league_stage'
+      : careerPhase;
+
+  const inv = enforceSingleCareerInvariant(
+    {
+      ...coachProfile,
+      activeCareerMode: 'franchise',
+      clubTeamId: newClubId,
+      nationalTeamId: null,
+      clubStints: updatedStints
+    },
+    'franchise',
+    nextPhase,
+    updatedTeams,
+    updatedNations
+  );
+
+  return {
+    success: true,
+    coachProfile: inv.coachProfile,
+    teams: updatedTeams,
+    nations: updatedNations,
+    careerPhase: nextPhase
+  };
+}
+
+/**
+ * Authoritative pure state transition for accepting a club or international job offer (`acceptJobOffer`).
+ * Enforces the single-active-career invariant so club offers clear `nationalTeamId` and international offers clear `clubTeamId`.
+ */
+export function applyAcceptJobOfferState(
+  state: {
+    coachProfile: CoachProfile;
+    teams: Team[];
+    nations: Nation[];
+    players: Player[];
+    leagues: League[];
+    currentLeagueId: string;
+    nationalSquadIds: string[];
+    internationalSeries: InternationalSeriesState;
+    careerPhase: CareerPhase;
+  },
+  offer: JobOffer
+): {
+  success: boolean;
+  coachProfile: CoachProfile;
+  teams: Team[];
+  nations: Nation[];
+  nationalSquadIds: string[];
+  internationalSeries: InternationalSeriesState;
+  careerPhase: CareerPhase;
+  acceptedNation?: Nation;
+} {
+  const {
+    coachProfile,
+    teams,
+    nations,
+    players,
+    leagues,
+    currentLeagueId,
+    nationalSquadIds,
+    internationalSeries,
+    careerPhase
+  } = state;
+
+  if (!offer || typeof offer !== 'object') {
+    return {
+      success: false,
+      coachProfile,
+      teams,
+      nations,
+      nationalSquadIds,
+      internationalSeries,
+      careerPhase
+    };
+  }
+
+  if (offer.type === 'club') {
+    const offerNameLower = (offer.name || '').trim().toLowerCase();
+    const newTeam = teams.find(
+      t =>
+        t &&
+        (t.id === offer.id ||
+          (offerNameLower.length > 0 &&
+            (t.name.toLowerCase().includes(offerNameLower) ||
+              offerNameLower.includes(t.name.toLowerCase()))))
+    );
+    if (!newTeam) {
+      return {
+        success: false,
+        coachProfile,
+        teams,
+        nations,
+        nationalSquadIds,
+        internationalSeries,
+        careerPhase
+      };
+    }
+
+    const clubRes = applySwitchUserClubState(
+      {
+        coachProfile,
+        teams,
+        nations,
+        leagues,
+        currentLeagueId,
+        careerPhase
+      },
+      newTeam.id
+    );
+
+    return {
+      success: clubRes.success,
+      coachProfile: clubRes.coachProfile,
+      teams: clubRes.teams,
+      nations: clubRes.nations,
+      nationalSquadIds,
+      internationalSeries,
+      careerPhase: clubRes.careerPhase
+    };
+  }
+
+  const offerNameLower = (offer.name || '').trim().toLowerCase();
+  const nation =
+    resolveInternationalMatchParticipant(offer.id, nations) ||
+    resolveInternationalMatchParticipant(offer.name, nations) ||
+    nations.find(
+      n =>
+        n &&
+        offerNameLower.length > 0 &&
+        (offerNameLower.includes(n.name.toLowerCase()) ||
+          n.name.toLowerCase().includes(offerNameLower))
+    );
+
+  if (!nation) {
+    return {
+      success: false,
+      coachProfile,
+      teams,
+      nations,
+      nationalSquadIds,
+      internationalSeries,
+      careerPhase
+    };
+  }
+
+  const activeLeague = Array.isArray(leagues)
+    ? leagues.find(l => l && l.id === currentLeagueId) || leagues[0]
+    : undefined;
+  const currentYearStr = normalizeSeasonYear(activeLeague?.seasonName || activeLeague?.seasonYear);
+  const closedStints = Array.isArray(coachProfile.clubStints)
+    ? coachProfile.clubStints.map((s, idx, arr) =>
+        idx === arr.length - 1 && typeof s.period === 'string' && s.period.includes('present')
+          ? { ...s, period: s.period.replace('–present', `–${currentYearStr}`) }
+          : s
+      )
+    : [];
+
+  const updatedTeams = teams.map(t => ({
+    ...t,
+    isUserTeam: false
+  }));
+  const updatedNations = nations.map(n => ({
+    ...n,
+    isUserManaging: n.id === nation.id
+  }));
+
+  const natPlayers = players
+    .filter(p => p && typeof p.country === 'string' && p.country.trim().toLowerCase() === nation.name.trim().toLowerCase())
+    .slice(0, 15)
+    .map(p => p.id);
+
+  const existingIds = [
+    ...(coachProfile.completedInternationalSeriesIds || []),
+    ...(internationalSeries?.seriesId ? [internationalSeries.seriesId] : [])
+  ];
+  const nextSeries =
+    internationalSeries &&
+    internationalSeries.userNationId === nation.id &&
+    Boolean(internationalSeries.seriesId) &&
+    Array.isArray(internationalSeries.matches) &&
+    internationalSeries.matches.some(m => !m.completed)
+      ? internationalSeries
+      : buildInitialSeriesForNation(
+          nation,
+          updatedNations,
+          undefined,
+          (coachProfile.completedInternationalSeriesIds?.length || 0) + 1,
+          undefined,
+          existingIds
+        );
+
+  const inv = enforceSingleCareerInvariant(
+    {
+      ...coachProfile,
+      activeCareerMode: 'international',
+      nationalTeamId: nation.id,
+      clubTeamId: null as unknown as string,
+      clubStints: closedStints
+    },
+    'international',
+    'international_squad_selection',
+    updatedTeams,
+    updatedNations
+  );
+
+  return {
+    success: true,
+    coachProfile: inv.coachProfile,
+    teams: updatedTeams,
+    nations: updatedNations,
+    nationalSquadIds: natPlayers,
+    internationalSeries: nextSeries,
+    careerPhase: 'international_squad_selection',
+    acceptedNation: nation
+  };
+}
+
+/**
+ * Authoritative pure state transition for resigning a national coaching job (`resignNationalJob`),
+ * deterministically restoring a valid franchise club career under the single-active-career invariant.
+ */
+export function applyResignNationalJobState(state: {
+  coachProfile: CoachProfile;
+  teams: Team[];
+  nations: Nation[];
+  careerPhase: CareerPhase;
+}): {
+  coachProfile: CoachProfile;
+  teams: Team[];
+  nations: Nation[];
+  careerPhase: CareerPhase;
+} {
+  const { coachProfile, teams, nations, careerPhase } = state;
+  const updatedNations = nations.map(n => ({
+    ...n,
+    isUserManaging: false,
+    isCoachedByPlayer: false
+  }));
+  const inv = enforceSingleCareerInvariant(
+    {
+      ...coachProfile,
+      activeCareerMode: 'franchise',
+      nationalTeamId: null
+    },
+    'franchise',
+    'league_stage',
+    teams,
+    updatedNations
+  );
+  const resolvedClubId = inv.coachProfile.clubTeamId;
+  const updatedTeams = teams.map(t => ({
+    ...t,
+    isUserTeam: t.id === resolvedClubId
+  }));
+  const nextPhase: CareerPhase =
+    careerPhase === 'international_squad_selection' || careerPhase === 'international_series'
+      ? 'league_stage'
+      : careerPhase;
+
+  return {
+    coachProfile: inv.coachProfile,
+    teams: updatedTeams,
+    nations: updatedNations,
+    careerPhase: nextPhase
   };
 }
 
@@ -7600,46 +8613,24 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [activeSaveSlot, coachProfile.name, coachProfile.age, coachProfile.nationality, coachProfile.difficulty, setActiveSaveSlot, setHomePitch, setNationalSquadIds, writeSlotSnapshot]);
 
   const switchUserClub = useCallback((newClubId: string) => {
-    const targetClub = teams.find(t => t.id === newClubId);
-    if (!targetClub) return;
-
-    setTeams(prev => prev.map(t => ({
-      ...t,
-      isUserTeam: t.id === newClubId
-    })));
-
-    setCoachProfile(prev => {
-      const prevStints = prev.clubStints || [];
-      const activeLeague = leagues.find(l => l.id === currentLeagueId) || leagues[0];
-      const currentYearStr = normalizeSeasonYear(activeLeague?.seasonName || activeLeague?.seasonYear);
-      const updatedStints = [
-        ...prevStints.map((s, idx) =>
-          idx === prevStints.length - 1 && s.teamId !== newClubId
-            ? { ...s, period: s.period.replace('–present', `–${currentYearStr}`) }
-            : s
-        ),
-        ...(prevStints.some(s => s.teamId === newClubId) ? [] : [{
-          id: `stint_${newClubId}_${Date.now()}`,
-          teamId: newClubId,
-          teamName: targetClub.city || targetClub.name,
-          period: `${currentYearStr}–present`,
-          seasons: 1,
-          matches: 0,
-          wins: 0,
-          losses: 0,
-          winPct: 0,
-          titles: 0
-        }])
-      ];
-
-      return {
-        ...prev,
-        clubTeamId: newClubId,
-        clubStints: updatedStints
-      };
-    });
+    const res = applySwitchUserClubState(
+      {
+        coachProfile,
+        teams,
+        nations,
+        leagues,
+        currentLeagueId,
+        careerPhase
+      },
+      newClubId
+    );
+    if (!res.success) return;
+    setTeams(res.teams);
+    setNations(res.nations);
+    setCoachProfile(res.coachProfile);
+    setCareerPhase(res.careerPhase);
     sound.playTap();
-  }, [teams, leagues, currentLeagueId]);
+  }, [coachProfile, teams, nations, leagues, currentLeagueId, careerPhase, setCareerPhase]);
 
   const selectUserTeam = useCallback((teamId: string) => {
     switchUserClub(teamId);
@@ -7752,85 +8743,71 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [userTeam.id]);
 
   const acceptJobOffer = useCallback((offer: JobOffer) => {
-    if (offer.type === 'club') {
-      const newTeam = teams.find(t => t.name.toLowerCase().includes(offer.name.toLowerCase()));
-      if (newTeam) {
-        setTeams(prev => prev.map(t => ({
-          ...t,
-          isUserTeam: t.id === newTeam.id
-        })));
-        setCoachProfile(prev => {
-          const existingStints = prev.clubStints && prev.clubStints.length > 0
-            ? prev.clubStints.map((s, idx, arr) =>
-                idx === arr.length - 1 && s.period.includes('present')
-                  ? { ...s, period: s.period.replace('–present', '') }
-                  : s
-              )
-            : [];
-          const nextStints = prev.clubTeamId === newTeam.id
-            ? existingStints
-            : [
-                ...existingStints,
-                {
-                  id: `stint_${newTeam.id}_${Date.now()}`,
-                  teamId: newTeam.id,
-                  teamName: newTeam.city || newTeam.name,
-                  period: '2026–present',
-                  seasons: 1,
-                  matches: 0,
-                  wins: 0,
-                  losses: 0,
-                  winPct: 0,
-                  titles: 0
-                }
-              ];
-          return {
-            ...prev,
-            clubTeamId: newTeam.id,
-            clubStints: nextStints
-          };
-        });
-      }
-    } else {
-      const nation = nations.find(n => offer.name.toLowerCase().includes(n.name.toLowerCase()));
-      if (nation) {
-        setCoachProfile(prev => ({
-          ...prev,
-          nationalTeamId: nation.id
-        }));
-        setNations(prev => prev.map(n => ({
-          ...n,
-          isUserManaging: n.id === nation.id
-        })));
-        const natPlayers = players.filter(p => p.country.toLowerCase() === nation.name.toLowerCase()).slice(0, 15).map(p => p.id);
-        setNationalSquadIds(natPlayers);
-        setInternationalSeries(prev =>
-          prev.userNationId === nation.id && Boolean(prev.seriesId) && prev.matches.some(m => !m.completed)
-            ? prev
-            : buildInitialSeriesForNation(
-                nation,
-                nations,
-                undefined,
-                (coachProfile.completedInternationalSeriesIds?.length || 0) + 1,
-                undefined,
-                [...(coachProfile.completedInternationalSeriesIds || []), ...(prev?.seriesId ? [prev.seriesId] : [])]
-              )
-        );
-        unlockAchievement('ach_55');
-        if ((nation.rankT20 ?? 99) <= 4 || (nation.rankODI ?? 99) <= 4 || (nation.rankTest ?? 99) <= 4) {
-          unlockAchievement('ach_59');
-        }
+    const res = applyAcceptJobOfferState(
+      {
+        coachProfile,
+        teams,
+        nations,
+        players,
+        leagues,
+        currentLeagueId,
+        nationalSquadIds,
+        internationalSeries,
+        careerPhase
+      },
+      offer
+    );
+    if (!res.success) return;
+
+    setCoachProfile(res.coachProfile);
+    setTeams(res.teams);
+    setNations(res.nations);
+    setNationalSquadIds(res.nationalSquadIds);
+    setInternationalSeries(res.internationalSeries);
+    setCareerPhase(res.careerPhase);
+
+    if (res.acceptedNation) {
+      unlockAchievement('ach_55');
+      if (
+        (res.acceptedNation.rankT20 ?? 99) <= 4 ||
+        (res.acceptedNation.rankODI ?? 99) <= 4 ||
+        (res.acceptedNation.rankTest ?? 99) <= 4
+      ) {
+        unlockAchievement('ach_59');
       }
     }
+
     sound.playCrowdCheer(0.7);
     setActiveTab('hub');
-  }, [teams, nations, players, coachProfile.completedInternationalSeriesIds, setNationalSquadIds, setInternationalSeries, unlockAchievement]);
+  }, [
+    coachProfile,
+    teams,
+    nations,
+    players,
+    leagues,
+    currentLeagueId,
+    nationalSquadIds,
+    internationalSeries,
+    careerPhase,
+    setNationalSquadIds,
+    setInternationalSeries,
+    setCareerPhase,
+    unlockAchievement
+  ]);
 
   const resignNationalJob = useCallback(() => {
-    setCoachProfile(prev => ({ ...prev, nationalTeamId: null }));
-    setNations(prev => prev.map(n => ({ ...n, isUserManaging: false })));
+    const res = applyResignNationalJobState({
+      coachProfile,
+      teams,
+      nations,
+      careerPhase
+    });
+    setCoachProfile(res.coachProfile);
+    setTeams(res.teams);
+    setNations(res.nations);
+    setCareerPhase(res.careerPhase);
     sound.playTap();
-  }, []);
+  }, [coachProfile, teams, nations, careerPhase, setCareerPhase]);
 
   const applyCareerJobDecision = useCallback((selectedClubId: string, selectedCountryId?: string | null) => {
     const next = applyCareerJobDecisionState(
@@ -8180,9 +9157,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           calendarDates: updatedCalendarDates
         };
         const leagueNowComplete = isDomesticLeagueStageComplete(candidateLeagueAfterDay);
-        if (leagueNowComplete && careerPhase === 'league_stage') {
-          setCareerPhase('playoffs');
-        }
+        const effectivePhase: CareerPhase =
+          leagueNowComplete && careerPhase === 'league_stage' ? 'playoffs' : careerPhase;
         const nextPlayoffs = leagueNowComplete
           ? seedQualifiedPlayoffsFromStandings(updatedStandings, l.playoffs)
           : l.playoffs;
@@ -8190,13 +9166,41 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           ? syncPlayoffCalendarDates(updatedCalendarDates, nextPlayoffs, [...teams, ...(l.teams || [])])
           : updatedCalendarDates;
         const idx = Math.min(syncedCalendarDates.length - 1, l.currentDateIndex + 1);
-        return {
+        const baseLeagueNext: League = {
           ...l,
           standings: updatedStandings,
           playoffs: nextPlayoffs,
           calendarDates: syncedCalendarDates,
           currentDateIndex: idx
         };
+
+        if (effectivePhase === 'playoffs') {
+          const aiPlayoffRes = applyAdvanceAiPlayoffMatchesState({
+            league: baseLeagueNext,
+            teams,
+            players: workingPlayers,
+            coachProfile,
+            careerPhase: effectivePhase,
+            tournamentHonors,
+            careerBoardReview
+          });
+          workingPlayers = aiPlayoffRes.players;
+          setCareerPhase(aiPlayoffRes.careerPhase);
+          if (aiPlayoffRes.careerBoardReview !== careerBoardReview) {
+            setCareerBoardReview(aiPlayoffRes.careerBoardReview);
+          }
+          if (aiPlayoffRes.stagesSimulated.includes('final')) {
+            setTournamentHonors(aiPlayoffRes.tournamentHonors);
+            safeStorageSet('ms_tournament_honors_v6', JSON.stringify(aiPlayoffRes.tournamentHonors));
+            setCoachProfile(aiPlayoffRes.coachProfile);
+          }
+          return aiPlayoffRes.league;
+        }
+
+        if (leagueNowComplete && careerPhase === 'league_stage') {
+          setCareerPhase('playoffs');
+        }
+        return baseLeagueNext;
       }
       return l;
     }));
@@ -8703,7 +9707,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     homeCountry: string = 'South Africa',
     awayCountry: string = 'India',
     venue: string = 'SuperSport Park, Centurion',
-    format: 'T20' | 'ODI' | 'TEST' = 'T20'
+    format: 'T20' | 'ODI' | 'TEST' = 'T20',
+    fixtureId?: string
   ) => {
     const coachedNation = coachProfile.nationalTeamId
       ? nations.find(n => n.id === coachProfile.nationalTeamId)
@@ -8714,16 +9719,27 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
 
-    const isHomeCoached = Boolean(homeCountry.toLowerCase() === coachedNation.name.toLowerCase());
-    const isAwayCoached = Boolean(awayCountry.toLowerCase() === coachedNation.name.toLowerCase());
+    const homeNatObj = resolveInternationalMatchParticipant(homeCountry, nations);
+    const awayNatObj = resolveInternationalMatchParticipant(awayCountry, nations);
+    const resolvedHomeName = homeNatObj?.name || homeCountry;
+    const resolvedAwayName = awayNatObj?.name || awayCountry;
+
+    const isHomeCoached = Boolean(
+      (homeNatObj && homeNatObj.id === coachedNation.id) ||
+      resolvedHomeName.toLowerCase() === coachedNation.name.toLowerCase()
+    );
+    const isAwayCoached = Boolean(
+      (awayNatObj && awayNatObj.id === coachedNation.id) ||
+      resolvedAwayName.toLowerCase() === coachedNation.name.toLowerCase()
+    );
 
     if (!isHomeCoached && !isAwayCoached) {
       console.warn(`Unplayable fixture: User represents ${coachedNation.name} and can only play matches for ${coachedNation.name}.`);
       return;
     }
 
-    const getNationalXI = (country: string, useSelectedSquad: boolean): Player[] => {
-      const countryLower = country.trim().toLowerCase();
+    const getNationalXI = (countryName: string, useSelectedSquad: boolean): Player[] => {
+      const countryLower = countryName.trim().toLowerCase();
       if (useSelectedSquad && nationalSquadIds.length >= 11) {
         const selected = nationalSquadIds
           .map(id => players.find(p => p.id === id))
@@ -8737,21 +9753,18 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return countryRoster.slice(0, 11);
     };
 
-    const finalHomeXI = getNationalXI(homeCountry, isHomeCoached);
-    const finalAwayXI = getNationalXI(awayCountry, isAwayCoached);
-
-    const homeNatObj = nations.find(n => n.name.toLowerCase() === homeCountry.toLowerCase());
-    const awayNatObj = nations.find(n => n.name.toLowerCase() === awayCountry.toLowerCase());
+    const finalHomeXI = getNationalXI(resolvedHomeName, isHomeCoached);
+    const finalAwayXI = getNationalXI(resolvedAwayName, isAwayCoached);
 
     const nationalHomeTeam: Team = {
-      id: `nat_${homeCountry.toLowerCase().replace(/\s+/g, '_')}`,
-      name: homeCountry,
-      shortName: homeNatObj?.code || (homeCountry === 'South Africa' ? 'SA' : homeCountry === 'Australia' ? 'AUS' : homeCountry.slice(0, 3).toUpperCase()),
-      logoEmoji: homeNatObj?.flag || (homeCountry === 'South Africa' ? '🇿🇦' : homeCountry === 'Australia' ? '🇦🇺' : homeCountry === 'England' ? '🏴󠁧󠁢󠁥󠁮󠁧󠁿' : '🏏'),
+      id: homeNatObj?.id || `nat_${resolvedHomeName.toLowerCase().replace(/\s+/g, '_')}`,
+      name: resolvedHomeName,
+      shortName: homeNatObj?.code || (resolvedHomeName === 'South Africa' ? 'SA' : resolvedHomeName === 'Australia' ? 'AUS' : resolvedHomeName.slice(0, 3).toUpperCase()),
+      logoEmoji: homeNatObj?.flag || (resolvedHomeName === 'South Africa' ? '🇿🇦' : resolvedHomeName === 'Australia' ? '🇦🇺' : resolvedHomeName === 'England' ? '🏴󠁧󠁢󠁥󠁮󠁧󠁿' : '🏏'),
       primaryColor: '#007749',
       secondaryColor: '#FFB81C',
       leagueId: 'intl',
-      city: homeCountry === 'South Africa' ? 'Centurion' : 'Sydney',
+      city: resolvedHomeName === 'South Africa' ? 'Centurion' : 'Sydney',
       purseCr: 100,
       rtmCards: 0,
       captainId: finalHomeXI[0]?.id || '',
@@ -8761,10 +9774,10 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     const nationalAwayTeam: Team = {
-      id: `nat_${awayCountry.toLowerCase().replace(/\s+/g, '_')}`,
-      name: awayCountry,
-      shortName: awayNatObj?.code || (awayCountry === 'India' ? 'IND' : awayCountry.slice(0, 3).toUpperCase()),
-      logoEmoji: awayNatObj?.flag || (awayCountry === 'India' ? '🇮🇳' : '🏏'),
+      id: awayNatObj?.id || `nat_${resolvedAwayName.toLowerCase().replace(/\s+/g, '_')}`,
+      name: resolvedAwayName,
+      shortName: awayNatObj?.code || (resolvedAwayName === 'India' ? 'IND' : resolvedAwayName.slice(0, 3).toUpperCase()),
+      logoEmoji: awayNatObj?.flag || (resolvedAwayName === 'India' ? '🇮🇳' : '🏏'),
       primaryColor: '#0080FF',
       secondaryColor: '#FF9933',
       leagueId: 'intl',
@@ -8819,7 +9832,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     const newMatch: MatchLiveState = {
-      id: `intl_match_${Date.now()}`,
+      id: fixtureId || `intl_match_${Date.now()}`,
+      fixtureId,
       leagueId: format === 'TEST' ? 'wtc_test' : 't20i_bilateral',
       format,
       homeTeam: nationalHomeTeam,
@@ -9469,102 +10483,18 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     let userUpdatedNrr = 0.5;
 
     if (isInternational) {
-      // Phase 12: Update ICC World Rankings & Bilateral Series Progress
-      const winnerTeamName = (winnerId === finishedMatch.homeTeam.id ? finishedMatch.homeTeam.name : finishedMatch.awayTeam.name).toLowerCase();
-      const loserTeamName = (loserId === finishedMatch.homeTeam.id ? finishedMatch.homeTeam.name : finishedMatch.awayTeam.name).toLowerCase();
-
-      setNations(prevNations => {
-        const updated = prevNations.map(n => {
-          const isWin = n.name.toLowerCase() === winnerTeamName;
-          const isLoss = n.name.toLowerCase() === loserTeamName;
-          if (!isWin && !isLoss) return n;
-          const delta = isWin ? 3 : -2;
-          return {
-            ...n,
-            ratingT20: finishedMatch.format === 'T20' ? Math.max(150, n.ratingT20 + delta) : n.ratingT20,
-            ratingODI: finishedMatch.format === 'ODI' ? Math.max(50, n.ratingODI + delta) : n.ratingODI,
-            ratingTest: finishedMatch.format === 'TEST' ? Math.max(40, n.ratingTest + delta) : n.ratingTest
-          };
-        });
-
-        const byT20 = [...updated].sort((a, b) => b.ratingT20 - a.ratingT20);
-        const byODI = [...updated].sort((a, b) => b.ratingODI - a.ratingODI);
-        const byTest = [...updated].sort((a, b) => b.ratingTest - a.ratingTest);
-
-        return updated.map(n => {
-          const rT20 = byT20.findIndex(x => x.id === n.id) + 1;
-          const rODI = byODI.findIndex(x => x.id === n.id) + 1;
-          const rTest = byTest.findIndex(x => x.id === n.id) + 1;
-          return {
-            ...n,
-            rankT20: rT20,
-            t20Rank: rT20,
-            rankODI: rODI,
-            odiRank: rODI,
-            rankTest: rTest,
-            testRank: rTest
-          };
-        });
+      // Phase 12: Authoritative International Tour & Calendar Synchronization
+      const intlSync = applyRecordCompletedInternationalMatchState({
+        finishedMatch,
+        nations,
+        internationalSeries,
+        leagues,
+        currentLeagueId,
+        coachProfile
       });
-
-      const homeShort = finishedMatch.homeTeam.shortName;
-      const awayShort = finishedMatch.awayTeam.shortName;
-      const homeScore = inn1.battingTeamId === finishedMatch.homeTeam.id ? `${inn1.runs}/${inn1.wickets}` : `${inn2?.runs || 0}/${inn2?.wickets || 0}`;
-      const awayScore = inn1.battingTeamId === finishedMatch.awayTeam.id ? `${inn1.runs}/${inn1.wickets}` : `${inn2?.runs || 0}/${inn2?.wickets || 0}`;
-      const intlShortSummary = `${awayShort} ${awayScore} vs ${homeShort} ${homeScore} · ${finishedMatch.resultText || ''}`;
-
-      setInternationalSeries(prevSeries => {
-        if (finishedMatch.leagueId === 'wtc_test' || finishedMatch.format === 'TEST') {
-          return {
-            ...prevSeries,
-            wtcTestCompleted: true,
-            wtcTestSummary: intlShortSummary
-          };
-        }
-        const nextIdx = prevSeries.matches.findIndex(m => !m.completed);
-        if (nextIdx === -1) return prevSeries;
-        const updatedMatches = prevSeries.matches.map((m, idx) =>
-          idx === nextIdx ? { ...m, completed: true, summary: intlShortSummary } : m
-        );
-        return {
-          ...prevSeries,
-          seriesWins: prevSeries.seriesWins + (didUserWin ? 1 : 0),
-          seriesLosses: prevSeries.seriesLosses + (didUserWin ? 0 : 1),
-          matches: updatedMatches
-        };
-      });
-
-      // Also mark matching Cricbuzz 2026 international tour fixture on the calendar as completed
-      setLeagues(prevLeagues => prevLeagues.map(league => ({
-        ...league,
-        calendarDates: league.calendarDates.map(cd => {
-          const matchesTeams = (homeId: string, awayId: string) =>
-            (homeId.toLowerCase() === finishedMatch.homeTeam.name.toLowerCase() &&
-              awayId.toLowerCase() === finishedMatch.awayTeam.name.toLowerCase()) ||
-            (homeId.toLowerCase() === finishedMatch.awayTeam.name.toLowerCase() &&
-              awayId.toLowerCase() === finishedMatch.homeTeam.name.toLowerCase());
-
-          const updatedMatchFixture =
-            cd.matchFixture &&
-            cd.matchFixture.isInternational &&
-            !cd.matchFixture.completed &&
-            matchesTeams(cd.matchFixture.homeTeamId, cd.matchFixture.awayTeamId)
-              ? { ...cd.matchFixture, completed: true, resultSummary: intlShortSummary }
-              : cd.matchFixture;
-
-          const updatedIntlMatches = cd.internationalMatches?.map(im =>
-            !im.completed && matchesTeams(im.homeTeamId, im.awayTeamId)
-              ? { ...im, completed: true, resultSummary: intlShortSummary }
-              : im
-          );
-
-          return {
-            ...cd,
-            matchFixture: updatedMatchFixture,
-            internationalMatches: updatedIntlMatches
-          };
-        })
-      })));
+      setNations(intlSync.nations);
+      setInternationalSeries(intlSync.internationalSeries);
+      setLeagues(intlSync.leagues);
     } else {
       setLeagues(prevLeagues => prevLeagues.map(league => {
         if (league.id !== finishedMatch.leagueId) return league;
@@ -9681,11 +10611,50 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
               : cd
           );
 
-          return {
+          const candidateLeagueAfterStage: League = {
             ...league,
             playoffs: updatedPlayoffs,
             calendarDates: syncedPlayoffCal
           };
+
+          if (stage === 'final') {
+            const generatedReview = buildFranchiseBoardReviewSnapshot(
+              candidateLeagueAfterStage,
+              userTeam,
+              players.map(applyStatsToPlayer)
+            );
+            setCareerBoardReview(generatedReview);
+            return candidateLeagueAfterStage;
+          }
+
+          const aiPlayoffRes = applyAdvanceAiPlayoffMatchesState({
+            league: candidateLeagueAfterStage,
+            teams,
+            players: players.map(applyStatsToPlayer),
+            coachProfile,
+            careerPhase: 'playoffs',
+            tournamentHonors,
+            careerBoardReview
+          });
+          if (aiPlayoffRes.stagesSimulated.length > 0) {
+            setPlayers(aiPlayoffRes.players);
+            setTeams(prevT => prevT.map(t => ({
+              ...t,
+              squad: t.squad.map(sp => aiPlayoffRes.players.find(ap => ap.id === sp.id) || sp)
+            })));
+            setCareerPhase(aiPlayoffRes.careerPhase);
+            if (aiPlayoffRes.careerBoardReview !== careerBoardReview) {
+              setCareerBoardReview(aiPlayoffRes.careerBoardReview);
+            }
+            if (aiPlayoffRes.stagesSimulated.includes('final')) {
+              setTournamentHonors(aiPlayoffRes.tournamentHonors);
+              safeStorageSet('ms_tournament_honors_v6', JSON.stringify(aiPlayoffRes.tournamentHonors));
+              setCoachProfile(aiPlayoffRes.coachProfile);
+            }
+            return aiPlayoffRes.league;
+          }
+
+          return candidateLeagueAfterStage;
         }
 
         // Regular League Stage Match: Compute NRR Adjustment

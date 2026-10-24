@@ -4,7 +4,12 @@ import {
   PlayCircle, Search, Binoculars, Trophy, Database, Clock, MapPin, Globe, BookOpen,
   Shield, Sparkles
 } from 'lucide-react';
-import { useGame, TrainingTraineeGain, isDomesticLeagueStageComplete } from '../../context/GameContext';
+import {
+  useGame,
+  TrainingTraineeGain,
+  isDomesticLeagueStageComplete,
+  applyConfirmBoardReviewState
+} from '../../context/GameContext';
 import { sound } from '../../utils/soundEffects';
 import { MenuDrawerModal } from './MenuDrawerModal';
 import { InboxModal } from './InboxModal';
@@ -73,7 +78,8 @@ export const HubScreen: React.FC = () => {
     validateClubSquad,
     confirmClubSquad,
     advanceOffSeasonToNextSeason,
-    advanceCalendarToNextTour
+    advanceCalendarToNextTour,
+    updateCoachProfile
   } = useGame();
 
   const currentLeague = leagues.find(l => l.id === currentLeagueId) || leagues[0];
@@ -651,11 +657,17 @@ export const HubScreen: React.FC = () => {
                       <button
                         onClick={() => {
                           sound.playCrowdCheer(0.8);
+                          const fixId =
+                            nextM.fixtureId ||
+                            (internationalSeries.seriesId
+                              ? `intl_fix_${internationalSeries.seriesId}_${nextM.matchNumber}`
+                              : undefined);
                           startInternationalMatch(
-                            internationalSeries.opponentNationName,
-                            internationalSeries.userNationName,
+                            internationalSeries.opponentNationId || internationalSeries.opponentNationName,
+                            internationalSeries.userNationId || internationalSeries.userNationName,
                             nextM.venue,
-                            'T20'
+                            (internationalSeries.format as 'T20' | 'ODI' | 'TEST') || 'T20',
+                            fixId
                           );
                         }}
                         className="px-3 py-1.5 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-black text-[11px] rounded-lg tracking-wider uppercase shadow-md active:scale-95 transition-all"
@@ -665,11 +677,17 @@ export const HubScreen: React.FC = () => {
                       <button
                         onClick={() => {
                           sound.playTap();
+                          const fixId =
+                            nextM.fixtureId ||
+                            (internationalSeries.seriesId
+                              ? `intl_fix_${internationalSeries.seriesId}_${nextM.matchNumber}`
+                              : undefined);
                           startInternationalMatch(
-                            internationalSeries.opponentNationName,
-                            internationalSeries.userNationName,
+                            internationalSeries.opponentNationId || internationalSeries.opponentNationName,
+                            internationalSeries.userNationId || internationalSeries.userNationName,
                             nextM.venue,
-                            'T20'
+                            (internationalSeries.format as 'T20' | 'ODI' | 'TEST') || 'T20',
+                            fixId
                           );
                           setTimeout(() => simEntireMatch(), 250);
                         }}
@@ -1524,10 +1542,18 @@ export const HubScreen: React.FC = () => {
 
             {(() => {
               const coachedNat = nations.find(n => n.id === coachProfile.nationalTeamId);
+              const coachedId = coachedNat ? coachedNat.id.toLowerCase() : '';
               const coachedName = coachedNat ? coachedNat.name.toLowerCase() : '';
+              const coachedCode = (coachedNat?.code || '').toLowerCase();
               const homeId = (activeDay.matchFixture?.homeTeamId || '').toLowerCase();
               const awayId = (activeDay.matchFixture?.awayTeamId || '').toLowerCase();
-              const isAssociated = Boolean(coachedName && (homeId.includes(coachedName) || awayId.includes(coachedName)));
+              const isAssociated = Boolean(
+                coachedNat &&
+                  (homeId === coachedId ||
+                    awayId === coachedId ||
+                    (coachedCode && (homeId === coachedCode || awayId === coachedCode)) ||
+                    (coachedName && (homeId.includes(coachedName) || awayId.includes(coachedName))))
+              );
 
               if (!coachProfile.nationalTeamId) {
                 return (
@@ -1574,7 +1600,8 @@ export const HubScreen: React.FC = () => {
                         activeDay.matchFixture?.homeTeamId || 'England',
                         activeDay.matchFixture?.awayTeamId || 'India',
                         activeDay.matchFixture?.venue || "Lord's, London",
-                        activeDay.matchFixture?.format || 'T20'
+                        activeDay.matchFixture?.format || 'T20',
+                        activeDay.matchFixture?.id
                       );
                     }}
                     className={`py-3 font-black text-xs uppercase tracking-wider rounded-2xl flex items-center justify-center gap-1.5 shadow-lg transition-all ${
@@ -1594,7 +1621,8 @@ export const HubScreen: React.FC = () => {
                         activeDay.matchFixture?.homeTeamId || 'England',
                         activeDay.matchFixture?.awayTeamId || 'India',
                         activeDay.matchFixture?.venue || "Lord's, London",
-                        activeDay.matchFixture?.format || 'T20'
+                        activeDay.matchFixture?.format || 'T20',
+                        activeDay.matchFixture?.id
                       );
                       setTimeout(() => simEntireMatch(), 200);
                     }}
@@ -1746,7 +1774,8 @@ export const HubScreen: React.FC = () => {
                         im.homeTeamId,
                         im.awayTeamId,
                         im.venue,
-                        im.format || 'T20'
+                        im.format || 'T20',
+                        im.id
                       );
                     }}
                     className="px-2.5 py-1 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-black font-black text-[10px] font-mono shrink-0 ml-2 uppercase"
@@ -1913,6 +1942,15 @@ export const HubScreen: React.FC = () => {
         isOpen={isBoardReviewOpen || careerPhase === 'board_review'}
         onClose={() => setIsBoardReviewOpen(false)}
         onProceedToOffers={() => {
+          const confirmed = applyConfirmBoardReviewState({
+            coachProfile,
+            careerPhase: 'board_review',
+            careerBoardReview
+          });
+          updateCoachProfile(confirmed.coachProfile);
+          if (confirmed.careerBoardReview) {
+            setCareerBoardReview(confirmed.careerBoardReview);
+          }
           setIsBoardReviewOpen(false);
           setCareerPhase('career_decision');
         }}

@@ -37,6 +37,12 @@ import {
   parseCalendarDateToUtc,
   addUtcDaysToCalendarDate,
   applyAdvanceCalendarToNextTourState,
+  resolveInternationalMatchParticipant,
+  applyRecordCompletedInternationalMatchState,
+  applyAdvanceAiPlayoffMatchesState,
+  applySwitchUserClubState,
+  applyAcceptJobOfferState,
+  applyResignNationalJobState,
   InternationalSeriesState
 } from '../context/GameContext';
 import {
@@ -4431,6 +4437,429 @@ export function runCareerProgressionTests() {
     'REQ 37.9f: First league remains untouched'
   );
 
+  // =========================================================================
+  // REQ 38: END-TO-END CAREER STABILITY AUDIT REGRESSION TESTS
+  // =========================================================================
+  {
+    const baseLeague = INITIAL_LEAGUES[0];
+    // REQ 38.1: resolveInternationalMatchParticipant resolves ID, code, and name (including multi-word nations)
+    const saById = resolveInternationalMatchParticipant('nat_sa', baseNations);
+    const saByCode = resolveInternationalMatchParticipant('SA', baseNations);
+    const saByName = resolveInternationalMatchParticipant('South Africa', baseNations);
+    assert.ok(saById && saById.id === 'nat_sa', 'REQ 38.1a: Resolves South Africa by canonical nation ID nat_sa');
+    assert.ok(saByCode && saByCode.id === 'nat_sa', 'REQ 38.1b: Resolves South Africa by nation code SA');
+    assert.ok(saByName && saByName.id === 'nat_sa', 'REQ 38.1c: Resolves South Africa by full name');
+
+    // REQ 38.2: applyRecordCompletedInternationalMatchState marks ONLY the single played fixture
+    // on both internationalSeries and active league calendar when calendar stores canonical nation IDs
+    const indNation = baseNations.find(n => n.id === 'nat_ind')!;
+    const ausNation = baseNations.find(n => n.id === 'nat_aus')!;
+    const e2eIntlProfile = {
+      ...INITIAL_COACH_PROFILE,
+      activeCareerMode: 'international' as const,
+      clubTeamId: null as unknown as string,
+      nationalTeamId: 'nat_ind'
+    };
+    const e2eSeries = buildInitialSeriesForNation(indNation, baseNations, 'nat_aus', 1);
+    const scheduledTourRes = applyAdvanceCalendarToNextTourState({
+      leagues: [
+        {
+          ...baseLeague,
+          id: 'ipl_e2e_intl',
+          currentDateIndex: 0,
+          calendarDates: [
+            {
+              id: 'cal_done_1',
+              dateStr: '2026-05-30',
+              dayOfWeek: 'SAT',
+              dayNumber: 30,
+              month: 'May',
+              type: 'rest',
+              title: 'Rest Day'
+            }
+          ]
+        },
+        {
+          ...baseLeague,
+          id: 'other_league_untouched',
+          currentDateIndex: 0,
+          calendarDates: [
+            {
+              id: 'cal_other_1',
+              dateStr: '2026-06-05',
+              dayOfWeek: 'FRI',
+              dayNumber: 5,
+              month: 'Jun',
+              type: 'international',
+              title: 'Unrelated League Intl Entry',
+              matchFixture: {
+                id: `intl_fix_${e2eSeries.seriesId}_1`,
+                homeTeamId: e2eSeries.opponentNationId,
+                awayTeamId: e2eSeries.userNationId,
+                venue: e2eSeries.matches[0].venue,
+                format: 'T20',
+                isInternational: true,
+                completed: false
+              }
+            }
+          ]
+        }
+      ],
+      currentLeagueId: 'ipl_e2e_intl',
+      coachProfile: e2eIntlProfile,
+      nations: baseNations,
+      teams: baseTeams,
+      players: freshPlayers,
+      internationalSeries: e2eSeries,
+      completedMatchesHistory: [],
+      careerPhase: 'international_series'
+    });
+    assert.equal(scheduledTourRes.success, true, 'REQ 38.2a: Tour scheduled onto active league calendar');
+
+    const match1FixtureId = scheduledTourRes.internationalSeries.matches[0].fixtureId!;
+    // Simulate a finished live match where homeTeam/awayTeam have full country names ('Australia', 'India')
+    // while calendar matchFixture has canonical IDs ('nat_aus', 'nat_ind')
+    const oppNationObj = baseNations.find(n => n.id === scheduledTourRes.internationalSeries.opponentNationId) || ausNation;
+    const finishedIntlMatch1 = {
+      id: `live_${match1FixtureId}`,
+      fixtureId: match1FixtureId,
+      leagueId: 't20i_bilateral',
+      format: 'T20' as const,
+      homeTeam: {
+        ...baseTeams[0],
+        id: oppNationObj.id,
+        name: oppNationObj.name,
+        shortName: oppNationObj.code || 'AUS',
+        isUserTeam: false
+      },
+      awayTeam: {
+        ...baseTeams[1],
+        id: indNation.id,
+        name: indNation.name,
+        shortName: indNation.code || 'IND',
+        isUserTeam: true
+      },
+      venue: scheduledTourRes.internationalSeries.matches[0].venue,
+      pitchType: 'Natural' as const,
+      weather: 'Clear Night' as const,
+      currentInningsIndex: 2 as const,
+      innings1: {
+        battingTeamId: oppNationObj.id,
+        bowlingTeamId: indNation.id,
+        runs: 165,
+        wickets: 6,
+        overs: 20,
+        ballsCompleted: 120,
+        maxOvers: 20,
+        currentOverRuns: 0,
+        extras: { total: 4, wides: 2, noBalls: 0, byes: 1, legByes: 1 },
+        batters: [],
+        bowlers: [],
+        currentStrikerId: '',
+        currentNonStrikerId: '',
+        currentBowlerId: '',
+        ballHistory: [],
+        fallOfWickets: [],
+        overRuns: []
+      },
+      innings2: {
+        battingTeamId: indNation.id,
+        bowlingTeamId: oppNationObj.id,
+        runs: 168,
+        wickets: 4,
+        overs: 19.2,
+        ballsCompleted: 116,
+        maxOvers: 20,
+        currentOverRuns: 4,
+        extras: { total: 3, wides: 2, noBalls: 0, byes: 0, legByes: 1 },
+        batters: [],
+        bowlers: [],
+        currentStrikerId: '',
+        currentNonStrikerId: '',
+        currentBowlerId: '',
+        ballHistory: [],
+        fallOfWickets: [],
+        overRuns: []
+      },
+      targetRuns: 166,
+      status: 'finished' as const,
+      winnerTeamId: indNation.id,
+      resultText: 'India won by 6 wickets',
+      lastBallOutcome: null,
+      isBallInFlight: false,
+      reviewsRemaining: { home: 2, away: 2 },
+      activeDrsReview: null,
+      dlsState: null,
+      hasDew: false,
+      tacticalTrapAlert: null,
+      powerSurgeTaken: false,
+      powerSurgeOversLeft: 0,
+      bowlingTactics: {
+        length: 'good' as const,
+        line: 'outside_off' as const,
+        angle: 'over' as const,
+        variation: 'Stock ball',
+        fielders: []
+      },
+      battingTactics: {
+        approach: 'balanced' as const,
+        targetSide: 'all' as const,
+        runningRisk: 'normal' as const
+      }
+    };
+
+    const afterIntlMatch1 = applyRecordCompletedInternationalMatchState({
+      finishedMatch: finishedIntlMatch1,
+      nations: baseNations,
+      internationalSeries: scheduledTourRes.internationalSeries,
+      leagues: scheduledTourRes.leagues,
+      currentLeagueId: 'ipl_e2e_intl',
+      coachProfile: e2eIntlProfile
+    });
+
+    const completedSeriesMatches = afterIntlMatch1.internationalSeries.matches.filter(m => m.completed);
+    assert.equal(completedSeriesMatches.length, 1, 'REQ 38.2b: Exactly 1 series match marked completed');
+    assert.equal(afterIntlMatch1.internationalSeries.matches[0].completed, true, 'REQ 38.2c: Match 1 is completed in series');
+    assert.equal(afterIntlMatch1.internationalSeries.matches[1].completed, false, 'REQ 38.2d: Match 2 remains uncompleted in series');
+    assert.equal(afterIntlMatch1.internationalSeries.seriesWins, 1, 'REQ 38.2e: User seriesWins incremented to 1');
+
+    const activeLeagueTourDates = afterIntlMatch1.leagues[0].calendarDates.filter(d =>
+      d.id?.startsWith(`cal_intl_${e2eSeries.seriesId}_`)
+    );
+    const completedCalendarTourDates = activeLeagueTourDates.filter(d => d.matchFixture?.completed);
+    assert.equal(
+      completedCalendarTourDates.length,
+      1,
+      'REQ 38.2f: Exactly 1 calendar tour date marked completed (does NOT mark all 5 bilateral fixtures completed)'
+    );
+    assert.equal(
+      activeLeagueTourDates[0].matchFixture?.completed,
+      true,
+      'REQ 38.2g: Calendar Match 1 is marked completed despite homeTeamId being canonical ID and finishedMatch.homeTeam.name being full country name'
+    );
+    assert.equal(
+      activeLeagueTourDates[1].matchFixture?.completed,
+      false,
+      'REQ 38.2h: Calendar Match 2 remains uncompleted'
+    );
+    assert.equal(
+      afterIntlMatch1.leagues[1].calendarDates[0].matchFixture?.completed,
+      false,
+      'REQ 38.2i: Unrelated league calendar is not mutated'
+    );
+
+    // REQ 38.3: Franchise Playoff AI match auto-progression when user wins Q1
+    // User is #1 (team_mum). User wins Q1 against #2 (team_che).
+    // Eliminator (#3 vs #4) and Q2 (#2 vs Eliminator winner) are AI vs AI matches and must auto-advance so Final is ready for user!
+    const top4Standings = baseLeague.standings.map((st, idx) => ({
+      ...st,
+      played: 18,
+      won: 18 - idx * 2,
+      lost: idx * 2,
+      points: (18 - idx * 2) * 2,
+      nrr: Number((1.5 - idx * 0.3).toFixed(2))
+    }));
+    const userClubId = top4Standings[0].teamId;
+    const rank2TeamId = top4Standings[1].teamId;
+    const rank3TeamId = top4Standings[2].teamId;
+    const rank4TeamId = top4Standings[3].teamId;
+
+    const completedLeagueDates = baseLeague.calendarDates.map(cd => ({
+      ...cd,
+      matchFixture:
+        cd.type === 'match' && cd.matchFixture
+          ? { ...cd.matchFixture, completed: true, resultSummary: 'Completed' }
+          : cd.matchFixture,
+      otherMatches: Array.isArray(cd.otherMatches)
+        ? cd.otherMatches.map(om => ({ ...om, completed: true, resultSummary: 'Completed' }))
+        : cd.otherMatches
+    }));
+    const seededPlayoffs = createInitialPlayoffs(top4Standings);
+    // Mark Q1 completed with userClubId as winner, rank2TeamId as loser into Q2
+    const playoffsAfterUserWinsQ1 = {
+      ...seededPlayoffs,
+      q1: {
+        ...seededPlayoffs.q1,
+        homeTeamId: userClubId,
+        awayTeamId: rank2TeamId,
+        winnerTeamId: userClubId,
+        loserTeamId: rank2TeamId,
+        completed: true,
+        resultSummary: 'User won Q1'
+      },
+      q2: {
+        ...seededPlayoffs.q2,
+        homeTeamId: rank2TeamId
+      },
+      final: {
+        ...seededPlayoffs.final,
+        homeTeamId: userClubId
+      }
+    };
+
+    const leagueAfterUserQ1 = {
+      ...baseLeague,
+      standings: top4Standings,
+      playoffs: playoffsAfterUserWinsQ1,
+      calendarDates: syncPlayoffCalendarDates(completedLeagueDates, playoffsAfterUserWinsQ1, baseTeams)
+    };
+
+    const aiAdvanceAfterUserQ1 = applyAdvanceAiPlayoffMatchesState({
+      league: leagueAfterUserQ1,
+      teams: baseTeams,
+      players: freshPlayers,
+      coachProfile: {
+        ...INITIAL_COACH_PROFILE,
+        activeCareerMode: 'franchise',
+        clubTeamId: userClubId,
+        nationalTeamId: null
+      },
+      careerPhase: 'playoffs',
+      tournamentHonors: [],
+      careerBoardReview: null
+    });
+
+    assert.equal(
+      aiAdvanceAfterUserQ1.league.playoffs?.eliminator.completed,
+      true,
+      'REQ 38.3a: AI Eliminator (#3 vs #4) auto-simulates when user is in Q1'
+    );
+    assert.equal(
+      aiAdvanceAfterUserQ1.league.playoffs?.q2.completed,
+      true,
+      'REQ 38.3b: AI Q2 (#2 vs Eliminator winner) auto-simulates after user won Q1'
+    );
+    assert.equal(
+      aiAdvanceAfterUserQ1.league.playoffs?.final.completed,
+      false,
+      'REQ 38.3c: Championship Final involving userClubId is NEVER auto-simulated'
+    );
+    assert.ok(
+      aiAdvanceAfterUserQ1.league.playoffs?.final.awayTeamId === rank2TeamId ||
+        aiAdvanceAfterUserQ1.league.playoffs?.final.awayTeamId === rank3TeamId ||
+        aiAdvanceAfterUserQ1.league.playoffs?.final.awayTeamId === rank4TeamId,
+      'REQ 38.3d: Q2 winner is seeded into final.awayTeamId so user can play the Final'
+    );
+    assert.equal(
+      aiAdvanceAfterUserQ1.careerPhase,
+      'playoffs',
+      'REQ 38.3e: Career phase remains playoffs while user Final is pending'
+    );
+
+    // REQ 38.4: When user finishes outside Top 4 (#6), all AI playoff rounds auto-advance to Final completion & board_review
+    const eliminatedUserClubId = top4Standings[5].teamId;
+    const freshPlayoffsForNonQualifier = createInitialPlayoffs(top4Standings);
+    const leagueForNonQualifier = {
+      ...baseLeague,
+      standings: top4Standings,
+      playoffs: freshPlayoffsForNonQualifier,
+      calendarDates: syncPlayoffCalendarDates(completedLeagueDates, freshPlayoffsForNonQualifier, baseTeams)
+    };
+
+    const aiAdvanceNonQualifier = applyAdvanceAiPlayoffMatchesState({
+      league: leagueForNonQualifier,
+      teams: baseTeams,
+      players: freshPlayers,
+      coachProfile: {
+        ...INITIAL_COACH_PROFILE,
+        activeCareerMode: 'franchise',
+        clubTeamId: eliminatedUserClubId,
+        nationalTeamId: null
+      },
+      careerPhase: 'playoffs',
+      tournamentHonors: [],
+      careerBoardReview: null
+    });
+
+    assert.deepEqual(
+      aiAdvanceNonQualifier.stagesSimulated,
+      ['q1', 'eliminator', 'q2', 'final'],
+      'REQ 38.4a: All 4 AI playoff stages simulate in order when user missed playoffs'
+    );
+    assert.ok(
+      Boolean(aiAdvanceNonQualifier.league.playoffs?.championTeamId),
+      'REQ 38.4b: Champion team ID is assigned after AI Final'
+    );
+    assert.equal(
+      aiAdvanceNonQualifier.careerPhase,
+      'board_review',
+      'REQ 38.4c: Career phase advances to board_review after AI Final completes'
+    );
+    assert.ok(
+      Boolean(aiAdvanceNonQualifier.careerBoardReview),
+      'REQ 38.4d: careerBoardReview snapshot is generated when transitioning to board_review'
+    );
+    assert.equal(
+      aiAdvanceNonQualifier.tournamentHonors.length,
+      1,
+      'REQ 38.4e: Single tournament honor recorded for completed season'
+    );
+
+    // REQ 38.5: Exclusive Career Mode Invariant across switchUserClub, acceptJobOffer, and resignNationalJob
+    const intlOfferRes = applyAcceptJobOfferState(
+      {
+        coachProfile: {
+          ...INITIAL_COACH_PROFILE,
+          activeCareerMode: 'franchise',
+          clubTeamId: 'team_mum',
+          nationalTeamId: null
+        },
+        teams: baseTeams,
+        nations: baseNations,
+        players: freshPlayers,
+        leagues: [baseLeague],
+        currentLeagueId: baseLeague.id,
+        nationalSquadIds: [],
+        internationalSeries: e2eSeries,
+        careerPhase: 'league_stage'
+      },
+      {
+        id: 'offer_intl_eng',
+        type: 'national',
+        name: 'England',
+        boardTarget: 'Win T20 Series',
+        salaryCr: 15
+      }
+    );
+    assert.equal(intlOfferRes.success, true, 'REQ 38.5a: Accepting international job offer succeeds');
+    assert.equal(intlOfferRes.coachProfile.activeCareerMode, 'international', 'REQ 38.5b: Mode switches to international');
+    assert.equal(intlOfferRes.coachProfile.nationalTeamId, 'nat_eng', 'REQ 38.5c: nationalTeamId set to nat_eng');
+    assert.equal(intlOfferRes.coachProfile.clubTeamId, null, 'REQ 38.5d: clubTeamId cleared to null (no dual contract)');
+    assert.equal(intlOfferRes.teams.some(t => t.isUserTeam), false, 'REQ 38.5e: No franchise team marked isUserTeam in international mode');
+    assert.equal(intlOfferRes.careerPhase, 'international_squad_selection', 'REQ 38.5f: Enters international_squad_selection phase');
+
+    // Resigning national job deterministically restores a valid franchise contract
+    const resignedRes = applyResignNationalJobState({
+      coachProfile: intlOfferRes.coachProfile,
+      teams: intlOfferRes.teams,
+      nations: intlOfferRes.nations,
+      careerPhase: intlOfferRes.careerPhase
+    });
+    assert.equal(resignedRes.coachProfile.activeCareerMode, 'franchise', 'REQ 38.5g: Resigning national job restores franchise mode');
+    assert.equal(resignedRes.coachProfile.nationalTeamId, null, 'REQ 38.5h: nationalTeamId is null after resignation');
+    assert.ok(Boolean(resignedRes.coachProfile.clubTeamId), 'REQ 38.5i: Valid clubTeamId restored after resignation');
+    assert.equal(resignedRes.teams.filter(t => t.isUserTeam).length, 1, 'REQ 38.5j: Exactly 1 club marked isUserTeam');
+
+    // Switching club while holding an international contract enforces franchise exclusivity
+    const switchedFromIntl = applySwitchUserClubState(
+      {
+        coachProfile: intlOfferRes.coachProfile,
+        teams: intlOfferRes.teams,
+        nations: intlOfferRes.nations,
+        leagues: [baseLeague],
+        currentLeagueId: baseLeague.id,
+        careerPhase: 'international_series'
+      },
+      'team_che'
+    );
+    assert.equal(switchedFromIntl.success, true, 'REQ 38.5k: switchUserClub succeeds for valid club ID');
+    assert.equal(switchedFromIntl.coachProfile.activeCareerMode, 'franchise', 'REQ 38.5l: switchUserClub enforces franchise mode');
+    assert.equal(switchedFromIntl.coachProfile.clubTeamId, 'team_che', 'REQ 38.5m: clubTeamId updated to team_che');
+    assert.equal(switchedFromIntl.coachProfile.nationalTeamId, null, 'REQ 38.5n: nationalTeamId cleared to null');
+    assert.equal(switchedFromIntl.nations.some(n => n.isUserManaging), false, 'REQ 38.5o: No nation marked isUserManaging');
+  }
+
   console.log('✅ ALL Career Progression, Multi-League Recovery, International Series IDs, Transition Idempotency & Verified Defect Tests PASSED!');
-  return { passed: 204, total: 204 };
+  return { passed: 235, total: 235 };
 }
+
