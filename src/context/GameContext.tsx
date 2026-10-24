@@ -3,7 +3,7 @@ import {
   Player, Team, League, Nation, Achievement, JobOffer, CoachProfile,
   MatchLiveState, InningsData, AuctionLot, BatterInningsScorecard, BowlerInningsScorecard, FielderPosition, BallOutcome,
   CompletedMatchRecord, InboxMessage, TournamentHonor, TeamSeasonRecord,
-  CareerPhase, CareerBoardReview
+  CareerPhase, CareerBoardReview, CalendarMatchFixture
 } from '../types/cricket';
 import {
   INITIAL_PLAYERS, INITIAL_TEAMS, INITIAL_LEAGUES, INITIAL_NATIONS,
@@ -1237,6 +1237,10 @@ export interface InternationalSeriesMatch {
   fixtureId?: string;
   dateStr?: string;
   format?: 'T20' | 'ODI' | 'TEST';
+  homeNationId?: string;
+  awayNationId?: string;
+  homeTeamId?: string;
+  awayTeamId?: string;
 }
 
 export interface InternationalSeriesState {
@@ -4833,6 +4837,21 @@ function simulateAiFixtureScorecard(
 const CALENDAR_MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const;
 const CALENDAR_DAY_NAMES = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'] as const;
 
+export function isValidIsoCalendarDate(dateStr: unknown): dateStr is string {
+  if (typeof dateStr !== 'string') return false;
+  const match = dateStr.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return false;
+  const y = parseInt(match[1], 10);
+  const m = parseInt(match[2], 10) - 1;
+  const d = parseInt(match[3], 10);
+  const candidate = new Date(Date.UTC(y, m, d));
+  return (
+    candidate.getUTCFullYear() === y &&
+    candidate.getUTCMonth() === m &&
+    candidate.getUTCDate() === d
+  );
+}
+
 /**
  * Parses a calendar date entry or YYYY-MM-DD string into a valid UTC Date anchored to the entry's dateStr or (month, dayNumber, fallbackYear).
  */
@@ -4848,21 +4867,9 @@ export function parseCalendarDateToUtc(
       ? dateEntry.dateStr
       : null;
 
-  if (rawDateStr) {
-    const match = rawDateStr.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (match) {
-      const y = parseInt(match[1], 10);
-      const m = parseInt(match[2], 10) - 1;
-      const d = parseInt(match[3], 10);
-      const candidate = new Date(Date.UTC(y, m, d));
-      if (
-        candidate.getUTCFullYear() === y &&
-        candidate.getUTCMonth() === m &&
-        candidate.getUTCDate() === d
-      ) {
-        return candidate;
-      }
-    }
+  if (rawDateStr && isValidIsoCalendarDate(rawDateStr)) {
+    const match = rawDateStr.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/)!;
+    return new Date(Date.UTC(parseInt(match[1], 10), parseInt(match[2], 10) - 1, parseInt(match[3], 10)));
   }
   if (
     dateEntry &&
@@ -4946,6 +4953,10 @@ function buildTempNationalTeamFromPool(nationNameOrId: string, nations: Nation[]
  * - Uses proper UTC date arithmetic anchored to the current/latest calendar date (never hardcodes June 2026).
  * - Reuses existing valid future tours when present on the calendar.
  * - Preserves unfinished internationalSeries without overwriting or duplicating fixtures.
+ * - Distinguishes between valid matching fixtures, placeholder entries without fixtures, malformed/conflicting fixtures, and completed fixtures.
+ * - Repairs placeholder calendar entries in-place while preserving valid calendar dates.
+ * - Fails safely without overwriting unrelated match data when a conflicting/malformed fixture occupies an expected slot.
+ * - Reconciles completed calendar fixtures with active series matches so completed fixtures are never reset or left incomplete.
  * - Processes intervening calendar fixtures in chronological order and at most once.
  * - Never skips a playable fixture involving the user's coached nation.
  * - Fails safely without mutating state if not in international mode or if no valid tour can be scheduled.
@@ -5117,15 +5128,6 @@ export function applyAdvanceCalendarToNextTourState(
     Math.min(activeLeague.currentDateIndex || 0, Math.max(0, workingDates.length - 1))
   );
 
-  // 1. Search forward from currentDateIndex (inclusive) for an existing uncompleted fixture involving userNat
-  let targetIdx = -1;
-  for (let i = startIdx; i < workingDates.length; i++) {
-    if (hasUncompletedUserMatchOnDay(workingDates[i])) {
-      targetIdx = i;
-      break;
-    }
-  }
-
   let workingSeries: InternationalSeriesState | null =
     internationalSeries && typeof internationalSeries === 'object'
       ? {
@@ -5150,110 +5152,770 @@ export function applyAdvanceCalendarToNextTourState(
     if (workingDates.length === 0) {
       return new Date(Date.UTC(seasonYearNum, 2, 20));
     }
-    let latestUtc = parseCalendarDateToUtc(workingDates[0], seasonYearNum);
+    let latestUtc: Date | null = null;
     for (const d of workingDates) {
+      if (!d) continue;
+      const hasValidIso = isValidIsoCalendarDate(d.dateStr);
+      const hasValidMonthDay =
+        (!d.dateStr || d.dateStr.trim().length === 0) &&
+        typeof d.month === 'string' &&
+        typeof d.dayNumber === 'number' &&
+        d.dayNumber >= 1 &&
+        d.dayNumber <= 31 &&
+        CALENDAR_MONTH_NAMES.some(m => m.toLowerCase() === d.month.trim().slice(0, 3).toLowerCase());
+      if (!hasValidIso && !hasValidMonthDay) continue;
       const parsed = parseCalendarDateToUtc(d, seasonYearNum);
-      if (parsed.getTime() > latestUtc.getTime()) {
+      if (!latestUtc || parsed.getTime() > latestUtc.getTime()) {
         latestUtc = parsed;
       }
     }
-    return latestUtc;
+    return latestUtc || new Date(Date.UTC(seasonYearNum, 2, 20));
   };
 
   let statusMessage = '';
   let generatedNewTour = false;
+  let targetIdx = -1;
 
-  // 2. If no future playable fixture for userNat is currently on the calendar at or after startIdx:
-  if (targetIdx === -1) {
-    const hasUnfinishedActiveSeries = Boolean(
-      workingSeries &&
-        workingSeries.userNationId === userNat.id &&
-        workingSeries.seriesId &&
-        workingSeries.matches.length > 0 &&
-        workingSeries.matches.some(m => !m.completed)
+  // Check if workingSeries belongs to userNat and has a valid seriesId
+  const seriesBelongsToUserNat = Boolean(
+    workingSeries &&
+      typeof workingSeries.seriesId === 'string' &&
+      workingSeries.seriesId.trim().length > 0 &&
+      Array.isArray(workingSeries.matches) &&
+      workingSeries.matches.length > 0 &&
+      (workingSeries.userNationId === userNat.id ||
+        (typeof workingSeries.userNationName === 'string' &&
+          workingSeries.userNationName.trim().toLowerCase() === userNatNameLower))
+  );
+
+  const seriesOppNat =
+    seriesBelongsToUserNat && workingSeries
+      ? nations.find(
+          n =>
+            n &&
+            n.id !== userNat.id &&
+            (n.id === workingSeries!.opponentNationId ||
+              (typeof workingSeries!.opponentNationName === 'string' &&
+                n.name.trim().toLowerCase() === workingSeries!.opponentNationName.trim().toLowerCase()))
+        )
+      : undefined;
+
+  if (seriesBelongsToUserNat && !seriesOppNat) {
+    return unchanged('Active international series has an invalid or conflicting opponent nation.');
+  }
+
+  // Classify a calendar entry relative to an expected series match:
+  // - 'valid_matching': valid uncompleted matching fixture
+  // - 'placeholder': placeholder entry with expectedCalId but no fixture
+  // - 'conflicting_or_malformed': malformed fixture or conflicting fixture (wrong ID, wrong nations, wrong format, non-international, contradictory results)
+  // - 'completed': legitimately completed matching fixture (in series, calendar, or both)
+  // - 'missing': no entry with expectedCalId or expectedFixId exists on calendar
+  const classifySeriesCalendarMatch = (
+    m: InternationalSeriesMatch,
+    series: InternationalSeriesState,
+    oppNat: Nation,
+    dates: League['calendarDates']
+  ):
+    | { status: 'conflicting_or_malformed'; reason: string }
+    | { status: 'placeholder'; calIndex: number }
+    | { status: 'valid_matching'; calIndex: number; fixture: CalendarMatchFixture }
+    | { status: 'completed'; calIndex: number; fixture: CalendarMatchFixture }
+    | { status: 'missing'; calIndex: -1 } => {
+    const cleanSeriesId = series.seriesId.trim();
+    const expectedFixId =
+      typeof m.fixtureId === 'string' && m.fixtureId.trim().length > 0
+        ? m.fixtureId.trim()
+        : `intl_fix_${cleanSeriesId}_${m.matchNumber}`;
+    const expectedCalId = `cal_intl_${cleanSeriesId}_${m.matchNumber}`;
+    const expectedHomeId = userNat.id;
+    const expectedAwayId = oppNat.id;
+    const expectedFormat: 'T20' | 'ODI' | 'TEST' = m.format || series.format || 'T20';
+    const expectedSeriesName = `${userNat.name} Tour of ${oppNat.name}`;
+
+    if (
+      (m.homeNationId && m.homeNationId.trim() !== expectedHomeId) ||
+      (m.awayNationId && m.awayNationId.trim() !== expectedAwayId) ||
+      (m.homeTeamId && m.homeTeamId.trim() !== expectedHomeId) ||
+      (m.awayTeamId && m.awayTeamId.trim() !== expectedAwayId)
+    ) {
+      return {
+        status: 'conflicting_or_malformed',
+        reason: `Series match #${m.matchNumber} has conflicting participant nation IDs.`
+      };
+    }
+
+    const calIdIndices: number[] = [];
+    const fixIdIndices: number[] = [];
+    for (let idx = 0; idx < dates.length; idx++) {
+      const d = dates[idx];
+      if (!d) continue;
+      if (d.id === expectedCalId) {
+        calIdIndices.push(idx);
+      }
+      if (
+        d.matchFixture?.id === expectedFixId ||
+        (Array.isArray(d.internationalMatches) &&
+          d.internationalMatches.some(im => Boolean(im && im.id === expectedFixId))) ||
+        (Array.isArray(d.otherMatches) &&
+          d.otherMatches.some(om => Boolean(om && om.id === expectedFixId)))
+      ) {
+        fixIdIndices.push(idx);
+      }
+    }
+
+    if (calIdIndices.length > 1 || fixIdIndices.length > 1) {
+      return {
+        status: 'conflicting_or_malformed',
+        reason: `Duplicate calendar entries found for ${expectedCalId} / ${expectedFixId}.`
+      };
+    }
+
+    if (calIdIndices.length === 1 && fixIdIndices.length === 1 && calIdIndices[0] !== fixIdIndices[0]) {
+      return {
+        status: 'conflicting_or_malformed',
+        reason: `Calendar entry "${expectedCalId}" and fixture "${expectedFixId}" point to conflicting calendar dates.`
+      };
+    }
+
+    if (calIdIndices.length === 0 && fixIdIndices.length === 0) {
+      return { status: 'missing', calIndex: -1 };
+    }
+
+    const calIndex = calIdIndices.length === 1 ? calIdIndices[0] : fixIdIndices[0];
+    const cd = dates[calIndex];
+
+    if (cd.id && cd.id !== expectedCalId) {
+      if (cd.id.startsWith('cal_playoff_') || cd.id.startsWith(`cal_intl_${cleanSeriesId}_`)) {
+        return {
+          status: 'conflicting_or_malformed',
+          reason: `Fixture "${expectedFixId}" is attached to conflicting calendar entry "${cd.id}".`
+        };
+      }
+    }
+
+    const otherList = Array.isArray(cd.otherMatches) ? cd.otherMatches.filter(Boolean) : [];
+    if (otherList.some(om => om.id === expectedFixId)) {
+      return {
+        status: 'conflicting_or_malformed',
+        reason: `International fixture "${expectedFixId}" is malformed inside domestic otherMatches.`
+      };
+    }
+
+    const rawPrimary = cd.matchFixture;
+    const isPrimaryEmptyStub = Boolean(
+      rawPrimary &&
+        typeof rawPrimary === 'object' &&
+        !rawPrimary.id &&
+        !rawPrimary.homeTeamId &&
+        !rawPrimary.awayTeamId &&
+        !rawPrimary.completed &&
+        !rawPrimary.resultSummary
     );
+    const primaryFix = isPrimaryEmptyStub ? undefined : rawPrimary;
+    const intlList = Array.isArray(cd.internationalMatches)
+      ? cd.internationalMatches.filter(im =>
+          Boolean(im && (im.id || im.homeTeamId || im.awayTeamId || im.completed || im.resultSummary))
+        )
+      : [];
 
-    if (hasUnfinishedActiveSeries && workingSeries) {
-      // Preserve unfinished series and schedule only its missing uncompleted fixtures onto the calendar
-      let anchorUtc = getCalendarEndAnchorUtc();
-      let stepOffset = 2;
-      const newCalendarEntries: League['calendarDates'] = [];
+    // 1. Placeholder calendar entry without a fixture
+    if (!primaryFix && intlList.length === 0) {
+      if (otherList.length > 0 || cd.type === 'playoff' || cd.type === 'match') {
+        return {
+          status: 'conflicting_or_malformed',
+          reason: `Calendar entry "${expectedCalId}" is occupied by non-international match data.`
+        };
+      }
+      return { status: 'placeholder', calIndex };
+    }
 
-      const updatedSeriesMatches = workingSeries.matches.map(m => {
-        const expectedFixId = m.fixtureId || `intl_fix_${workingSeries!.seriesId}_${m.matchNumber}`;
-        const expectedCalId = `cal_intl_${workingSeries!.seriesId}_${m.matchNumber}`;
-        const existingCalEntry = workingDates.find(
-          d =>
-            d.id === expectedCalId ||
-            d.matchFixture?.id === expectedFixId ||
-            (d.internationalMatches || []).some(im => im.id === expectedFixId)
-        );
+    // 2. Entry has a fixture; validate against malformation and conflicts
+    if (cd.type === 'playoff' || cd.type === 'match') {
+      return {
+        status: 'conflicting_or_malformed',
+        reason: `Calendar entry "${cd.id || expectedCalId}" has conflicting domestic/playoff type "${cd.type}".`
+      };
+    }
 
-        if (m.completed || existingCalEntry) {
-          return {
-            ...m,
-            fixtureId: expectedFixId,
-            dateStr: m.dateStr || existingCalEntry?.dateStr,
-            format: m.format || 'T20'
-          };
+    if (intlList.length > 1) {
+      return {
+        status: 'conflicting_or_malformed',
+        reason: `Calendar entry "${cd.id || expectedCalId}" contains multiple conflicting international fixtures.`
+      };
+    }
+
+    if (primaryFix && intlList.length === 1) {
+      const im0 = intlList[0];
+      if (
+        (primaryFix.id && im0.id && primaryFix.id.trim() !== im0.id.trim()) ||
+        (primaryFix.homeTeamId && im0.homeTeamId && primaryFix.homeTeamId.trim() !== im0.homeTeamId.trim()) ||
+        (primaryFix.awayTeamId && im0.awayTeamId && primaryFix.awayTeamId.trim() !== im0.awayTeamId.trim()) ||
+        (Boolean(primaryFix.completed) === Boolean(im0.completed) &&
+          primaryFix.resultSummary &&
+          im0.resultSummary &&
+          primaryFix.resultSummary.trim() !== im0.resultSummary.trim())
+      ) {
+        return {
+          status: 'conflicting_or_malformed',
+          reason: `Calendar entry "${cd.id || expectedCalId}" has conflicting matchFixture and internationalMatches data.`
+        };
+      }
+    }
+
+    const fix = primaryFix || intlList[0];
+    if (
+      !fix ||
+      typeof fix !== 'object' ||
+      typeof fix.id !== 'string' ||
+      fix.id.trim().length === 0 ||
+      typeof fix.homeTeamId !== 'string' ||
+      fix.homeTeamId.trim().length === 0 ||
+      typeof fix.awayTeamId !== 'string' ||
+      fix.awayTeamId.trim().length === 0 ||
+      fix.homeTeamId.trim().toLowerCase() === fix.awayTeamId.trim().toLowerCase()
+    ) {
+      return {
+        status: 'conflicting_or_malformed',
+        reason: `Malformed fixture at calendar entry "${cd.id || expectedCalId}".`
+      };
+    }
+
+    if (fix.id.trim() !== expectedFixId) {
+      return {
+        status: 'conflicting_or_malformed',
+        reason: `Conflicting fixture ID "${fix.id}" occupies calendar entry "${cd.id || expectedCalId}" (expected "${expectedFixId}").`
+      };
+    }
+
+    const homeMatches =
+      fix.homeTeamId.trim() === expectedHomeId ||
+      fix.homeTeamId.trim().toLowerCase() === userNatNameLower;
+    const awayMatches =
+      fix.awayTeamId.trim() === expectedAwayId ||
+      fix.awayTeamId.trim().toLowerCase() === oppNat.name.trim().toLowerCase();
+
+    if (!homeMatches || !awayMatches) {
+      return {
+        status: 'conflicting_or_malformed',
+        reason: `Conflicting fixture participants (${fix.homeTeamId} vs ${fix.awayTeamId}) at "${cd.id || expectedCalId}" (expected ${expectedHomeId} vs ${expectedAwayId}).`
+      };
+    }
+
+    if (fix.isInternational === false) {
+      return {
+        status: 'conflicting_or_malformed',
+        reason: `Fixture "${fix.id}" is marked non-international.`
+      };
+    }
+
+    if (typeof fix.seriesName === 'string' && fix.seriesName.trim().length > 0) {
+      const sLower = fix.seriesName.trim().toLowerCase();
+      const uLower = userNatNameLower;
+      const oLower = oppNat.name.trim().toLowerCase();
+      if (
+        sLower !== expectedSeriesName.trim().toLowerCase() &&
+        !(sLower.includes(uLower) && sLower.includes(oLower))
+      ) {
+        return {
+          status: 'conflicting_or_malformed',
+          reason: `Conflicting series identity "${fix.seriesName}" on fixture "${fix.id}" (expected "${expectedSeriesName}").`
+        };
+      }
+    }
+
+    if (fix.format !== undefined) {
+      if (fix.format !== 'T20' && fix.format !== 'ODI' && fix.format !== 'TEST') {
+        return {
+          status: 'conflicting_or_malformed',
+          reason: `Malformed format "${String(fix.format)}" on fixture "${fix.id}".`
+        };
+      }
+      if ((m.format || series.format) && fix.format !== expectedFormat) {
+        return {
+          status: 'conflicting_or_malformed',
+          reason: `Conflicting format "${fix.format}" on fixture "${fix.id}" (expected "${expectedFormat}").`
+        };
+      }
+    }
+
+    if (typeof cd.dateStr === 'string' && cd.dateStr.trim().length > 0 && !isValidIsoCalendarDate(cd.dateStr)) {
+      return {
+        status: 'conflicting_or_malformed',
+        reason: `Malformed calendar date "${cd.dateStr}" on fixture "${fix.id}".`
+      };
+    }
+    if (typeof fix.dateStr === 'string' && fix.dateStr.trim().length > 0 && !isValidIsoCalendarDate(fix.dateStr)) {
+      return {
+        status: 'conflicting_or_malformed',
+        reason: `Malformed fixture date "${fix.dateStr}" on fixture "${fix.id}".`
+      };
+    }
+    if (
+      isValidIsoCalendarDate(cd.dateStr) &&
+      isValidIsoCalendarDate(fix.dateStr) &&
+      cd.dateStr.trim() !== fix.dateStr.trim()
+    ) {
+      return {
+        status: 'conflicting_or_malformed',
+        reason: `Conflicting dates between calendar entry (${cd.dateStr}) and fixture (${fix.dateStr}) for "${fix.id}".`
+      };
+    }
+    if (
+      isValidIsoCalendarDate(m.dateStr) &&
+      isValidIsoCalendarDate(cd.dateStr) &&
+      m.dateStr.trim() !== cd.dateStr.trim()
+    ) {
+      return {
+        status: 'conflicting_or_malformed',
+        reason: `Conflicting dates between series match (${m.dateStr}) and calendar entry (${cd.dateStr}) for "${fix.id}".`
+      };
+    }
+
+    const seriesDone = Boolean(m.completed);
+    const calDone = Boolean(fix.completed || (intlList[0] && intlList[0].completed));
+    const seriesSum = typeof m.summary === 'string' && m.summary.trim().length > 0 ? m.summary.trim() : undefined;
+    const calSum =
+      typeof fix.resultSummary === 'string' && fix.resultSummary.trim().length > 0
+        ? fix.resultSummary.trim()
+        : intlList[0] && typeof intlList[0].resultSummary === 'string' && intlList[0].resultSummary.trim().length > 0
+        ? intlList[0].resultSummary.trim()
+        : undefined;
+
+    if (seriesDone && calDone && seriesSum && calSum && seriesSum !== calSum) {
+      return {
+        status: 'conflicting_or_malformed',
+        reason: `Conflicting completed result summaries for fixture "${fix.id}".`
+      };
+    }
+
+    if (seriesDone || calDone) {
+      return { status: 'completed', calIndex, fixture: fix };
+    }
+
+    return { status: 'valid_matching', calIndex, fixture: fix };
+  };
+
+  const inferSeriesOutcomeDelta = (
+    fix: CalendarMatchFixture,
+    summaryText: string | undefined,
+    uNat: Nation,
+    oNat: Nation
+  ): { userWon: boolean; oppWon: boolean } => {
+    const winnerId = fix.completedMatchState?.winnerTeamId;
+    if (winnerId) {
+      if (winnerId === uNat.id || winnerId.toLowerCase() === uNat.name.trim().toLowerCase()) {
+        return { userWon: true, oppWon: false };
+      }
+      if (winnerId === oNat.id || winnerId.toLowerCase() === oNat.name.trim().toLowerCase()) {
+        return { userWon: false, oppWon: true };
+      }
+    }
+    if (!summaryText) return { userWon: false, oppWon: false };
+    const s = summaryText.toLowerCase();
+    const uName = uNat.name.trim().toLowerCase();
+    const uCode = (uNat.code || uNat.name.slice(0, 3)).trim().toLowerCase();
+    const oName = oNat.name.trim().toLowerCase();
+    const oCode = (oNat.code || oNat.name.slice(0, 3)).trim().toLowerCase();
+
+    if (s.includes(`${uName} won`) || s.includes(`${uCode} won`)) {
+      return { userWon: true, oppWon: false };
+    }
+    if (s.includes(`${oName} won`) || s.includes(`${oCode} won`)) {
+      return { userWon: false, oppWon: true };
+    }
+    const beatIdx = s.indexOf('beat');
+    if (beatIdx > 0) {
+      const beforeBeat = s.slice(0, beatIdx);
+      if (beforeBeat.includes(uName) || beforeBeat.includes(uCode)) {
+        return { userWon: true, oppWon: false };
+      }
+      if (beforeBeat.includes(oName) || beforeBeat.includes(oCode)) {
+        return { userWon: false, oppWon: true };
+      }
+    }
+    return { userWon: false, oppWon: false };
+  };
+
+  let wasSeriesAlreadyCompleteOnEntry = true;
+  let lastReconciledSeriesCalIdx = -1;
+
+  // 1. Reconcile active/provided workingSeries against workingDates first
+  if (seriesBelongsToUserNat && workingSeries && seriesOppNat) {
+    wasSeriesAlreadyCompleteOnEntry = workingSeries.matches.every(m => Boolean(m && m.completed));
+    const cleanSeriesId = workingSeries.seriesId.trim();
+    const uCode = workingSeries.userNationCode || userNat.code || userNat.name.slice(0, 3).toUpperCase();
+    const oCode = workingSeries.opponentNationCode || seriesOppNat.code || seriesOppNat.name.slice(0, 3).toUpperCase();
+    const uFlag = workingSeries.userNationFlag || userNat.flag || '🏏';
+    const oFlag = workingSeries.opponentNationFlag || seriesOppNat.flag || '🏏';
+    const expectedSeriesName = `${userNat.name} Tour of ${seriesOppNat.name}`;
+
+    let runningAnchorUtc = getCalendarEndAnchorUtc();
+    const newCalendarEntries: League['calendarDates'] = [];
+    const updatedSeriesMatches: InternationalSeriesMatch[] = [];
+    let addedWins = 0;
+    let addedLosses = 0;
+    let repairedOrScheduledCount = 0;
+
+    for (let mIdx = 0; mIdx < workingSeries.matches.length; mIdx++) {
+      const m = workingSeries.matches[mIdx];
+      const classification = classifySeriesCalendarMatch(m, workingSeries, seriesOppNat, workingDates);
+
+      if (classification.status === 'conflicting_or_malformed') {
+        return unchanged(classification.reason);
+      }
+
+      const expectedFixId =
+        typeof m.fixtureId === 'string' && m.fixtureId.trim().length > 0
+          ? m.fixtureId.trim()
+          : `intl_fix_${cleanSeriesId}_${m.matchNumber}`;
+      const expectedCalId = `cal_intl_${cleanSeriesId}_${m.matchNumber}`;
+      const matchFormat: 'T20' | 'ODI' | 'TEST' = m.format || workingSeries.format || 'T20';
+      const ordinal =
+        m.matchNumber === 1 ? '1st' : m.matchNumber === 2 ? '2nd' : m.matchNumber === 3 ? '3rd' : `${m.matchNumber}th`;
+      const defaultTitle = `${ordinal} ${matchFormat}I · ${uCode} vs ${oCode}`;
+
+      if (classification.status === 'placeholder') {
+        const calIdx = classification.calIndex;
+        const cd = workingDates[calIdx];
+        let dateMeta: ReturnType<typeof addUtcDaysToCalendarDate>;
+
+        if (isValidIsoCalendarDate(cd.dateStr)) {
+          dateMeta = addUtcDaysToCalendarDate(parseCalendarDateToUtc(cd.dateStr, seasonYearNum), 0);
+        } else if (isValidIsoCalendarDate(m.dateStr)) {
+          dateMeta = addUtcDaysToCalendarDate(parseCalendarDateToUtc(m.dateStr, seasonYearNum), 0);
+        } else {
+          let fallbackBaseUtc = runningAnchorUtc;
+          if (calIdx > 0 && isValidIsoCalendarDate(workingDates[calIdx - 1]?.dateStr)) {
+            fallbackBaseUtc = parseCalendarDateToUtc(workingDates[calIdx - 1], seasonYearNum);
+          }
+          dateMeta = addUtcDaysToCalendarDate(fallbackBaseUtc, 2);
         }
 
-        const dateMeta = addUtcDaysToCalendarDate(anchorUtc, stepOffset);
-        stepOffset += 2;
-        const ordinal =
-          m.matchNumber === 1 ? '1st' : m.matchNumber === 2 ? '2nd' : m.matchNumber === 3 ? '3rd' : `${m.matchNumber}th`;
-        const matchFormat = m.format || workingSeries!.format || 'T20';
+        if (dateMeta.utcDate.getTime() > runningAnchorUtc.getTime()) {
+          runningAnchorUtc = dateMeta.utcDate;
+        }
 
-        const intlFix: NonNullable<League['calendarDates'][number]['matchFixture']> = {
+        const isCompleted = Boolean(m.completed);
+        const resolvedSummary = isCompleted ? m.summary || 'Match completed' : undefined;
+        const intlFix: CalendarMatchFixture = {
           id: expectedFixId,
-          homeTeamId: workingSeries!.userNationId,
-          awayTeamId: workingSeries!.opponentNationId,
-          homeShortName: workingSeries!.userNationCode,
-          awayShortName: workingSeries!.opponentNationCode,
-          homeLogo: workingSeries!.userNationFlag,
-          awayLogo: workingSeries!.opponentNationFlag,
+          homeTeamId: userNat.id,
+          awayTeamId: seriesOppNat.id,
+          homeTeamName: userNat.name,
+          awayTeamName: seriesOppNat.name,
+          homeShortName: uCode,
+          awayShortName: oCode,
+          homeLogo: uFlag,
+          awayLogo: oFlag,
           venue: m.venue,
+          dateStr: dateMeta.dateStr,
           timeStr: '14:00 LOCAL',
-          completed: false,
-          resultSummary: m.summary,
+          completed: isCompleted,
+          resultSummary: resolvedSummary,
           isInternational: true,
-          seriesName: `${workingSeries!.userNationName} Tour of ${workingSeries!.opponentNationName}`,
+          seriesName: expectedSeriesName,
           format: matchFormat
         };
 
-        newCalendarEntries.push({
+        workingDates[calIdx] = {
+          ...cd,
           id: expectedCalId,
           dateStr: dateMeta.dateStr,
           dayOfWeek: dateMeta.dayOfWeek,
           dayNumber: dateMeta.dayNumber,
           month: dateMeta.month,
           type: 'international',
-          title: `${ordinal} ${matchFormat}I · ${userNat.code || userNat.name.slice(0, 3).toUpperCase()} vs ${workingSeries!.opponentNationCode}`,
+          title: cd.title && cd.title.trim().length > 0 ? cd.title : defaultTitle,
           isHome: false,
           matchFixture: intlFix,
           otherMatches: [],
           internationalMatches: [intlFix]
-        });
+        };
 
-        return {
+        updatedSeriesMatches.push({
           ...m,
           fixtureId: expectedFixId,
           dateStr: dateMeta.dateStr,
-          format: matchFormat
+          format: matchFormat,
+          homeNationId: userNat.id,
+          awayNationId: seriesOppNat.id,
+          homeTeamId: userNat.id,
+          awayTeamId: seriesOppNat.id,
+          completed: isCompleted,
+          summary: resolvedSummary
+        });
+
+        lastReconciledSeriesCalIdx = calIdx;
+        repairedOrScheduledCount++;
+      } else if (classification.status === 'valid_matching') {
+        const calIdx = classification.calIndex;
+        const cd = workingDates[calIdx];
+        const fix = classification.fixture;
+        const resolvedFormat: 'T20' | 'ODI' | 'TEST' = fix.format || matchFormat;
+        const resolvedVenue = m.venue || fix.venue;
+
+        const dateMeta = isValidIsoCalendarDate(cd.dateStr)
+          ? addUtcDaysToCalendarDate(parseCalendarDateToUtc(cd.dateStr, seasonYearNum), 0)
+          : isValidIsoCalendarDate(m.dateStr)
+          ? addUtcDaysToCalendarDate(parseCalendarDateToUtc(m.dateStr, seasonYearNum), 0)
+          : addUtcDaysToCalendarDate(runningAnchorUtc, 2);
+
+        if (dateMeta.utcDate.getTime() > runningAnchorUtc.getTime()) {
+          runningAnchorUtc = dateMeta.utcDate;
+        }
+
+        const syncedFix: CalendarMatchFixture = {
+          ...fix,
+          id: expectedFixId,
+          homeTeamId: userNat.id,
+          awayTeamId: seriesOppNat.id,
+          homeTeamName: fix.homeTeamName || userNat.name,
+          awayTeamName: fix.awayTeamName || seriesOppNat.name,
+          homeShortName: fix.homeShortName || uCode,
+          awayShortName: fix.awayShortName || oCode,
+          homeLogo: fix.homeLogo || uFlag,
+          awayLogo: fix.awayLogo || oFlag,
+          venue: resolvedVenue,
+          dateStr: dateMeta.dateStr,
+          timeStr: fix.timeStr || '14:00 LOCAL',
+          completed: false,
+          resultSummary: undefined,
+          isInternational: true,
+          seriesName: fix.seriesName || expectedSeriesName,
+          format: resolvedFormat
         };
-      });
 
-      workingSeries = {
-        ...workingSeries,
-        format: workingSeries.format || 'T20',
-        matches: updatedSeriesMatches
-      };
+        workingDates[calIdx] = {
+          ...cd,
+          id: cd.id || expectedCalId,
+          dateStr: dateMeta.dateStr,
+          dayOfWeek: dateMeta.dayOfWeek,
+          dayNumber: dateMeta.dayNumber,
+          month: dateMeta.month,
+          type: 'international',
+          title: cd.title && cd.title.trim().length > 0 ? cd.title : defaultTitle,
+          matchFixture: syncedFix,
+          internationalMatches: [syncedFix]
+        };
 
-      if (newCalendarEntries.length > 0) {
-        targetIdx = workingDates.length;
-        workingDates = [...workingDates, ...newCalendarEntries];
-        statusMessage = `Scheduled remaining calendar fixtures for active tour: ${workingSeries.userNationName} tour of ${workingSeries.opponentNationName}`;
+        updatedSeriesMatches.push({
+          ...m,
+          venue: resolvedVenue,
+          fixtureId: expectedFixId,
+          dateStr: dateMeta.dateStr,
+          format: resolvedFormat,
+          homeNationId: userNat.id,
+          awayNationId: seriesOppNat.id,
+          homeTeamId: userNat.id,
+          awayTeamId: seriesOppNat.id,
+          completed: false,
+          summary: undefined
+        });
+
+        lastReconciledSeriesCalIdx = calIdx;
+      } else if (classification.status === 'completed') {
+        const calIdx = classification.calIndex;
+        const cd = workingDates[calIdx];
+        const fix = classification.fixture;
+        const resolvedFormat: 'T20' | 'ODI' | 'TEST' = fix.format || matchFormat;
+        const resolvedVenue = m.venue || fix.venue;
+        const wasIncompleteInSeries = !m.completed;
+
+        const resolvedSummary =
+          m.completed && typeof m.summary === 'string' && m.summary.trim().length > 0
+            ? m.summary.trim()
+            : typeof fix.resultSummary === 'string' && fix.resultSummary.trim().length > 0
+            ? fix.resultSummary.trim()
+            : m.summary || 'Match completed';
+
+        const dateMeta = isValidIsoCalendarDate(cd.dateStr)
+          ? addUtcDaysToCalendarDate(parseCalendarDateToUtc(cd.dateStr, seasonYearNum), 0)
+          : isValidIsoCalendarDate(m.dateStr)
+          ? addUtcDaysToCalendarDate(parseCalendarDateToUtc(m.dateStr, seasonYearNum), 0)
+          : addUtcDaysToCalendarDate(runningAnchorUtc, 0);
+
+        if (dateMeta.utcDate.getTime() > runningAnchorUtc.getTime()) {
+          runningAnchorUtc = dateMeta.utcDate;
+        }
+
+        const syncedFix: CalendarMatchFixture = {
+          ...fix,
+          id: expectedFixId,
+          homeTeamId: userNat.id,
+          awayTeamId: seriesOppNat.id,
+          homeTeamName: fix.homeTeamName || userNat.name,
+          awayTeamName: fix.awayTeamName || seriesOppNat.name,
+          homeShortName: fix.homeShortName || uCode,
+          awayShortName: fix.awayShortName || oCode,
+          homeLogo: fix.homeLogo || uFlag,
+          awayLogo: fix.awayLogo || oFlag,
+          venue: resolvedVenue,
+          dateStr: dateMeta.dateStr,
+          timeStr: fix.timeStr || '14:00 LOCAL',
+          completed: true,
+          resultSummary: resolvedSummary,
+          isInternational: true,
+          seriesName: fix.seriesName || expectedSeriesName,
+          format: resolvedFormat
+        };
+
+        workingDates[calIdx] = {
+          ...cd,
+          id: cd.id || expectedCalId,
+          dateStr: dateMeta.dateStr,
+          dayOfWeek: dateMeta.dayOfWeek,
+          dayNumber: dateMeta.dayNumber,
+          month: dateMeta.month,
+          type: 'international',
+          title: cd.title && cd.title.trim().length > 0 ? cd.title : defaultTitle,
+          matchFixture: syncedFix,
+          internationalMatches: [syncedFix]
+        };
+
+        if (wasIncompleteInSeries) {
+          const outcome = inferSeriesOutcomeDelta(syncedFix, resolvedSummary, userNat, seriesOppNat);
+          if (outcome.userWon) addedWins++;
+          else if (outcome.oppWon) addedLosses++;
+        }
+
+        updatedSeriesMatches.push({
+          ...m,
+          venue: resolvedVenue,
+          fixtureId: expectedFixId,
+          dateStr: dateMeta.dateStr,
+          format: resolvedFormat,
+          homeNationId: userNat.id,
+          awayNationId: seriesOppNat.id,
+          homeTeamId: userNat.id,
+          awayTeamId: seriesOppNat.id,
+          completed: true,
+          summary: resolvedSummary
+        });
+
+        lastReconciledSeriesCalIdx = calIdx;
+      } else {
+        // classification.status === 'missing'
+        if (m.completed) {
+          updatedSeriesMatches.push({
+            ...m,
+            fixtureId: expectedFixId,
+            format: matchFormat,
+            homeNationId: userNat.id,
+            awayNationId: seriesOppNat.id,
+            homeTeamId: userNat.id,
+            awayTeamId: seriesOppNat.id,
+            completed: true
+          });
+        } else {
+          const dateMeta = addUtcDaysToCalendarDate(runningAnchorUtc, 2);
+          runningAnchorUtc = dateMeta.utcDate;
+
+          const intlFix: CalendarMatchFixture = {
+            id: expectedFixId,
+            homeTeamId: userNat.id,
+            awayTeamId: seriesOppNat.id,
+            homeTeamName: userNat.name,
+            awayTeamName: seriesOppNat.name,
+            homeShortName: uCode,
+            awayShortName: oCode,
+            homeLogo: uFlag,
+            awayLogo: oFlag,
+            venue: m.venue,
+            dateStr: dateMeta.dateStr,
+            timeStr: '14:00 LOCAL',
+            completed: false,
+            resultSummary: m.summary,
+            isInternational: true,
+            seriesName: expectedSeriesName,
+            format: matchFormat
+          };
+
+          newCalendarEntries.push({
+            id: expectedCalId,
+            dateStr: dateMeta.dateStr,
+            dayOfWeek: dateMeta.dayOfWeek,
+            dayNumber: dateMeta.dayNumber,
+            month: dateMeta.month,
+            type: 'international',
+            title: defaultTitle,
+            isHome: false,
+            matchFixture: intlFix,
+            otherMatches: [],
+            internationalMatches: [intlFix]
+          });
+
+          updatedSeriesMatches.push({
+            ...m,
+            fixtureId: expectedFixId,
+            dateStr: dateMeta.dateStr,
+            format: matchFormat,
+            homeNationId: userNat.id,
+            awayNationId: seriesOppNat.id,
+            homeTeamId: userNat.id,
+            awayTeamId: seriesOppNat.id,
+            completed: false
+          });
+          repairedOrScheduledCount++;
+        }
       }
+    }
+
+    if (newCalendarEntries.length > 0) {
+      workingDates = [...workingDates, ...newCalendarEntries];
+    }
+
+    workingSeries = {
+      ...workingSeries,
+      userNationId: userNat.id,
+      userNationName: userNat.name,
+      userNationCode: uCode,
+      userNationFlag: uFlag,
+      opponentNationId: seriesOppNat.id,
+      opponentNationName: seriesOppNat.name,
+      opponentNationCode: oCode,
+      opponentNationFlag: oFlag,
+      seriesWins: workingSeries.seriesWins + addedWins,
+      seriesLosses: workingSeries.seriesLosses + addedLosses,
+      format: workingSeries.format || 'T20',
+      matches: updatedSeriesMatches
+    };
+
+    if (repairedOrScheduledCount > 0) {
+      statusMessage = `Scheduled remaining calendar fixtures for active tour: ${workingSeries.userNationName} tour of ${workingSeries.opponentNationName}`;
+    }
+
+    if (
+      workingSeries.matches.every(m => Boolean(m.completed)) &&
+      !updatedCompletedIds.includes(workingSeries.seriesId)
+    ) {
+      updatedCompletedIds.push(workingSeries.seriesId);
+    }
+  }
+
+  // 2. Search forward from currentDateIndex (inclusive) for an existing uncompleted fixture involving userNat
+  for (let i = startIdx; i < workingDates.length; i++) {
+    if (hasUncompletedUserMatchOnDay(workingDates[i])) {
+      targetIdx = i;
+      break;
+    }
+  }
+  if (targetIdx === -1 && !wasSeriesAlreadyCompleteOnEntry) {
+    for (let i = 0; i < startIdx; i++) {
+      if (hasUncompletedUserMatchOnDay(workingDates[i])) {
+        targetIdx = i;
+        break;
+      }
+    }
+  }
+
+  // 3. If no future playable fixture for userNat is on the calendar:
+  if (targetIdx === -1) {
+    if (!wasSeriesAlreadyCompleteOnEntry && lastReconciledSeriesCalIdx !== -1) {
+      // All incomplete matches of the active series were reconciled as completed from the calendar during this call
+      targetIdx = lastReconciledSeriesCalIdx;
+      statusMessage =
+        statusMessage ||
+        `Reconciled completed calendar fixtures for ${workingSeries?.userNationName || userNat.name} series.`;
     } else {
       // No unfinished active series for userNat exists; check if we are allowed and able to generate a new tour
       if (options?.allowGenerateNewTour === false) {
@@ -5317,11 +5979,14 @@ export function applyAdvanceCalendarToNextTourState(
             id: fixId,
             homeTeamId: generatedSeries.userNationId,
             awayTeamId: generatedSeries.opponentNationId,
+            homeTeamName: generatedSeries.userNationName,
+            awayTeamName: generatedSeries.opponentNationName,
             homeShortName: generatedSeries.userNationCode,
             awayShortName: generatedSeries.opponentNationCode,
             homeLogo: generatedSeries.userNationFlag,
             awayLogo: generatedSeries.opponentNationFlag,
             venue: m.venue,
+            dateStr: dateMeta.dateStr,
             timeStr: '14:00 LOCAL',
             completed: false,
             resultSummary: m.summary,
@@ -5348,7 +6013,11 @@ export function applyAdvanceCalendarToNextTourState(
             ...m,
             fixtureId: fixId,
             dateStr: dateMeta.dateStr,
-            format: 'T20'
+            format: 'T20',
+            homeNationId: generatedSeries.userNationId,
+            awayNationId: generatedSeries.opponentNationId,
+            homeTeamId: generatedSeries.userNationId,
+            awayTeamId: generatedSeries.opponentNationId
           };
         });
 
@@ -5375,7 +6044,7 @@ export function applyAdvanceCalendarToNextTourState(
       (!workingSeries ||
         workingSeries.userNationId !== userNat.id ||
         !workingSeries.seriesId ||
-        workingSeries.matches.every(m => m.completed))
+        (wasSeriesAlreadyCompleteOnEntry && workingSeries.matches.every(m => m.completed)))
     ) {
       const oppKey =
         targetFix.homeTeamId === userNat.id ||
@@ -5393,8 +6062,10 @@ export function applyAdvanceCalendarToNextTourState(
       );
       if (oppNat) {
         // Collect all uncompleted calendar fixtures between userNat and oppNat from targetIdx onwards
-        const tourDays = workingDates.slice(targetIdx).filter(cd =>
-          getDayIntlFixtures(cd).some(
+        const tourDayIndices: number[] = [];
+        for (let idx = targetIdx; idx < workingDates.length; idx++) {
+          const cd = workingDates[idx];
+          const hasMatchWithOpp = getDayIntlFixtures(cd).some(
             m =>
               m &&
               doesFixtureInvolveUserNat(m) &&
@@ -5405,8 +6076,11 @@ export function applyAdvanceCalendarToNextTourState(
                 (oppNat.code &&
                   ((m.homeShortName || '').toLowerCase() === oppNat.code.toLowerCase() ||
                     (m.awayShortName || '').toLowerCase() === oppNat.code.toLowerCase())))
-          )
-        );
+          );
+          if (hasMatchWithOpp) {
+            tourDayIndices.push(idx);
+          }
+        }
         const existingSeriesIds = [
           ...updatedCompletedIds,
           ...(workingSeries?.seriesId ? [workingSeries.seriesId] : [])
@@ -5423,9 +6097,24 @@ export function applyAdvanceCalendarToNextTourState(
           ...baseSeries,
           format: targetFix.format || 'T20',
           matches:
-            tourDays.length > 0
-              ? tourDays.map((td, idx) => {
+            tourDayIndices.length > 0
+              ? tourDayIndices.map((tdIdx, idx) => {
+                  const td = workingDates[tdIdx];
                   const tf = getDayIntlFixtures(td).find(m => m && doesFixtureInvolveUserNat(m)) || targetFix;
+                  const resolvedFormat = tf.format || 'T20';
+                  const syncedTf: CalendarMatchFixture = {
+                    ...tf,
+                    homeTeamId: baseSeries.userNationId,
+                    awayTeamId: baseSeries.opponentNationId,
+                    dateStr: td.dateStr,
+                    format: resolvedFormat,
+                    isInternational: true
+                  };
+                  workingDates[tdIdx] = {
+                    ...td,
+                    matchFixture: syncedTf,
+                    internationalMatches: [syncedTf]
+                  };
                   return {
                     matchNumber: idx + 1,
                     city: oppNat.name,
@@ -5434,7 +6123,11 @@ export function applyAdvanceCalendarToNextTourState(
                     summary: tf.resultSummary,
                     fixtureId: tf.id,
                     dateStr: td.dateStr,
-                    format: tf.format || 'T20'
+                    format: resolvedFormat,
+                    homeNationId: baseSeries.userNationId,
+                    awayNationId: baseSeries.opponentNationId,
+                    homeTeamId: baseSeries.userNationId,
+                    awayTeamId: baseSeries.opponentNationId
                   };
                 })
               : baseSeries.matches
@@ -5447,7 +6140,7 @@ export function applyAdvanceCalendarToNextTourState(
     return unchanged('No valid future tour fixture could be resolved.');
   }
 
-  // 3. Process intervening days [startIdx ... targetIdx - 1] in strict chronological order, simulating each uncompleted non-user fixture once
+  // 4. Process intervening days [startIdx ... targetIdx - 1] in strict chronological order, simulating each uncompleted non-user fixture once
   let workingPlayers = [...players];
   let workingStandings = [...(activeLeague.standings || [])];
   const simulatedFixtureIds: string[] = [];

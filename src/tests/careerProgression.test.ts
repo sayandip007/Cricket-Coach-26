@@ -3638,9 +3638,464 @@ export function runCareerProgressionTests() {
   assert.equal(q1EligAfterSync.canPlay, false, 'REQ 35.4: Playoff stage completed in calendar cannot be played again');
   assert.equal(q1EligAfterSync.canSimulate, false, 'REQ 35.5: Playoff stage completed in calendar cannot be simulated again');
 
+  // ==========================================================================
+  // REQ 36: PLACEHOLDER CALENDAR ENTRIES, CONFLICT PROTECTION & COMPLETION RECONCILIATION
+  // ==========================================================================
+  const rsaNation = baseNations.find(n => n.id === 'nat_rsa' || n.name === 'South Africa')!;
+  const placeholderSeriesId = 'intl_series_ind_vs_rsa_placeholder_t1';
+  const placeholderBaseSeries: InternationalSeriesState = {
+    ...buildInitialSeriesForNation(baseNations[0], baseNations, rsaNation.id, 1, placeholderSeriesId),
+    seriesId: placeholderSeriesId,
+    seriesWins: 0,
+    seriesLosses: 0,
+    format: 'T20'
+  };
+
+  // 36.1 & 36.2:
+  // - Match 1 is a placeholder with expectedCalId ('cal_intl_intl_series_ind_vs_rsa_placeholder_t1_1') and NO fixture (valid date '2026-08-12')
+  // - Match 2 is a valid existing matching fixture at 'cal_intl_intl_series_ind_vs_rsa_placeholder_t1_2' ('2026-08-14')
+  // - Match 3 is a placeholder with expectedCalId and an invalid date ('2026-06-35') that must be repaired with a valid date
+  // - Matches 4 and 5 are missing from the calendar and must be scheduled
+  const placeholderAndValidLeague: League = {
+    ...baseLeagues[0],
+    currentDateIndex: 0,
+    calendarDates: [
+      {
+        id: 'cal_aug_10_anchor',
+        dateStr: '2026-08-10',
+        dayOfWeek: 'MON',
+        dayNumber: 10,
+        month: 'Aug',
+        type: 'rest',
+        title: 'Pre-Tour Camp',
+        isHome: true
+      },
+      {
+        id: `cal_intl_${placeholderSeriesId}_1`,
+        dateStr: '2026-08-12',
+        dayOfWeek: 'WED',
+        dayNumber: 12,
+        month: 'Aug',
+        type: 'international',
+        title: '1st T20I Placeholder Slot',
+        isHome: false
+        // Intentionally no matchFixture and no internationalMatches!
+      },
+      {
+        id: `cal_intl_${placeholderSeriesId}_2`,
+        dateStr: '2026-08-14',
+        dayOfWeek: 'FRI',
+        dayNumber: 14,
+        month: 'Aug',
+        type: 'international',
+        title: '2nd T20I · IND vs SA',
+        isHome: false,
+        matchFixture: {
+          id: `intl_fix_${placeholderSeriesId}_2`,
+          homeTeamId: 'nat_ind',
+          awayTeamId: rsaNation.id,
+          homeShortName: 'IND',
+          awayShortName: rsaNation.code || 'RSA',
+          venue: placeholderBaseSeries.matches[1].venue,
+          dateStr: '2026-08-14',
+          completed: false,
+          isInternational: true,
+          format: 'T20'
+        },
+        internationalMatches: [
+          {
+            id: `intl_fix_${placeholderSeriesId}_2`,
+            homeTeamId: 'nat_ind',
+            awayTeamId: rsaNation.id,
+            homeShortName: 'IND',
+            awayShortName: rsaNation.code || 'RSA',
+            venue: placeholderBaseSeries.matches[1].venue,
+            dateStr: '2026-08-14',
+            completed: false,
+            isInternational: true,
+            format: 'T20'
+          }
+        ]
+      },
+      {
+        id: `cal_intl_${placeholderSeriesId}_3`,
+        dateStr: '2026-06-35', // invalid calendar date on placeholder
+        dayOfWeek: 'SUN',
+        dayNumber: 35,
+        month: 'Jun',
+        type: 'international',
+        title: '3rd T20I Placeholder With Invalid Date',
+        isHome: false,
+        internationalMatches: []
+      }
+    ]
+  };
+
+  const res36_1 = applyAdvanceCalendarToNextTourState({
+    leagues: [placeholderAndValidLeague],
+    currentLeagueId: placeholderAndValidLeague.id,
+    coachProfile: indCoachProfile,
+    nations: baseNations,
+    teams: baseTeams,
+    players: freshPlayers,
+    internationalSeries: placeholderBaseSeries,
+    completedMatchesHistory: [],
+    careerPhase: 'international_series'
+  });
+
+  assert.equal(res36_1.success, true, 'REQ 36.1a: Advancing with placeholder and valid existing entries succeeds');
+  assert.equal(res36_1.generatedNewTour, false, 'REQ 36.1b: Preserves active unfinished series without generating a new tour');
+  const calAfter36_1 = res36_1.leagues[0].calendarDates || [];
+  // 1 rest day + 5 tour matches (2 repaired placeholders + 1 reused valid fixture + 2 newly appended missing fixtures) = 6 entries total
+  assert.equal(
+    calAfter36_1.length,
+    6,
+    'REQ 36.1c: Repairs placeholders in-place and reuses valid fixture without appending duplicate entries (6 total)'
+  );
+  assert.equal(
+    res36_1.targetDateIndex,
+    1,
+    'REQ 36.1d: Stops at index 1 (the repaired Match 1 placeholder, which is now a playable fixture)'
+  );
+
+  // Verify Match 1 placeholder was repaired in-place and preserved its valid calendar date '2026-08-12'
+  const repairedMatch1Cal = calAfter36_1[1];
+  assert.equal(repairedMatch1Cal.id, `cal_intl_${placeholderSeriesId}_1`, 'REQ 36.1e: Repaired placeholder keeps expectedCalId');
+  assert.equal(repairedMatch1Cal.dateStr, '2026-08-12', 'REQ 36.1f: Repaired placeholder preserves valid calendar date 2026-08-12');
+  assert.ok(repairedMatch1Cal.matchFixture, 'REQ 36.1g: Repaired placeholder now has matchFixture attached');
+  assert.equal(
+    repairedMatch1Cal.matchFixture?.id,
+    `intl_fix_${placeholderSeriesId}_1`,
+    'REQ 36.1h: Repaired placeholder matchFixture has expected stable fixtureId'
+  );
+  assert.equal(
+    repairedMatch1Cal.internationalMatches?.[0]?.id,
+    `intl_fix_${placeholderSeriesId}_1`,
+    'REQ 36.1i: Repaired placeholder internationalMatches[0] has expected stable fixtureId'
+  );
+
+  // Verify Match 2 valid fixture was reused without duplication
+  const reusedMatch2Cal = calAfter36_1[2];
+  assert.equal(reusedMatch2Cal.id, `cal_intl_${placeholderSeriesId}_2`, 'REQ 36.2a: Valid existing fixture entry reused at index 2');
+  assert.equal(reusedMatch2Cal.dateStr, '2026-08-14', 'REQ 36.2b: Valid existing fixture date 2026-08-14 preserved');
+  assert.equal(
+    calAfter36_1.filter(d => d.id === `cal_intl_${placeholderSeriesId}_2`).length,
+    1,
+    'REQ 36.2c: Valid existing fixture is not duplicated'
+  );
+
+  // Verify Match 3 placeholder with invalid date was repaired with a valid calendar date ('2026-08-16')
+  const repairedMatch3Cal = calAfter36_1[3];
+  assert.equal(repairedMatch3Cal.id, `cal_intl_${placeholderSeriesId}_3`, 'REQ 36.1j: Match 3 placeholder repaired in-place');
+  assert.equal(repairedMatch3Cal.dateStr, '2026-08-16', 'REQ 36.1k: Invalid placeholder date 2026-06-35 replaced with valid 2026-08-16');
+  assert.equal(repairedMatch3Cal.matchFixture?.id, `intl_fix_${placeholderSeriesId}_3`, 'REQ 36.1l: Match 3 fixture attached');
+
+  // 36.6: Verify calendar and series retain matching fixture IDs, dates, participants, format, completion, and summary across all 5 matches
+  for (let i = 0; i < res36_1.internationalSeries.matches.length; i++) {
+    const sMatch = res36_1.internationalSeries.matches[i];
+    const cEntry = calAfter36_1[i + 1];
+    assert.equal(sMatch.fixtureId, `intl_fix_${placeholderSeriesId}_${i + 1}`, `REQ 36.6a: Match ${i + 1} series fixtureId is stable`);
+    assert.equal(cEntry.matchFixture?.id, sMatch.fixtureId, `REQ 36.6b: Match ${i + 1} calendar and series fixtureId match`);
+    assert.equal(cEntry.dateStr, sMatch.dateStr, `REQ 36.6c: Match ${i + 1} calendar entry dateStr and series dateStr match`);
+    assert.equal(cEntry.matchFixture?.dateStr, sMatch.dateStr, `REQ 36.6d: Match ${i + 1} matchFixture.dateStr matches series dateStr`);
+    assert.equal(cEntry.matchFixture?.homeTeamId, res36_1.internationalSeries.userNationId, `REQ 36.6e: Match ${i + 1} homeTeamId matches userNationId`);
+    assert.equal(cEntry.matchFixture?.awayTeamId, res36_1.internationalSeries.opponentNationId, `REQ 36.6f: Match ${i + 1} awayTeamId matches opponentNationId`);
+    assert.equal(sMatch.homeNationId, cEntry.matchFixture?.homeTeamId, `REQ 36.6g: Match ${i + 1} sMatch.homeNationId matches calendar homeTeamId`);
+    assert.equal(sMatch.awayNationId, cEntry.matchFixture?.awayTeamId, `REQ 36.6h: Match ${i + 1} sMatch.awayNationId matches calendar awayTeamId`);
+    assert.equal(cEntry.matchFixture?.format, sMatch.format, `REQ 36.6i: Match ${i + 1} format matches`);
+    assert.equal(cEntry.matchFixture?.completed, sMatch.completed, `REQ 36.6j: Match ${i + 1} completion status matches`);
+    assert.equal(cEntry.matchFixture?.resultSummary, sMatch.summary, `REQ 36.6k: Match ${i + 1} resultSummary matches series summary`);
+  }
+
+  // 36.5: Repeated invocations on repaired state remain idempotent
+  const res36_5_repeat = applyAdvanceCalendarToNextTourState({
+    leagues: res36_1.leagues,
+    currentLeagueId: res36_1.leagues[0].id,
+    coachProfile: res36_1.coachProfile,
+    nations: baseNations,
+    teams: baseTeams,
+    players: res36_1.players,
+    internationalSeries: res36_1.internationalSeries,
+    completedMatchesHistory: res36_1.completedMatchesHistory,
+    careerPhase: res36_1.careerPhase
+  });
+  assert.equal(res36_5_repeat.success, true, 'REQ 36.5a: Repeated invocation after placeholder repair succeeds');
+  assert.equal(res36_5_repeat.generatedNewTour, false, 'REQ 36.5b: Repeated invocation does not generate a new tour');
+  assert.equal(res36_5_repeat.leagues[0].calendarDates?.length, 6, 'REQ 36.5c: Calendar length stays 6 on repeated call');
+  assert.equal(res36_5_repeat.targetDateIndex, 1, 'REQ 36.5d: Target date index stays 1 on repeated call');
+  assert.deepEqual(
+    res36_5_repeat.internationalSeries.matches,
+    res36_1.internationalSeries.matches,
+    'REQ 36.5e: Series matches remain identical on repeated invocation'
+  );
+
+  // 36.3: Conflicting fixture occupying expectedCalId is handled safely without overwriting unrelated match data
+  const conflictingCalLeague: League = {
+    ...baseLeagues[0],
+    currentDateIndex: 0,
+    calendarDates: [
+      {
+        id: 'cal_aug_10_anchor',
+        dateStr: '2026-08-10',
+        dayOfWeek: 'MON',
+        dayNumber: 10,
+        month: 'Aug',
+        type: 'rest',
+        title: 'Pre-Tour Camp',
+        isHome: true
+      },
+      {
+        id: `cal_intl_${placeholderSeriesId}_1`, // occupies expectedCalId for Match 1 of IND vs RSA
+        dateStr: '2026-08-12',
+        dayOfWeek: 'WED',
+        dayNumber: 12,
+        month: 'Aug',
+        type: 'international',
+        title: 'Ashes Warmup: AUS vs ENG',
+        isHome: false,
+        matchFixture: {
+          id: 'fix_unrelated_aus_eng_99',
+          homeTeamId: 'nat_aus',
+          awayTeamId: 'nat_eng',
+          homeShortName: 'AUS',
+          awayShortName: 'ENG',
+          venue: 'MCG, Melbourne',
+          dateStr: '2026-08-12',
+          completed: false,
+          isInternational: true,
+          format: 'T20'
+        }
+      }
+    ]
+  };
+  const conflictingSnapshotBefore = JSON.stringify(conflictingCalLeague.calendarDates);
+  const res36_3_conflict = applyAdvanceCalendarToNextTourState({
+    leagues: [conflictingCalLeague],
+    currentLeagueId: conflictingCalLeague.id,
+    coachProfile: indCoachProfile,
+    nations: baseNations,
+    teams: baseTeams,
+    players: freshPlayers,
+    internationalSeries: placeholderBaseSeries,
+    completedMatchesHistory: [],
+    careerPhase: 'international_series'
+  });
+  assert.equal(res36_3_conflict.success, false, 'REQ 36.3a: Conflicting fixture at expectedCalId fails safely');
+  assert.ok(
+    /conflicting/i.test(res36_3_conflict.message),
+    `REQ 36.3b: Reports clear conflict error message (got "${res36_3_conflict.message}")`
+  );
+  assert.equal(
+    JSON.stringify(res36_3_conflict.leagues[0].calendarDates),
+    conflictingSnapshotBefore,
+    'REQ 36.3c: Unrelated match data at expectedCalId is NOT overwritten or mutated'
+  );
+  assert.equal(
+    res36_3_conflict.leagues[0].calendarDates?.[1]?.matchFixture?.id,
+    'fix_unrelated_aus_eng_99',
+    'REQ 36.3d: Unrelated fixture ID fix_unrelated_aus_eng_99 remains intact'
+  );
+  assert.equal(
+    res36_3_conflict.leagues[0].calendarDates?.[1]?.matchFixture?.homeTeamId,
+    'nat_aus',
+    'REQ 36.3e: Unrelated fixture homeTeamId (nat_aus) remains intact'
+  );
+
+  // Also test a malformed fixture at expectedCalId (e.g. homeTeamId === awayTeamId)
+  const malformedCalLeague: League = {
+    ...baseLeagues[0],
+    currentDateIndex: 0,
+    calendarDates: [
+      {
+        id: `cal_intl_${placeholderSeriesId}_1`,
+        dateStr: '2026-08-12',
+        dayOfWeek: 'WED',
+        dayNumber: 12,
+        month: 'Aug',
+        type: 'international',
+        title: 'Malformed Self-Match',
+        isHome: false,
+        matchFixture: {
+          id: `intl_fix_${placeholderSeriesId}_1`,
+          homeTeamId: 'nat_ind',
+          awayTeamId: 'nat_ind', // malformed: identical home and away nation
+          venue: 'Wankhede Stadium',
+          dateStr: '2026-08-12',
+          completed: false,
+          isInternational: true,
+          format: 'T20'
+        }
+      }
+    ]
+  };
+  const res36_3_malformed = applyAdvanceCalendarToNextTourState({
+    leagues: [malformedCalLeague],
+    currentLeagueId: malformedCalLeague.id,
+    coachProfile: indCoachProfile,
+    nations: baseNations,
+    teams: baseTeams,
+    players: freshPlayers,
+    internationalSeries: placeholderBaseSeries,
+    completedMatchesHistory: [],
+    careerPhase: 'international_series'
+  });
+  assert.equal(res36_3_malformed.success, false, 'REQ 36.3f: Malformed fixture at expectedCalId is rejected safely');
+
+  // 36.4: A completed calendar fixture is reconciled correctly with the active series state
+  // Setup: Match 1 is marked completed: true in the calendar ('India won by 6 wickets'),
+  // but still marked completed: false in internationalSeries.matches[0]!
+  // Match 2 is uncompleted on the calendar.
+  const reconcileSeriesId = 'intl_series_ind_vs_rsa_reconcile_t1';
+  const staleSeriesWithUnmarkedCompletion: InternationalSeriesState = {
+    ...buildInitialSeriesForNation(baseNations[0], baseNations, rsaNation.id, 1, reconcileSeriesId),
+    seriesId: reconcileSeriesId,
+    seriesWins: 0,
+    seriesLosses: 0,
+    format: 'T20'
+  };
+  const completedInCalLeague: League = {
+    ...baseLeagues[0],
+    currentDateIndex: 0,
+    calendarDates: [
+      {
+        id: 'cal_aug_10_anchor',
+        dateStr: '2026-08-10',
+        dayOfWeek: 'MON',
+        dayNumber: 10,
+        month: 'Aug',
+        type: 'rest',
+        title: 'Pre-Tour Camp',
+        isHome: true
+      },
+      {
+        id: `cal_intl_${reconcileSeriesId}_1`,
+        dateStr: '2026-08-12',
+        dayOfWeek: 'WED',
+        dayNumber: 12,
+        month: 'Aug',
+        type: 'international',
+        title: '1st T20I · IND vs SA',
+        isHome: false,
+        matchFixture: {
+          id: `intl_fix_${reconcileSeriesId}_1`,
+          homeTeamId: 'nat_ind',
+          awayTeamId: rsaNation.id,
+          homeShortName: 'IND',
+          awayShortName: rsaNation.code || 'RSA',
+          venue: staleSeriesWithUnmarkedCompletion.matches[0].venue,
+          dateStr: '2026-08-12',
+          completed: true,
+          resultSummary: 'India won by 6 wickets',
+          isInternational: true,
+          format: 'T20'
+        },
+        internationalMatches: [
+          {
+            id: `intl_fix_${reconcileSeriesId}_1`,
+            homeTeamId: 'nat_ind',
+            awayTeamId: rsaNation.id,
+            homeShortName: 'IND',
+            awayShortName: rsaNation.code || 'RSA',
+            venue: staleSeriesWithUnmarkedCompletion.matches[0].venue,
+            dateStr: '2026-08-12',
+            completed: true,
+            resultSummary: 'India won by 6 wickets',
+            isInternational: true,
+            format: 'T20'
+          }
+        ]
+      },
+      {
+        id: `cal_intl_${reconcileSeriesId}_2`,
+        dateStr: '2026-08-14',
+        dayOfWeek: 'FRI',
+        dayNumber: 14,
+        month: 'Aug',
+        type: 'international',
+        title: '2nd T20I · IND vs SA',
+        isHome: false,
+        matchFixture: {
+          id: `intl_fix_${reconcileSeriesId}_2`,
+          homeTeamId: 'nat_ind',
+          awayTeamId: rsaNation.id,
+          homeShortName: 'IND',
+          awayShortName: rsaNation.code || 'RSA',
+          venue: staleSeriesWithUnmarkedCompletion.matches[1].venue,
+          dateStr: '2026-08-14',
+          completed: false,
+          isInternational: true,
+          format: 'T20'
+        }
+      }
+    ]
+  };
+
+  const res36_4 = applyAdvanceCalendarToNextTourState({
+    leagues: [completedInCalLeague],
+    currentLeagueId: completedInCalLeague.id,
+    coachProfile: indCoachProfile,
+    nations: baseNations,
+    teams: baseTeams,
+    players: freshPlayers,
+    internationalSeries: staleSeriesWithUnmarkedCompletion,
+    completedMatchesHistory: [],
+    careerPhase: 'international_series'
+  });
+
+  assert.equal(res36_4.success, true, 'REQ 36.4a: Reconciling completed calendar fixture with active series succeeds');
+  assert.equal(
+    res36_4.internationalSeries.matches[0].completed,
+    true,
+    'REQ 36.4b: Completed calendar fixture is marked completed: true in corresponding active series match'
+  );
+  assert.equal(
+    res36_4.internationalSeries.matches[0].summary,
+    'India won by 6 wickets',
+    'REQ 36.4c: Authoritative resultSummary from calendar is synchronized to series match summary'
+  );
+  assert.equal(
+    res36_4.internationalSeries.seriesWins,
+    1,
+    'REQ 36.4d: Reconciled user win from calendar increments seriesWins to 1'
+  );
+  assert.equal(
+    res36_4.leagues[0].calendarDates?.[1]?.matchFixture?.completed,
+    true,
+    'REQ 36.4e: Completed calendar fixture is NOT reset to incomplete'
+  );
+  assert.equal(
+    res36_4.leagues[0].calendarDates?.[1]?.matchFixture?.resultSummary,
+    'India won by 6 wickets',
+    'REQ 36.4f: Authoritative completed result on calendar is NOT overwritten'
+  );
+  assert.equal(
+    res36_4.targetDateIndex,
+    2,
+    'REQ 36.4g: Calendar advances past the completed Match 1 (index 1) and stops at unplayed Match 2 (index 2)'
+  );
+
+  // Calling again on res36_4 does not double-increment seriesWins
+  const res36_4_repeat = applyAdvanceCalendarToNextTourState({
+    leagues: res36_4.leagues,
+    currentLeagueId: res36_4.leagues[0].id,
+    coachProfile: res36_4.coachProfile,
+    nations: baseNations,
+    teams: baseTeams,
+    players: res36_4.players,
+    internationalSeries: res36_4.internationalSeries,
+    completedMatchesHistory: res36_4.completedMatchesHistory,
+    careerPhase: res36_4.careerPhase
+  });
+  assert.equal(
+    res36_4_repeat.internationalSeries.seriesWins,
+    1,
+    'REQ 36.4h: Repeated invocation does not double-count reconciled seriesWins'
+  );
+
   console.log('✅ ALL Career Progression, Multi-League Recovery, International Series IDs, Transition Idempotency & Verified Defect Tests PASSED!');
-  return { passed: 165, total: 165 };
+  return { passed: 195, total: 195 };
 }
+
 
 
 
