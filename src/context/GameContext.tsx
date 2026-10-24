@@ -4705,7 +4705,7 @@ interface GameContextType {
   switchUserClub: (newClubId: string) => void;
   validateClubSquad: (teamId?: string) => { isValid: boolean; errors: string[] };
   confirmClubSquad: (teamId: string, squadPlayerIds: string[]) => { success: boolean; error?: string };
-  advanceCalendarDay: () => void;
+  advanceCalendarDay: () => boolean;
   setCalendarDateIndex: (idx: number) => void;
   // Phase 13 Settings & Multi-Slot Save Manager
   settings: GameSettings;
@@ -5234,6 +5234,213 @@ export function isUserControlledFranchiseFixture(
 }
 
 /**
+ * Helper to reconcile at most ONE matching calendar fixture in `leagues` for an international match:
+ * - Idempotently updates the calendar fixture matching `matchedFixtureId` (or the unique match in legacy mode).
+ * - Updates only the matching calendar fixture in the target league.
+ * - Preserves existing authoritative results on already-completed fixtures.
+ * - Fails safely without overwriting if calendar fixture has conflicting participant data.
+ * - Never modifies other fixtures or unrelated leagues.
+ */
+function reconcileCalendarForInternationalMatch(params: {
+  leagues: League[];
+  currentLeagueId?: string;
+  matchedFixtureId: string | null;
+  competitionType: 'bilateral' | 'wtc';
+  authoritativeSummary: string;
+  finishedMatch: MatchLiveState;
+  doesPairMatchFinishedTeams: (
+    candHomeId?: string,
+    candAwayId?: string,
+    candHomeName?: string,
+    candAwayName?: string
+  ) => boolean;
+}): League[] {
+  const {
+    leagues,
+    currentLeagueId,
+    matchedFixtureId,
+    competitionType,
+    authoritativeSummary,
+    finishedMatch,
+    doesPairMatchFinishedTeams
+  } = params;
+
+  return leagues.map(league => {
+    if (!league || !Array.isArray(league.calendarDates)) return league;
+    // Update only the matching calendar fixture in the correct league (Requirement 2.4)
+    if (currentLeagueId && league.id !== currentLeagueId) {
+      return league;
+    }
+
+    // Find the single target calendar entry to reconcile
+    let targetCalIdx = -1;
+    if (matchedFixtureId) {
+      targetCalIdx = league.calendarDates.findIndex(
+        cd =>
+          cd &&
+          (cd.matchFixture?.id === matchedFixtureId ||
+            (Array.isArray(cd.internationalMatches) &&
+              cd.internationalMatches.some(im => im && im.id === matchedFixtureId)))
+      );
+    }
+
+    if (targetCalIdx === -1 && !matchedFixtureId) {
+      // Legacy path only: when matchedFixtureId is null, search by index and teams
+      const curIdx = Math.max(0, Math.min(league.currentDateIndex || 0, Math.max(0, league.calendarDates.length - 1)));
+      for (let offset = 0; offset < league.calendarDates.length; offset++) {
+        const idx = curIdx + offset;
+        if (idx >= league.calendarDates.length) break;
+        const cd = league.calendarDates[idx];
+        if (!cd) continue;
+        const mf = cd.matchFixture;
+        const isCalEntryWtc = Boolean(
+          cd.id?.startsWith('wtc_') ||
+          (mf && (mf.id?.startsWith('wtc_') || (mf as any).competitionId === 'wtc_test' || (mf as any).leagueId === 'wtc_test'))
+        );
+        if (competitionType === 'wtc' && !isCalEntryWtc) continue;
+        if (competitionType === 'bilateral' && isCalEntryWtc) continue;
+
+        const mfMatches =
+          mf &&
+          (mf.isInternational || cd.type === 'international') &&
+          !mf.completed &&
+          doesPairMatchFinishedTeams(mf.homeTeamId, mf.awayTeamId, mf.homeTeamName, mf.awayTeamName);
+        const imMatches =
+          Array.isArray(cd.internationalMatches) &&
+          cd.internationalMatches.some(
+            im =>
+              im &&
+              !im.completed &&
+              doesPairMatchFinishedTeams(im.homeTeamId, im.awayTeamId, im.homeTeamName, im.awayTeamName)
+          );
+        if (mfMatches || imMatches) {
+          targetCalIdx = idx;
+          break;
+        }
+      }
+      if (targetCalIdx === -1) {
+        for (let idx = 0; idx < curIdx; idx++) {
+          const cd = league.calendarDates[idx];
+          if (!cd) continue;
+          const mf = cd.matchFixture;
+          const isCalEntryWtc = Boolean(
+            cd.id?.startsWith('wtc_') ||
+            (mf && (mf.id?.startsWith('wtc_') || (mf as any).competitionId === 'wtc_test' || (mf as any).leagueId === 'wtc_test'))
+          );
+          if (competitionType === 'wtc' && !isCalEntryWtc) continue;
+          if (competitionType === 'bilateral' && isCalEntryWtc) continue;
+
+          const mfMatches =
+            mf &&
+            (mf.isInternational || cd.type === 'international') &&
+            !mf.completed &&
+            doesPairMatchFinishedTeams(mf.homeTeamId, mf.awayTeamId, mf.homeTeamName, mf.awayTeamName);
+          const imMatches =
+            Array.isArray(cd.internationalMatches) &&
+            cd.internationalMatches.some(
+              im =>
+                im &&
+                !im.completed &&
+                doesPairMatchFinishedTeams(im.homeTeamId, im.awayTeamId, im.homeTeamName, im.awayTeamName)
+            );
+          if (mfMatches || imMatches) {
+            targetCalIdx = idx;
+            break;
+          }
+        }
+      }
+    }
+
+    if (targetCalIdx === -1) return league;
+
+    // Check if target calendar fixture has conflicting data (Requirement 2.7)
+    const targetCd = league.calendarDates[targetCalIdx];
+    if (targetCd?.matchFixture) {
+      const mf = targetCd.matchFixture;
+      if (
+        matchedFixtureId &&
+        mf.id === matchedFixtureId &&
+        !doesPairMatchFinishedTeams(mf.homeTeamId, mf.awayTeamId, mf.homeTeamName, mf.awayTeamName)
+      ) {
+        // Conflicting participant data! Do not overwrite unrelated match results.
+        return league;
+      }
+    }
+
+    return {
+      ...league,
+      calendarDates: league.calendarDates.map((cd, idx) => {
+        if (idx !== targetCalIdx || !cd) return cd;
+
+        const mf = cd.matchFixture;
+        const matchesMf = Boolean(
+          mf &&
+            (mf.isInternational || cd.type === 'international') &&
+            ((matchedFixtureId && mf.id === matchedFixtureId) ||
+              (!matchedFixtureId && doesPairMatchFinishedTeams(mf.homeTeamId, mf.awayTeamId, mf.homeTeamName, mf.awayTeamName)))
+        );
+
+        let updatedMatchFixture = mf;
+        if (matchesMf && mf) {
+          if (mf.completed) {
+            // Already completed: preserve existing valid result and state (Requirement 2.5)
+            updatedMatchFixture = {
+              ...mf,
+              completed: true,
+              resultSummary: mf.resultSummary || authoritativeSummary
+            };
+          } else {
+            // Reconcile uncompleted fixture
+            updatedMatchFixture = {
+              ...mf,
+              completed: true,
+              resultSummary: authoritativeSummary,
+              completedMatchState: finishedMatch
+            };
+          }
+        }
+
+        let updatedOneIm = false;
+        const updatedIntlMatches = Array.isArray(cd.internationalMatches)
+          ? cd.internationalMatches.map(im => {
+              if (!im || updatedOneIm) return im;
+              const matchesIm = Boolean(
+                (matchedFixtureId && im.id === matchedFixtureId) ||
+                  (!matchedFixtureId &&
+                    !im.completed &&
+                    doesPairMatchFinishedTeams(im.homeTeamId, im.awayTeamId, im.homeTeamName, im.awayTeamName))
+              );
+              if (matchesIm) {
+                updatedOneIm = true;
+                if (im.completed) {
+                  return {
+                    ...im,
+                    completed: true,
+                    resultSummary: im.resultSummary || authoritativeSummary
+                  };
+                }
+                return {
+                  ...im,
+                  completed: true,
+                  resultSummary: authoritativeSummary,
+                  completedMatchState: finishedMatch
+                };
+              }
+              return im;
+            })
+          : cd.internationalMatches;
+
+        return {
+          ...cd,
+          matchFixture: updatedMatchFixture,
+          internationalMatches: updatedIntlMatches
+        };
+      })
+    };
+  });
+}
+
+/**
  * Authoritative pure state helper for recording a completed international match:
  * - Authoritatively determines competition identity (distinguishing bilateral Test matches from WTC).
  * - Enforces idempotency against repeated completion callbacks (skips ranking and score duplicates).
@@ -5359,10 +5566,11 @@ export function applyRecordCompletedInternationalMatchState(params: {
   };
 
   let nextSeries = internationalSeries;
-  let matchedFixtureId: string | null =
+  const explicitFixtureId =
     typeof finishedMatch.fixtureId === 'string' && finishedMatch.fixtureId.trim().length > 0
       ? finishedMatch.fixtureId.trim()
       : null;
+  let matchedFixtureId: string | null = explicitFixtureId;
 
   // 2. WTC Completion Handling vs Bilateral Series Completion Handling with Idempotency Guard
   if (competitionType === 'wtc') {
@@ -5372,10 +5580,19 @@ export function applyRecordCompletedInternationalMatchState(params: {
     );
 
     if (isAlreadyCompletedWtc) {
-      // Idempotency: WTC match is already recorded, do not duplicate rankings or state
+      // Reconcile calendar if uncompleted, but do not duplicate rankings or series! (Requirement 2)
+      const reconciledLeagues = reconcileCalendarForInternationalMatch({
+        leagues,
+        currentLeagueId,
+        matchedFixtureId,
+        competitionType: 'wtc',
+        authoritativeSummary: internationalSeries?.wtcTestSummary || intlShortSummary,
+        finishedMatch,
+        doesPairMatchFinishedTeams
+      });
       return {
         internationalSeries,
-        leagues,
+        leagues: reconciledLeagues,
         nations,
         matchedFixtureId
       };
@@ -5389,67 +5606,152 @@ export function applyRecordCompletedInternationalMatchState(params: {
       };
     }
   } else if (competitionType === 'bilateral') {
-    if (internationalSeries && Array.isArray(internationalSeries.matches)) {
-      const seriesMatchesTeams = doesPairMatchFinishedTeams(
-        internationalSeries.userNationId,
-        internationalSeries.opponentNationId,
-        internationalSeries.userNationName,
-        internationalSeries.opponentNationName
+    if (!internationalSeries || !Array.isArray(internationalSeries.matches) || internationalSeries.matches.length === 0) {
+      // No active series matches to record against: fail safely without mutating state
+      return {
+        internationalSeries,
+        leagues,
+        nations,
+        matchedFixtureId: null
+      };
+    }
+
+    const seriesMatchesTeams = doesPairMatchFinishedTeams(
+      internationalSeries.userNationId,
+      internationalSeries.opponentNationId,
+      internationalSeries.userNationName,
+      internationalSeries.opponentNationName
+    );
+
+    if (!seriesMatchesTeams) {
+      // Teams in finished match do not match active bilateral series: fail safely
+      return {
+        internationalSeries,
+        leagues,
+        nations,
+        matchedFixtureId: null
+      };
+    }
+
+    let targetMatchIdx = -1;
+    if (explicitFixtureId) {
+      // 1. Authoritative exact fixture ID resolution against series matches
+      targetMatchIdx = internationalSeries.matches.findIndex(
+        m =>
+          m &&
+          (m.fixtureId === explicitFixtureId ||
+            (internationalSeries.seriesId &&
+              `intl_fix_${internationalSeries.seriesId}_${m.matchNumber}` === explicitFixtureId))
       );
 
-      let targetMatchIdx = -1;
-      if (matchedFixtureId) {
-        targetMatchIdx = internationalSeries.matches.findIndex(
-          m =>
-            m &&
-            (m.fixtureId === matchedFixtureId ||
-              (internationalSeries.seriesId &&
-                `intl_fix_${internationalSeries.seriesId}_${m.matchNumber}` === matchedFixtureId))
-        );
-      }
-      if (targetMatchIdx === -1 && seriesMatchesTeams) {
-        targetMatchIdx = internationalSeries.matches.findIndex(m => m && !m.completed);
-      }
-
-      if (targetMatchIdx !== -1) {
-        const targetMatch = internationalSeries.matches[targetMatchIdx];
-        const expectedFixId =
-          targetMatch.fixtureId ||
-          (internationalSeries.seriesId
-            ? `intl_fix_${internationalSeries.seriesId}_${targetMatch.matchNumber}`
-            : undefined);
-        if (!matchedFixtureId && expectedFixId) {
-          matchedFixtureId = expectedFixId;
-        }
-
-        if (targetMatch.completed) {
-          // Idempotency: match was already completed in series, do not duplicate rankings or results
-          return {
-            internationalSeries,
-            leagues,
-            nations,
-            matchedFixtureId
-          };
-        }
-
-        const updatedMatches = internationalSeries.matches.map((m, idx) =>
-          idx === targetMatchIdx
-            ? {
-                ...m,
-                fixtureId: m.fixtureId || expectedFixId,
-                completed: true,
-                summary: intlShortSummary
+      // 2. Authoritative fixture-mapping recovery path: check leagues calendar metadata
+      if (targetMatchIdx === -1) {
+        for (const league of leagues) {
+          if (!league || !Array.isArray(league.calendarDates)) continue;
+          for (const cd of league.calendarDates) {
+            if (!cd) continue;
+            const candMf = cd.matchFixture?.id === explicitFixtureId ? cd.matchFixture : null;
+            const candIm = Array.isArray(cd.internationalMatches)
+              ? cd.internationalMatches.find(im => im && im.id === explicitFixtureId)
+              : null;
+            const candFix = candMf || candIm;
+            if (candFix) {
+              const matchNum = (candFix as any).matchNumber || (candFix as any).seriesMatchNumber;
+              if (
+                typeof matchNum === 'number' &&
+                matchNum >= 1 &&
+                matchNum <= internationalSeries.matches.length
+              ) {
+                targetMatchIdx = matchNum - 1;
+                break;
               }
-            : m
-        );
-        nextSeries = {
-          ...internationalSeries,
-          seriesWins: internationalSeries.seriesWins + (didUserWin ? 1 : 0),
-          seriesLosses: internationalSeries.seriesLosses + (didUserWin ? 0 : 1),
-          matches: updatedMatches
+            }
+          }
+          if (targetMatchIdx !== -1) break;
+        }
+      }
+
+      // Requirement 1.2: If supplied fixture ID does not match a fixture in the series,
+      // DO NOT fall back to another match based solely on team names!
+      if (targetMatchIdx === -1) {
+        return {
+          internationalSeries,
+          leagues,
+          nations,
+          matchedFixtureId: null
+        };
+      }
+    } else {
+      // Requirement 1.4 & 1.5: If NO fixture ID was supplied (legacy flow), allow team-based fallback
+      // ONLY when the teams, series identity, and match status UNIQUELY identify the intended unfinished fixture.
+      const unfinishedIndexes: number[] = [];
+      internationalSeries.matches.forEach((m, idx) => {
+        if (m && !m.completed) {
+          unfinishedIndexes.push(idx);
+        }
+      });
+
+      if (unfinishedIndexes.length === 1) {
+        targetMatchIdx = unfinishedIndexes[0];
+      } else {
+        // Ambiguous match (e.g. 0 or >1 unfinished matches in series): reject safely without mutation
+        return {
+          internationalSeries,
+          leagues,
+          nations,
+          matchedFixtureId: null
         };
       }
     }
+
+    const targetMatch = internationalSeries.matches[targetMatchIdx];
+    const expectedFixId =
+      targetMatch.fixtureId ||
+      (internationalSeries.seriesId
+        ? `intl_fix_${internationalSeries.seriesId}_${targetMatch.matchNumber}`
+        : matchedFixtureId || undefined);
+
+    if (!matchedFixtureId && expectedFixId) {
+      matchedFixtureId = expectedFixId;
+    }
+
+    if (targetMatch.completed) {
+      // Idempotency: match was already completed in series, do not duplicate rankings or results,
+      // BUT reconcile the corresponding calendar fixture in case it was out of sync (Requirement 2)
+      const reconciledLeagues = reconcileCalendarForInternationalMatch({
+        leagues,
+        currentLeagueId,
+        matchedFixtureId,
+        competitionType: 'bilateral',
+        authoritativeSummary: targetMatch.summary || intlShortSummary,
+        finishedMatch,
+        doesPairMatchFinishedTeams
+      });
+
+      return {
+        internationalSeries,
+        leagues: reconciledLeagues,
+        nations,
+        matchedFixtureId
+      };
+    }
+
+    const updatedMatches = internationalSeries.matches.map((m, idx) =>
+      idx === targetMatchIdx
+        ? {
+            ...m,
+            fixtureId: m.fixtureId || expectedFixId,
+            completed: true,
+            summary: intlShortSummary
+          }
+        : m
+    );
+    nextSeries = {
+      ...internationalSeries,
+      seriesWins: internationalSeries.seriesWins + (didUserWin ? 1 : 0),
+      seriesLosses: internationalSeries.seriesLosses + (didUserWin ? 0 : 1),
+      matches: updatedMatches
+    };
   }
 
   // 3. Update ICC Rankings only for freshly completed matches (idempotency enforced)
@@ -5485,152 +5787,15 @@ export function applyRecordCompletedInternationalMatchState(params: {
     };
   });
 
-  const updatedLeagues = leagues.map(league => {
-    if (!league || !Array.isArray(league.calendarDates)) return league;
-    if (currentLeagueId && league.id !== currentLeagueId) {
-      return league;
-    }
-
-    // Find the single target calendar entry to mark completed (never mark all 5 bilateral series matches at once!)
-    let targetCalIdx = -1;
-    if (matchedFixtureId) {
-      targetCalIdx = league.calendarDates.findIndex(
-        cd =>
-          cd &&
-          (cd.matchFixture?.id === matchedFixtureId ||
-            (Array.isArray(cd.internationalMatches) &&
-              cd.internationalMatches.some(im => im && im.id === matchedFixtureId)))
-      );
-    }
-
-    if (targetCalIdx === -1) {
-      const curIdx = Math.max(0, Math.min(league.currentDateIndex || 0, Math.max(0, league.calendarDates.length - 1)));
-      // Check currentDateIndex first, then forward, then backward for the single earliest uncompleted matching international fixture
-      for (let offset = 0; offset < league.calendarDates.length; offset++) {
-        const idx = curIdx + offset;
-        if (idx >= league.calendarDates.length) break;
-        const cd = league.calendarDates[idx];
-        if (!cd) continue;
-        const mf = cd.matchFixture;
-        const isCalEntryWtc = Boolean(
-          cd.id?.startsWith('wtc_') ||
-          (mf && (mf.id?.startsWith('wtc_') || (mf as any).competitionId === 'wtc_test' || (mf as any).leagueId === 'wtc_test'))
-        );
-        if (competitionType === 'wtc' && !isCalEntryWtc && mf?.id !== matchedFixtureId) {
-          continue;
-        }
-        if (competitionType === 'bilateral' && isCalEntryWtc) {
-          continue;
-        }
-
-        const mfMatches =
-          mf &&
-          (mf.isInternational || cd.type === 'international') &&
-          !mf.completed &&
-          doesPairMatchFinishedTeams(mf.homeTeamId, mf.awayTeamId, mf.homeTeamName, mf.awayTeamName);
-        const imMatches =
-          Array.isArray(cd.internationalMatches) &&
-          cd.internationalMatches.some(
-            im =>
-              im &&
-              !im.completed &&
-              doesPairMatchFinishedTeams(im.homeTeamId, im.awayTeamId, im.homeTeamName, im.awayTeamName)
-          );
-        if (mfMatches || imMatches) {
-          targetCalIdx = idx;
-          break;
-        }
-      }
-      if (targetCalIdx === -1) {
-        for (let idx = 0; idx < curIdx; idx++) {
-          const cd = league.calendarDates[idx];
-          if (!cd) continue;
-          const mf = cd.matchFixture;
-          const isCalEntryWtc = Boolean(
-            cd.id?.startsWith('wtc_') ||
-            (mf && (mf.id?.startsWith('wtc_') || (mf as any).competitionId === 'wtc_test' || (mf as any).leagueId === 'wtc_test'))
-          );
-          if (competitionType === 'wtc' && !isCalEntryWtc && mf?.id !== matchedFixtureId) {
-            continue;
-          }
-          if (competitionType === 'bilateral' && isCalEntryWtc) {
-            continue;
-          }
-
-          const mfMatches =
-            mf &&
-            (mf.isInternational || cd.type === 'international') &&
-            !mf.completed &&
-            doesPairMatchFinishedTeams(mf.homeTeamId, mf.awayTeamId, mf.homeTeamName, mf.awayTeamName);
-          const imMatches =
-            Array.isArray(cd.internationalMatches) &&
-            cd.internationalMatches.some(
-              im =>
-                im &&
-                !im.completed &&
-                doesPairMatchFinishedTeams(im.homeTeamId, im.awayTeamId, im.homeTeamName, im.awayTeamName)
-            );
-          if (mfMatches || imMatches) {
-            targetCalIdx = idx;
-            break;
-          }
-        }
-      }
-    }
-
-    if (targetCalIdx === -1) return league;
-
-    return {
-      ...league,
-      calendarDates: league.calendarDates.map((cd, idx) => {
-        if (idx !== targetCalIdx || !cd) return cd;
-
-        const mf = cd.matchFixture;
-        const shouldUpdateMf = Boolean(
-          mf &&
-            (mf.isInternational || cd.type === 'international') &&
-            !mf.completed &&
-            ((matchedFixtureId && mf.id === matchedFixtureId) ||
-              doesPairMatchFinishedTeams(mf.homeTeamId, mf.awayTeamId, mf.homeTeamName, mf.awayTeamName))
-        );
-
-        const updatedMatchFixture = shouldUpdateMf && mf
-          ? {
-              ...mf,
-              completed: true,
-              resultSummary: intlShortSummary,
-              completedMatchState: finishedMatch
-            }
-          : mf;
-
-        let updatedOneIm = false;
-        const updatedIntlMatches = Array.isArray(cd.internationalMatches)
-          ? cd.internationalMatches.map(im => {
-              if (!im || im.completed || updatedOneIm) return im;
-              const matchesIm = Boolean(
-                (matchedFixtureId && im.id === matchedFixtureId) ||
-                  doesPairMatchFinishedTeams(im.homeTeamId, im.awayTeamId, im.homeTeamName, im.awayTeamName)
-              );
-              if (matchesIm) {
-                updatedOneIm = true;
-                return {
-                  ...im,
-                  completed: true,
-                  resultSummary: intlShortSummary,
-                  completedMatchState: finishedMatch
-                };
-              }
-              return im;
-            })
-          : cd.internationalMatches;
-
-        return {
-          ...cd,
-          matchFixture: updatedMatchFixture,
-          internationalMatches: updatedIntlMatches
-        };
-      })
-    };
+  // 4. Update leagues calendar fixture
+  const updatedLeagues = reconcileCalendarForInternationalMatch({
+    leagues,
+    currentLeagueId,
+    matchedFixtureId,
+    competitionType: competitionType as 'bilateral' | 'wtc',
+    authoritativeSummary: intlShortSummary,
+    finishedMatch,
+    doesPairMatchFinishedTeams
   });
 
   return {
@@ -5934,7 +6099,8 @@ export function applyAdvanceAiPlayoffMatchesState(state: {
  * - Updates domestic standings, NRR, playoffs qualification, and advances `currentDateIndex`.
  */
 export function applyAdvanceCalendarDayState(params: {
-  league: League;
+  league?: League;
+  leagues?: League[];
   currentLeagueId?: string;
   teams: Team[];
   players: Player[];
@@ -5945,10 +6111,12 @@ export function applyAdvanceCalendarDayState(params: {
   tournamentHonors: TournamentHonor[];
   careerBoardReview: CareerBoardReview | null;
   activeSeasonKey?: string;
+  internationalSeries?: InternationalSeriesState;
 }): {
   advanced: boolean;
   blockedReason?: string;
   league: League;
+  leagues?: League[];
   players: Player[];
   careerPhase: CareerPhase;
   tournamentHonors: TournamentHonor[];
@@ -5957,8 +6125,6 @@ export function applyAdvanceCalendarDayState(params: {
   simulatedFixturesCount: number;
 } {
   const {
-    league,
-    currentLeagueId = league.id,
     teams,
     players,
     coachProfile,
@@ -5967,8 +6133,57 @@ export function applyAdvanceCalendarDayState(params: {
     careerPhase,
     tournamentHonors,
     careerBoardReview,
-    activeSeasonKey: providedSeasonKey
+    activeSeasonKey: providedSeasonKey,
+    internationalSeries
   } = params;
+
+  // Strict active league resolution (Requirement 3: Never blindly pick leagues[0])
+  const candidateLeagues =
+    Array.isArray(params.leagues) && params.leagues.length > 0
+      ? params.leagues
+      : params.league
+      ? [params.league]
+      : [];
+
+  let resolvedLeague: League | undefined;
+  if (typeof params.currentLeagueId === 'string' && params.currentLeagueId.trim().length > 0) {
+    // Resolve the exact requested league ID strictly (fail safely if missing/invalid)
+    resolvedLeague = candidateLeagues.find(l => l && l.id === params.currentLeagueId?.trim());
+  } else if (params.league) {
+    resolvedLeague = params.league;
+  } else if (candidateLeagues.length > 0) {
+    // Missing currentLeagueId: attempt explicit legacy-save recovery through existing recovery mechanism
+    const recovery = resolveActiveLeagueForRecovery({
+      leagues: candidateLeagues,
+      currentLeagueId: params.currentLeagueId,
+      coachProfile: coachProfile || INITIAL_COACH_PROFILE,
+      careerBoardReview,
+      internationalSeries
+    });
+    if (recovery.recoveredByPolicy && recovery.league) {
+      resolvedLeague = recovery.league;
+    }
+  }
+
+  if (!resolvedLeague) {
+    // Fail safely without advancing leagues[0] or any other league
+    const fallbackLeague = params.league || candidateLeagues[0] || ({} as League);
+    return {
+      advanced: false,
+      blockedReason: 'invalid_or_unresolved_active_league',
+      league: fallbackLeague,
+      leagues: params.leagues,
+      players,
+      careerPhase,
+      tournamentHonors,
+      careerBoardReview,
+      coachProfile,
+      simulatedFixturesCount: 0
+    };
+  }
+
+  const league = resolvedLeague;
+  const currentLeagueId = league.id;
 
   const curDayIdx = league.currentDateIndex || 0;
   const curDayObj = Array.isArray(league.calendarDates) ? league.calendarDates[curDayIdx] : undefined;
@@ -5978,6 +6193,7 @@ export function applyAdvanceCalendarDayState(params: {
       advanced: false,
       blockedReason: 'invalid_current_calendar_day',
       league,
+      leagues: params.leagues,
       players,
       careerPhase,
       tournamentHonors,
@@ -6016,6 +6232,7 @@ export function applyAdvanceCalendarDayState(params: {
         advanced: false,
         blockedReason: 'user_international_fixture_pending',
         league,
+        leagues: params.leagues,
         players,
         careerPhase,
         tournamentHonors,
@@ -6045,6 +6262,7 @@ export function applyAdvanceCalendarDayState(params: {
         advanced: false,
         blockedReason: 'user_franchise_fixture_pending',
         league,
+        leagues: params.leagues,
         players,
         careerPhase,
         tournamentHonors,
@@ -6270,9 +6488,14 @@ export function applyAdvanceCalendarDayState(params: {
 
   const simulatedFixturesCount = simulatedOtherMap.size + simulatedIntlMap.size;
 
+  const workingLeagues = params.leagues
+    ? params.leagues.map(l => (l && l.id === finalLeague.id ? finalLeague : l))
+    : undefined;
+
   return {
     advanced: true,
     league: finalLeague,
+    leagues: workingLeagues,
     players: workingPlayers,
     careerPhase: workingPhase,
     tournamentHonors: workingHonors,
@@ -9650,13 +9873,30 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [players, buildTempNationalTeam]);
 
   // Calendar advancement — dynamically simulates all AI domestic & international fixtures and updates every player's stats
-  const advanceCalendarDay = useCallback(() => {
-    const activeLeague = leagues.find(l => l.id === currentLeagueId) || leagues[0];
-    if (!activeLeague) return;
+  const advanceCalendarDay = useCallback((): boolean => {
+    let activeLeague = leagues.find(l => l && l.id === currentLeagueId);
+    if (!activeLeague) {
+      // Attempt explicit legacy-save recovery through existing recovery mechanism (Requirement 3)
+      const recovery = resolveActiveLeagueForRecovery({
+        leagues,
+        currentLeagueId,
+        coachProfile: coachProfile || INITIAL_COACH_PROFILE,
+        careerBoardReview,
+        internationalSeries
+      });
+      if (recovery.recoveredByPolicy && recovery.league) {
+        activeLeague = recovery.league;
+        setCurrentLeagueId(recovery.league.id);
+      } else {
+        console.warn(`[advanceCalendarDay] Failed to strictly resolve active league for ID "${currentLeagueId}". Advancement cancelled.`);
+        return false;
+      }
+    }
 
     const res = applyAdvanceCalendarDayState({
       league: activeLeague,
-      currentLeagueId,
+      leagues,
+      currentLeagueId: activeLeague.id,
       teams,
       players,
       coachProfile,
@@ -9664,12 +9904,13 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       nations,
       careerPhase,
       tournamentHonors,
-      careerBoardReview
+      careerBoardReview,
+      internationalSeries
     });
 
     if (!res.advanced) {
       console.log(`[advanceCalendarDay] Advancement prevented: ${res.blockedReason}`);
-      return;
+      return false;
     }
 
     setCareerPhase(res.careerPhase);
@@ -9684,7 +9925,11 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setCoachProfile(res.coachProfile);
     }
 
-    setLeagues(prev => prev.map(l => (l.id === currentLeagueId ? res.league : l)));
+    if (res.leagues) {
+      setLeagues(res.leagues);
+    } else {
+      setLeagues(prev => prev.map(l => (l.id === res.league.id ? res.league : l)));
+    }
 
     const nextIdx = res.league.currentDateIndex % Math.max(1, res.league.calendarDates.length);
     const nextDayType = res.league.calendarDates[nextIdx]?.type || 'training';
@@ -9749,6 +9994,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     })));
 
     sound.playTap();
+    return true;
   }, [
     currentLeagueId,
     leagues,
@@ -9760,7 +10006,9 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     careerPhase,
     tournamentHonors,
     careerBoardReview,
-    userTeam.id
+    internationalSeries,
+    userTeam.id,
+    setCurrentLeagueId
   ]);
 
   const setCalendarDateIndex = useCallback((idx: number) => {

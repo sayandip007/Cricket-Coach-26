@@ -353,10 +353,12 @@ export const HubScreen: React.FC = () => {
       startMatch(opponentTeam.id, selectedMatchFormat, !isCurrentMatchHome, activeDay.matchFixture?.id);
       simEntireMatch();
     }
-    advanceCalendarDay();
-    setTrainingCompleted(false);
-    setDayRested(false);
-    setDoubleXpClaimed(false);
+    const advanced = advanceCalendarDay();
+    if (advanced !== false) {
+      setTrainingCompleted(false);
+      setDayRested(false);
+      setDoubleXpClaimed(false);
+    }
   };
 
   const handleQuickSimMatch = () => {

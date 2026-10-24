@@ -5959,7 +5959,484 @@ export function runCareerProgressionTests() {
     assert.deepEqual(failedTransitionRes.leagues, res40_2.leagues, 'REQ 40.10c: Failed transition leaves leagues unchanged');
   }
 
+  // =========================================================================
+  // Scenario 41: International Fixture Identity and Calendar Reconciliation Audit
+  // =========================================================================
+  {
+    const intlCoach41: CoachProfile = {
+      ...INITIAL_COACH_PROFILE,
+      activeCareerMode: 'international',
+      nationalTeamId: 'nat_ind',
+      clubTeamId: null
+    };
+
+    const initialSeries41: InternationalSeriesState = {
+      seriesId: 'tour_ind_aus_2026',
+      userNationId: 'nat_ind',
+      userNationName: 'India',
+      userNationCode: 'IND',
+      userNationFlag: '🇮🇳',
+      opponentNationId: 'nat_aus',
+      opponentNationName: 'Australia',
+      opponentNationCode: 'AUS',
+      opponentNationFlag: '🇦🇺',
+      format: 'T20',
+      matches: [
+        {
+          matchNumber: 1,
+          format: 'T20',
+          venue: 'Wankhede Stadium, Mumbai',
+          city: 'Mumbai',
+          completed: false,
+          fixtureId: 'fix_tour_1'
+        },
+        {
+          matchNumber: 2,
+          format: 'T20',
+          venue: 'Eden Gardens, Kolkata',
+          city: 'Kolkata',
+          completed: false,
+          fixtureId: 'fix_tour_2'
+        },
+        {
+          matchNumber: 3,
+          format: 'T20',
+          venue: 'M. Chinnaswamy Stadium, Bengaluru',
+          city: 'Bengaluru',
+          completed: false,
+          fixtureId: 'fix_tour_3'
+        }
+      ],
+      seriesWins: 0,
+      seriesLosses: 0
+    };
+
+    const league41A: League = {
+      ...INITIAL_LEAGUES[0],
+      id: 'league_intl_tour_41',
+      calendarDates: [
+        {
+          id: 'cal_41_1',
+          dateStr: '2026-09-01',
+          dayNumber: 1,
+          month: 'September',
+          dayOfWeek: 'Tuesday',
+          type: 'international',
+          matchFixture: {
+            id: 'fix_tour_1',
+            homeTeamId: 'nat_ind',
+            awayTeamId: 'nat_aus',
+            homeTeamName: 'India',
+            awayTeamName: 'Australia',
+            venue: 'Wankhede Stadium, Mumbai',
+            completed: false,
+            format: 'T20',
+            isInternational: true
+          }
+        },
+        {
+          id: 'cal_41_2',
+          dateStr: '2026-09-03',
+          dayNumber: 3,
+          month: 'September',
+          dayOfWeek: 'Thursday',
+          type: 'international',
+          matchFixture: {
+            id: 'fix_tour_2',
+            homeTeamId: 'nat_ind',
+            awayTeamId: 'nat_aus',
+            homeTeamName: 'India',
+            awayTeamName: 'Australia',
+            venue: 'Eden Gardens, Kolkata',
+            completed: false,
+            format: 'T20',
+            isInternational: true
+          }
+        },
+        {
+          id: 'cal_41_3',
+          dateStr: '2026-09-05',
+          dayNumber: 5,
+          month: 'September',
+          dayOfWeek: 'Saturday',
+          type: 'international',
+          matchFixture: {
+            id: 'fix_tour_3',
+            homeTeamId: 'nat_ind',
+            awayTeamId: 'nat_aus',
+            homeTeamName: 'India',
+            awayTeamName: 'Australia',
+            venue: 'M. Chinnaswamy Stadium, Bengaluru',
+            completed: false,
+            format: 'T20',
+            isInternational: true
+          }
+        }
+      ],
+      currentDateIndex: 0
+    };
+
+    const league41B: League = {
+      ...INITIAL_LEAGUES[1],
+      id: 'league_unrelated_domestic_41',
+      calendarDates: [
+        {
+          id: 'cal_dom_1',
+          dateStr: '2026-09-01',
+          dayNumber: 1,
+          month: 'September',
+          dayOfWeek: 'Tuesday',
+          type: 'rest'
+        },
+        {
+          id: 'cal_dom_2',
+          dateStr: '2026-09-02',
+          dayNumber: 2,
+          month: 'September',
+          dayOfWeek: 'Wednesday',
+          type: 'rest'
+        }
+      ],
+      currentDateIndex: 0
+    };
+
+    const finishedMatch41_1: MatchLiveState = {
+      id: 'fix_tour_1',
+      fixtureId: 'fix_tour_1',
+      leagueId: 't20i_bilateral',
+      format: 'T20',
+      status: 'finished',
+      homeTeam: {
+        id: 'nat_ind',
+        name: 'India',
+        shortName: 'IND',
+        logoEmoji: '🇮🇳',
+        primaryColor: '#0080FF',
+        secondaryColor: '#FF9933',
+        leagueId: 'intl',
+        city: 'Mumbai',
+        purseCr: 100,
+        rtmCards: 0,
+        captainId: 'p_ind1',
+        playingXIIds: [],
+        squad: [],
+        isUserTeam: true
+      },
+      awayTeam: {
+        id: 'nat_aus',
+        name: 'Australia',
+        shortName: 'AUS',
+        logoEmoji: '🇦🇺',
+        primaryColor: '#FFCD00',
+        secondaryColor: '#00843D',
+        leagueId: 'intl',
+        city: 'Melbourne',
+        purseCr: 100,
+        rtmCards: 0,
+        captainId: 'p_aus1',
+        playingXIIds: [],
+        squad: [],
+        isUserTeam: false
+      },
+      winnerTeamId: 'nat_ind',
+      resultText: 'India won by 6 wickets',
+      venue: 'Wankhede Stadium, Mumbai',
+      pitchType: 'Flat Belter',
+      weather: 'Clear Night',
+      currentInningsIndex: 2,
+      innings1: {
+        battingTeamId: 'nat_aus',
+        bowlingTeamId: 'nat_ind',
+        runs: 160,
+        wickets: 7,
+        overs: 20,
+        ballsCompleted: 120,
+        maxOvers: 20,
+        currentOverRuns: 0,
+        extras: { total: 3, wides: 2, noBalls: 0, byes: 0, legByes: 1 },
+        batters: [],
+        bowlers: [],
+        currentStrikerId: '',
+        currentNonStrikerId: '',
+        currentBowlerId: '',
+        ballHistory: [],
+        fallOfWickets: [],
+        overRuns: []
+      },
+      innings2: {
+        battingTeamId: 'nat_ind',
+        bowlingTeamId: 'nat_aus',
+        runs: 161,
+        wickets: 4,
+        overs: 18.2,
+        ballsCompleted: 110,
+        maxOvers: 20,
+        currentOverRuns: 0,
+        extras: { total: 1, wides: 1, noBalls: 0, byes: 0, legByes: 0 },
+        batters: [],
+        bowlers: [],
+        currentStrikerId: '',
+        currentNonStrikerId: '',
+        currentBowlerId: '',
+        ballHistory: [],
+        fallOfWickets: [],
+        overRuns: []
+      },
+      targetRuns: 161,
+      lastBallOutcome: null,
+      isBallInFlight: false,
+      reviewsRemaining: { home: 2, away: 2 },
+      activeDrsReview: null,
+      dlsState: null,
+      hasDew: false,
+      tacticalTrapAlert: null,
+      powerSurgeTaken: false,
+      powerSurgeOversLeft: 0,
+      bowlingTactics: {
+        length: 'good',
+        line: 'outside_off',
+        angle: 'over',
+        variation: 'Stock ball',
+        fielders: []
+      },
+      battingTactics: {
+        approach: 'balanced',
+        targetSide: 'all',
+        runningRisk: 'normal'
+      }
+    };
+
+    // 1. A valid fixture ID completes exactly its corresponding series match
+    const step1 = applyRecordCompletedInternationalMatchState({
+      finishedMatch: finishedMatch41_1,
+      didUserWin: true,
+      coachProfile: intlCoach41,
+      internationalSeries: initialSeries41,
+      leagues: [league41A, league41B],
+      currentLeagueId: league41A.id,
+      nations: INITIAL_NATIONS
+    });
+    assert.equal(step1.matchedFixtureId, 'fix_tour_1', 'REQ 41.1a: Matched fixture ID is exact fixture ID');
+    assert.equal(step1.internationalSeries.matches[0].completed, true, 'REQ 41.1b: Match 1 is completed');
+    assert.equal(step1.internationalSeries.matches[1].completed, false, 'REQ 41.1c: Match 2 remains uncompleted');
+    assert.equal(step1.leagues[0].calendarDates[0].matchFixture?.completed, true, 'REQ 41.1d: Calendar date 0 fixture completed');
+
+    // 2. An explicitly supplied unknown fixture ID cannot complete the first unfinished match
+    const unknownFixMatch: MatchLiveState = {
+      ...finishedMatch41_1,
+      id: 'completely_unknown_fixture_xyz',
+      fixtureId: 'completely_unknown_fixture_xyz'
+    };
+    const step2 = applyRecordCompletedInternationalMatchState({
+      finishedMatch: unknownFixMatch,
+      didUserWin: true,
+      coachProfile: intlCoach41,
+      internationalSeries: step1.internationalSeries,
+      leagues: step1.leagues,
+      currentLeagueId: league41A.id,
+      nations: step1.nations
+    });
+    assert.equal(step2.matchedFixtureId, null, 'REQ 41.2a: Unknown fixture ID returns null matchedFixtureId');
+    assert.equal(step2.internationalSeries.matches[1].completed, false, 'REQ 41.2b: Match 2 was NOT completed by unknown fixture ID');
+    assert.equal(step2.internationalSeries.seriesWins, step1.internationalSeries.seriesWins, 'REQ 41.2c: seriesWins unchanged on unknown fixture ID');
+    assert.deepEqual(step2.leagues, step1.leagues, 'REQ 41.2d: Leagues unchanged on unknown fixture ID');
+
+    // 3. A stale Match 1 callback cannot accidentally complete Match 2
+    const staleMatch1 = { ...finishedMatch41_1 }; // fixtureId: 'fix_tour_1'
+    const step3 = applyRecordCompletedInternationalMatchState({
+      finishedMatch: staleMatch1,
+      didUserWin: true,
+      coachProfile: intlCoach41,
+      internationalSeries: step1.internationalSeries, // Match 1 already completed
+      leagues: step1.leagues,
+      currentLeagueId: league41A.id,
+      nations: step1.nations
+    });
+    assert.equal(step3.internationalSeries.matches[1].completed, false, 'REQ 41.3a: Stale Match 1 callback did NOT complete Match 2');
+    assert.equal(step3.internationalSeries.seriesWins, 1, 'REQ 41.3b: seriesWins remains 1 (not incremented)');
+    assert.equal(step3.nations.find(n => n.id === 'nat_ind')?.ratingT20, step1.nations.find(n => n.id === 'nat_ind')?.ratingT20, 'REQ 41.3c: ICC rankings not duplicated on stale Match 1 callback');
+
+    // 4. Legacy completion without a fixture ID succeeds only when the intended match is uniquely identifiable
+    // First, complete Match 2 via valid fixtureId so exactly 1 uncompleted match remains
+    const finishedMatch41_2: MatchLiveState = {
+      ...finishedMatch41_1,
+      id: 'fix_tour_2',
+      fixtureId: 'fix_tour_2'
+    };
+    const step4_setup = applyRecordCompletedInternationalMatchState({
+      finishedMatch: finishedMatch41_2,
+      didUserWin: true,
+      coachProfile: intlCoach41,
+      internationalSeries: step1.internationalSeries,
+      leagues: step1.leagues,
+      currentLeagueId: league41A.id,
+      nations: step1.nations
+    });
+    assert.equal(step4_setup.internationalSeries.matches[1].completed, true, 'REQ 41.4a: Setup: Match 2 completed');
+
+    // Now only Match 3 is uncompleted. Supply legacy match without fixtureId:
+    const legacyFinishedMatch: MatchLiveState = {
+      ...finishedMatch41_1,
+      id: '',
+      fixtureId: undefined
+    };
+    const step4 = applyRecordCompletedInternationalMatchState({
+      finishedMatch: legacyFinishedMatch,
+      didUserWin: true,
+      coachProfile: intlCoach41,
+      internationalSeries: step4_setup.internationalSeries,
+      leagues: step4_setup.leagues,
+      currentLeagueId: league41A.id,
+      nations: step4_setup.nations
+    });
+    assert.equal(step4.internationalSeries.matches[2].completed, true, 'REQ 41.4b: Legacy completion with exactly 1 unfinished match completed Match 3');
+
+    // 5. Ambiguous team-based fallback fails without state mutation
+    // In step1, Matches 2 and 3 are BOTH unplayed. Supplying legacy match without fixtureId must be rejected!
+    const step5 = applyRecordCompletedInternationalMatchState({
+      finishedMatch: legacyFinishedMatch,
+      didUserWin: true,
+      coachProfile: intlCoach41,
+      internationalSeries: step1.internationalSeries, // Matches 2 and 3 both unfinished
+      leagues: step1.leagues,
+      currentLeagueId: league41A.id,
+      nations: step1.nations
+    });
+    assert.equal(step5.matchedFixtureId, null, 'REQ 41.5a: Ambiguous fallback rejected (matchedFixtureId is null)');
+    assert.equal(step5.internationalSeries.matches[1].completed, false, 'REQ 41.5b: Match 2 remains uncompleted');
+    assert.equal(step5.internationalSeries.matches[2].completed, false, 'REQ 41.5c: Match 3 remains uncompleted');
+
+    // 6. An already-completed series match repairs a missing calendar completion flag without duplicating statistics or results
+    const desyncedLeague: League = {
+      ...league41A,
+      calendarDates: [
+        {
+          ...league41A.calendarDates[0],
+          matchFixture: {
+            ...league41A.calendarDates[0].matchFixture!,
+            completed: false, // Calendar mistakenly marked uncompleted!
+            resultSummary: undefined
+          }
+        },
+        league41A.calendarDates[1],
+        league41A.calendarDates[2]
+      ]
+    };
+    const step6 = applyRecordCompletedInternationalMatchState({
+      finishedMatch: finishedMatch41_1,
+      didUserWin: true,
+      coachProfile: intlCoach41,
+      internationalSeries: step1.internationalSeries, // Match 1 completed in series
+      leagues: [desyncedLeague, league41B],
+      currentLeagueId: desyncedLeague.id,
+      nations: step1.nations
+    });
+    assert.equal(step6.leagues[0].calendarDates[0].matchFixture?.completed, true, 'REQ 41.6a: Calendar completion flag repaired');
+    assert.equal(step6.internationalSeries.seriesWins, step1.internationalSeries.seriesWins, 'REQ 41.6b: seriesWins not incremented during repair');
+    assert.equal(step6.nations.find(n => n.id === 'nat_ind')?.ratingT20, step1.nations.find(n => n.id === 'nat_ind')?.ratingT20, 'REQ 41.6c: Rankings not duplicated during repair');
+
+    // 7. Calendar reconciliation updates only the correct fixture and league
+    assert.deepEqual(step6.leagues[1], league41B, 'REQ 41.7a: Unrelated league was not mutated');
+    assert.equal(step6.leagues[0].calendarDates[1].matchFixture?.completed, false, 'REQ 41.7b: Match 2 in target league remains uncompleted');
+
+    // 8. Conflicting calendar results are handled safely
+    const conflictingLeague: League = {
+      ...league41A,
+      calendarDates: [
+        {
+          ...league41A.calendarDates[0],
+          matchFixture: {
+            ...league41A.calendarDates[0].matchFixture!,
+            homeTeamId: 'nat_eng',
+            awayTeamId: 'nat_rsa',
+            homeTeamName: 'England',
+            awayTeamName: 'South Africa',
+            completed: false,
+            resultSummary: 'Old Conflict'
+          }
+        }
+      ]
+    };
+    const step8 = applyRecordCompletedInternationalMatchState({
+      finishedMatch: finishedMatch41_1, // India vs Australia with fixtureId 'fix_tour_1'
+      didUserWin: true,
+      coachProfile: intlCoach41,
+      internationalSeries: initialSeries41,
+      leagues: [conflictingLeague],
+      currentLeagueId: conflictingLeague.id,
+      nations: INITIAL_NATIONS
+    });
+    assert.equal(step8.leagues[0].calendarDates[0].matchFixture?.completed, false, 'REQ 41.8a: Conflicting calendar fixture was not overwritten');
+    assert.equal(step8.leagues[0].calendarDates[0].matchFixture?.resultSummary, 'Old Conflict', 'REQ 41.8b: Existing summary preserved');
+
+    // 9. Repeated completion requests remain idempotent
+    const step9_call1 = applyRecordCompletedInternationalMatchState({
+      finishedMatch: finishedMatch41_1,
+      didUserWin: true,
+      coachProfile: intlCoach41,
+      internationalSeries: initialSeries41,
+      leagues: [league41A],
+      currentLeagueId: league41A.id,
+      nations: INITIAL_NATIONS
+    });
+    const step9_call2 = applyRecordCompletedInternationalMatchState({
+      finishedMatch: finishedMatch41_1,
+      didUserWin: true,
+      coachProfile: intlCoach41,
+      internationalSeries: step9_call1.internationalSeries,
+      leagues: step9_call1.leagues,
+      currentLeagueId: league41A.id,
+      nations: step9_call1.nations
+    });
+    assert.deepEqual(step9_call1.internationalSeries, step9_call2.internationalSeries, 'REQ 41.9a: Idempotent internationalSeries across repeated calls');
+    assert.deepEqual(step9_call1.nations, step9_call2.nations, 'REQ 41.9b: Idempotent nations rankings across repeated calls');
+
+    // 10. An invalid active league ID cannot advance "leagues[0]" or any other league
+    const step10 = applyAdvanceCalendarDayState({
+      leagues: [league41A, league41B],
+      currentLeagueId: 'completely_invalid_league_id_xyz',
+      teams: INITIAL_TEAMS,
+      players: INITIAL_PLAYERS,
+      coachProfile: intlCoach41,
+      nations: INITIAL_NATIONS,
+      careerPhase: 'international_series',
+      tournamentHonors: [],
+      careerBoardReview: null
+    });
+    assert.equal(step10.advanced, false, 'REQ 41.10a: Advancement failed safely on invalid currentLeagueId');
+    assert.equal(step10.blockedReason, 'invalid_or_unresolved_active_league', 'REQ 41.10b: Blocked reason reports invalid league');
+    assert.equal(step10.leagues?.[0]?.currentDateIndex, 0, 'REQ 41.10c: leagues[0] was NOT advanced');
+
+    // 11. Valid league resolution continues to work normally
+    const step11 = applyAdvanceCalendarDayState({
+      leagues: [league41A, league41B],
+      currentLeagueId: league41B.id,
+      teams: INITIAL_TEAMS,
+      players: INITIAL_PLAYERS,
+      coachProfile: intlCoach41,
+      nations: INITIAL_NATIONS,
+      careerPhase: 'international_series',
+      tournamentHonors: [],
+      careerBoardReview: null
+    });
+    assert.equal(step11.advanced, true, 'REQ 41.11a: Valid league resolved and advanced');
+    assert.equal(step11.leagues?.[1]?.currentDateIndex, 1, 'REQ 41.11b: Target league advanced to index 1');
+    assert.equal(step11.leagues?.[0]?.currentDateIndex, 0, 'REQ 41.11c: Untargeted league remain at index 0');
+
+    // 12. Save/load preserves fixture IDs, completion state, and authoritative results
+    const savePayload41 = JSON.stringify({
+      series: step1.internationalSeries,
+      league: step1.leagues[0],
+      nations: step1.nations
+    });
+    const loaded41 = JSON.parse(savePayload41);
+    assert.equal(loaded41.series.matches[0].fixtureId, 'fix_tour_1', 'REQ 41.12a: Loaded save preserves fixtureId');
+    assert.equal(loaded41.series.matches[0].completed, true, 'REQ 41.12b: Loaded save preserves completed state');
+    assert.equal(loaded41.league.calendarDates[0].matchFixture.completed, true, 'REQ 41.12c: Loaded save preserves calendar completed state');
+    assert.equal(loaded41.nations.find((n: any) => n.id === 'nat_ind').ratingT20, step1.nations.find(n => n.id === 'nat_ind')?.ratingT20, 'REQ 41.12d: Loaded save preserves ratingT20');
+  }
+
   console.log('✅ ALL Career Progression, Multi-League Recovery, International Series IDs, Transition Idempotency & Verified Defect Tests PASSED!');
-  return { passed: 291, total: 291 };
+  return { passed: 326, total: 326 };
 }
 
