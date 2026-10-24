@@ -5636,16 +5636,24 @@ export function applyRecordCompletedInternationalMatchState(params: {
     let targetMatchIdx = -1;
     if (explicitFixtureId) {
       // 1. Authoritative exact fixture ID resolution against series matches
-      targetMatchIdx = internationalSeries.matches.findIndex(
-        m =>
+      const matchedIndexes: number[] = [];
+      internationalSeries.matches.forEach((m, idx) => {
+        if (
           m &&
           (m.fixtureId === explicitFixtureId ||
             (internationalSeries.seriesId &&
               `intl_fix_${internationalSeries.seriesId}_${m.matchNumber}` === explicitFixtureId))
-      );
+        ) {
+          matchedIndexes.push(idx);
+        }
+      });
+
+      if (matchedIndexes.length === 1) {
+        targetMatchIdx = matchedIndexes[0];
+      }
 
       // 2. Authoritative fixture-mapping recovery path with strict series identity and participant verification
-      if (targetMatchIdx === -1 && internationalSeries.seriesId) {
+      if (targetMatchIdx === -1 && internationalSeries.seriesId && matchedIndexes.length === 0) {
         for (const league of leagues) {
           if (!league || !Array.isArray(league.calendarDates)) continue;
           for (const cd of league.calendarDates) {
@@ -5675,28 +5683,35 @@ export function applyRecordCompletedInternationalMatchState(params: {
               candFix.awayTeamName
             );
 
-            // c) Match number verification against series match
+            // c) Match number verification against series match (find by matchNumber, NOT array index!)
             const matchNum: number | undefined = (candFix as any).matchNumber || (candFix as any).seriesMatchNumber;
-            const isValidMatchNum: boolean =
-              typeof matchNum === 'number' &&
-              matchNum >= 1 &&
-              matchNum <= internationalSeries.matches.length;
+            const isValidMatchNum: boolean = typeof matchNum === 'number' && matchNum >= 1;
 
             if (isSeriesIdentical && isPairMatchingSeries && isValidMatchNum && typeof matchNum === 'number') {
-              const candidateSeriesMatch: InternationalSeriesMatch | undefined = internationalSeries.matches[matchNum - 1];
-              if (candidateSeriesMatch) {
+              const matchingSeriesMatches: { match: InternationalSeriesMatch; index: number }[] = [];
+              internationalSeries.matches.forEach((m, idx) => {
+                if (m && m.matchNumber === matchNum) {
+                  matchingSeriesMatches.push({ match: m, index: idx });
+                }
+              });
+
+              if (matchingSeriesMatches.length === 1) {
+                const { match: candidateSeriesMatch, index: candidateIndex } = matchingSeriesMatches[0];
                 const expectedCanonicalId = `intl_fix_${internationalSeries.seriesId}_${candidateSeriesMatch.matchNumber}`;
-                // Explicit fixture ID must be proven by matching series match fixtureId, canonical ID, or explicit calendar link.
-                // Missing fixtureId on candidateSeriesMatch must NEVER turn an arbitrary ID into an accepted match completion!
-                const isProvenMatch = Boolean(
+
+                const isDirectMatch = Boolean(
                   (candidateSeriesMatch.fixtureId && candidateSeriesMatch.fixtureId === explicitFixtureId) ||
-                    expectedCanonicalId === explicitFixtureId ||
-                    (candFix as any).expectedFixtureId === expectedCanonicalId ||
-                    (candFix as any).canonicalFixtureId === expectedCanonicalId
+                    expectedCanonicalId === explicitFixtureId
                 );
 
-                if (isProvenMatch) {
-                  targetMatchIdx = matchNum - 1;
+                const isExplicitCalendarLink = Boolean(
+                  candFix.id === explicitFixtureId &&
+                    ((candFix as any).expectedFixtureId === expectedCanonicalId ||
+                      (candFix as any).canonicalFixtureId === expectedCanonicalId)
+                );
+
+                if (isDirectMatch || isExplicitCalendarLink) {
+                  targetMatchIdx = candidateIndex;
                   break;
                 }
               }

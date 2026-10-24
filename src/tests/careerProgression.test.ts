@@ -6810,10 +6810,195 @@ export function runCareerProgressionTests() {
     // Board review threshold
     const reviewSat = buildDefaultBoardReview(2026, INITIAL_TEAMS[0], undefined, 1, true);
     assert.equal(reviewSat.isSatisfied, true, 'REQ 42.10f: Board review >= 60% satisfied');
+
+    // ==========================================================================
+    // SCENARIO 43: Phase 5.1 — Match-Number-to-Object Mapping & Strengthened Invariant Tests
+    // ==========================================================================
+    // 1. Reordered series matches: [match #2, match #1, match #3]
+    const reorderedSeries: InternationalSeriesState = {
+      ...step1.internationalSeries,
+      matches: [
+        { matchNumber: 2, format: 'T20', venue: 'MCG, Melbourne', city: 'Melbourne', completed: false, fixtureId: 'intl_fix_tour_ind_aus_2026_2' },
+        { matchNumber: 1, format: 'T20', venue: 'SCG, Sydney', city: 'Sydney', completed: false, fixtureId: 'intl_fix_tour_ind_aus_2026_1' },
+        { matchNumber: 3, format: 'T20', venue: 'Gabba, Brisbane', city: 'Brisbane', completed: false, fixtureId: 'intl_fix_tour_ind_aus_2026_3' }
+      ]
+    };
+    const match1Callback: MatchLiveState = {
+      ...finishedMatch41_1,
+      id: 'intl_fix_tour_ind_aus_2026_1',
+      fixtureId: 'intl_fix_tour_ind_aus_2026_1'
+    };
+    const step43_1 = applyRecordCompletedInternationalMatchState({
+      finishedMatch: match1Callback,
+      didUserWin: true,
+      coachProfile: intlCoach41,
+      internationalSeries: reorderedSeries,
+      leagues: step1.leagues,
+      currentLeagueId: step1.leagues[0].id,
+      nations: step1.nations
+    });
+    assert.equal(step43_1.matchedFixtureId, 'intl_fix_tour_ind_aus_2026_1', 'REQ 43.1a: Match 1 resolved correctly despite reordered array');
+    assert.equal(step43_1.internationalSeries.matches[1].completed, true, 'REQ 43.1b: Series match at index 1 (match #1) marked completed');
+    assert.equal(step43_1.internationalSeries.matches[0].completed, false, 'REQ 43.1c: Series match at index 0 (match #2) remains completed: false');
+
+    // 2. Nonsequential match numbers: [match #1, match #3, match #5]
+    const nonsequentialSeries: InternationalSeriesState = {
+      ...step1.internationalSeries,
+      matches: [
+        { matchNumber: 1, format: 'T20', venue: 'MCG', city: 'Melbourne', completed: false, fixtureId: 'intl_fix_tour_ind_aus_2026_1' },
+        { matchNumber: 3, format: 'T20', venue: 'SCG', city: 'Sydney', completed: false, fixtureId: 'intl_fix_tour_ind_aus_2026_3' },
+        { matchNumber: 5, format: 'T20', venue: 'Gabba', city: 'Brisbane', completed: false, fixtureId: 'intl_fix_tour_ind_aus_2026_5' }
+      ]
+    };
+    const leagueReqMatch2: League = {
+      ...step1.leagues[0],
+      calendarDates: [
+        {
+          dateStr: '2026-04-01',
+          dayOfWeek: 'WED',
+          dayNumber: 1,
+          month: 'Apr',
+          type: 'match',
+          matchFixture: {
+            id: 'unproven_nonseq_fix_2',
+            homeTeamId: 'nat_ind',
+            awayTeamId: 'nat_aus',
+            homeTeamName: 'India',
+            awayTeamName: 'Australia',
+            seriesId: 'tour_ind_aus_2026',
+            matchNumber: 2, // Requesting match #2 which does not exist in nonsequential series!
+            completed: false
+          } as any
+        }
+      ]
+    };
+    const snap43_2_Series = JSON.parse(JSON.stringify(nonsequentialSeries));
+    const snap43_2_Leagues = JSON.parse(JSON.stringify([leagueReqMatch2]));
+    const snap43_2_Nations = JSON.parse(JSON.stringify(step1.nations));
+
+    const step43_2 = applyRecordCompletedInternationalMatchState({
+      finishedMatch: { ...finishedMatch41_1, id: 'unproven_nonseq_fix_2', fixtureId: 'unproven_nonseq_fix_2' },
+      didUserWin: true,
+      coachProfile: intlCoach41,
+      internationalSeries: nonsequentialSeries,
+      leagues: [leagueReqMatch2],
+      currentLeagueId: leagueReqMatch2.id,
+      nations: step1.nations
+    });
+    assert.equal(step43_2.matchedFixtureId, null, 'REQ 43.2a: Requesting non-existent matchNumber 2 rejected');
+    assert.deepEqual(step43_2.internationalSeries, snap43_2_Series, 'REQ 43.2b: Series state completely unchanged after rejection');
+    assert.deepEqual(step43_2.leagues, snap43_2_Leagues, 'REQ 43.2c: Leagues state completely unchanged after rejection');
+    assert.deepEqual(step43_2.nations, snap43_2_Nations, 'REQ 43.2d: Nations state completely unchanged after rejection');
+
+    // 3. Duplicate match numbers in series: [match #1, match #1, match #2]
+    const duplicateMatchNumSeries: InternationalSeriesState = {
+      ...step1.internationalSeries,
+      matches: [
+        { matchNumber: 1, format: 'T20', venue: 'MCG', city: 'Melbourne', completed: false, fixtureId: 'intl_fix_tour_ind_aus_2026_1A' },
+        { matchNumber: 1, format: 'T20', venue: 'SCG', city: 'Sydney', completed: false, fixtureId: 'intl_fix_tour_ind_aus_2026_1B' },
+        { matchNumber: 2, format: 'T20', venue: 'Gabba', city: 'Brisbane', completed: false, fixtureId: 'intl_fix_tour_ind_aus_2026_2' }
+      ]
+    };
+    const leagueDupMatch1: League = {
+      ...step1.leagues[0],
+      calendarDates: [
+        {
+          dateStr: '2026-04-01',
+          dayOfWeek: 'WED',
+          dayNumber: 1,
+          month: 'Apr',
+          type: 'match',
+          matchFixture: {
+            id: 'dup_match_1_fix',
+            homeTeamId: 'nat_ind',
+            awayTeamId: 'nat_aus',
+            homeTeamName: 'India',
+            awayTeamName: 'Australia',
+            seriesId: 'tour_ind_aus_2026',
+            matchNumber: 1,
+            expectedFixtureId: 'intl_fix_tour_ind_aus_2026_1',
+            completed: false
+          } as any
+        }
+      ]
+    };
+    const snap43_3_Series = JSON.parse(JSON.stringify(duplicateMatchNumSeries));
+    const step43_3 = applyRecordCompletedInternationalMatchState({
+      finishedMatch: { ...finishedMatch41_1, id: 'dup_match_1_fix', fixtureId: 'dup_match_1_fix' },
+      didUserWin: true,
+      coachProfile: intlCoach41,
+      internationalSeries: duplicateMatchNumSeries,
+      leagues: [leagueDupMatch1],
+      currentLeagueId: leagueDupMatch1.id,
+      nations: step1.nations
+    });
+    assert.equal(step43_3.matchedFixtureId, null, 'REQ 43.3a: Ambiguous duplicate matchNumber 1 in series rejected');
+    assert.deepEqual(step43_3.internationalSeries, snap43_3_Series, 'REQ 43.3b: Series state completely unchanged after duplicate matchNumber rejection');
+
+    // 4. Calendar match number pointing to different series match
+    const leagueMisalignedNum: League = {
+      ...step1.leagues[0],
+      calendarDates: [
+        {
+          dateStr: '2026-04-01',
+          dayOfWeek: 'WED',
+          dayNumber: 1,
+          month: 'Apr',
+          type: 'match',
+          matchFixture: {
+            id: 'misaligned_num_fix',
+            homeTeamId: 'nat_ind',
+            awayTeamId: 'nat_aus',
+            homeTeamName: 'India',
+            awayTeamName: 'Australia',
+            seriesId: 'tour_ind_aus_2026',
+            matchNumber: 2, // Calendar fixture claims matchNumber 2
+            expectedFixtureId: 'intl_fix_tour_ind_aus_2026_1', // But expected ID is for match #1!
+            completed: false
+          } as any
+        }
+      ]
+    };
+    const snap43_4_Series = JSON.parse(JSON.stringify(step1.internationalSeries));
+    const step43_4 = applyRecordCompletedInternationalMatchState({
+      finishedMatch: { ...finishedMatch41_1, id: 'misaligned_num_fix', fixtureId: 'misaligned_num_fix' },
+      didUserWin: true,
+      coachProfile: intlCoach41,
+      internationalSeries: step1.internationalSeries,
+      leagues: [leagueMisalignedNum],
+      currentLeagueId: leagueMisalignedNum.id,
+      nations: step1.nations
+    });
+    assert.equal(step43_4.matchedFixtureId, null, 'REQ 43.4a: Misaligned matchNumber and expectedFixtureId rejected');
+    assert.deepEqual(step43_4.internationalSeries, snap43_4_Series, 'REQ 43.4b: Series state unchanged');
+
+    // 5. Full Idempotency Comparison between 1st and 2nd Submission
+    const stateAfter1stPass = applyRecordCompletedInternationalMatchState({
+      finishedMatch: finishedMatch41_1,
+      didUserWin: true,
+      coachProfile: intlCoach41,
+      internationalSeries: step1.internationalSeries,
+      leagues: step1.leagues,
+      currentLeagueId: step1.leagues[0].id,
+      nations: step1.nations
+    });
+    const stateAfter2ndPass = applyRecordCompletedInternationalMatchState({
+      finishedMatch: finishedMatch41_1,
+      didUserWin: true,
+      coachProfile: intlCoach41,
+      internationalSeries: stateAfter1stPass.internationalSeries,
+      leagues: stateAfter1stPass.leagues,
+      currentLeagueId: step1.leagues[0].id,
+      nations: stateAfter1stPass.nations
+    });
+    assert.deepEqual(stateAfter2ndPass.internationalSeries, stateAfter1stPass.internationalSeries, 'REQ 43.5a: Idempotent 2nd pass leaves internationalSeries strictly identical');
+    assert.deepEqual(stateAfter2ndPass.nations, stateAfter1stPass.nations, 'REQ 43.5b: Idempotent 2nd pass leaves nations strictly identical');
+    assert.deepEqual(stateAfter2ndPass.leagues, stateAfter1stPass.leagues, 'REQ 43.5c: Idempotent 2nd pass leaves leagues strictly identical');
+    assert.equal(stateAfter2ndPass.matchedFixtureId, stateAfter1stPass.matchedFixtureId, 'REQ 43.5d: Idempotent 2nd pass preserves matchedFixtureId');
   }
 
   console.log('✅ ALL Career Progression, Multi-League Recovery, International Series IDs, Transition Idempotency & Verified Defect Tests PASSED!');
-  return { passed: 350, total: 350 };
+  return { passedScenarios: 43, totalScenarios: 43 };
 }
 
 
