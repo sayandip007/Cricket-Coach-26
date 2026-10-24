@@ -6812,34 +6812,117 @@ export function runCareerProgressionTests() {
     assert.equal(reviewSat.isSatisfied, true, 'REQ 42.10f: Board review >= 60% satisfied');
 
     // ==========================================================================
-    // SCENARIO 43: Phase 5.1 — Match-Number-to-Object Mapping & Strengthened Invariant Tests
     // ==========================================================================
-    // 1. Reordered series matches: [match #2, match #1, match #3]
-    const reorderedSeries: InternationalSeriesState = {
+    // SCENARIO 43: Phase 5.2 — Calendar-Linked Recovery with Reordered Series Matches
+    // ==========================================================================
+    // 1. Positive Test: Reordered series matches WITHOUT direct fixtureId properties: [match #2, match #1, match #3]
+    const reorderedSeriesNoFixIds: InternationalSeriesState = {
       ...step1.internationalSeries,
       matches: [
-        { matchNumber: 2, format: 'T20', venue: 'MCG, Melbourne', city: 'Melbourne', completed: false, fixtureId: 'intl_fix_tour_ind_aus_2026_2' },
-        { matchNumber: 1, format: 'T20', venue: 'SCG, Sydney', city: 'Sydney', completed: false, fixtureId: 'intl_fix_tour_ind_aus_2026_1' },
-        { matchNumber: 3, format: 'T20', venue: 'Gabba, Brisbane', city: 'Brisbane', completed: false, fixtureId: 'intl_fix_tour_ind_aus_2026_3' }
+        { matchNumber: 2, format: 'T20', venue: 'MCG, Melbourne', city: 'Melbourne', completed: false, fixtureId: undefined },
+        { matchNumber: 1, format: 'T20', venue: 'SCG, Sydney', city: 'Sydney', completed: false, fixtureId: undefined },
+        { matchNumber: 3, format: 'T20', venue: 'Gabba, Brisbane', city: 'Brisbane', completed: false, fixtureId: undefined }
       ]
     };
-    const match1Callback: MatchLiveState = {
-      ...finishedMatch41_1,
-      id: 'intl_fix_tour_ind_aus_2026_1',
-      fixtureId: 'intl_fix_tour_ind_aus_2026_1'
+
+    // Calendar entry carries a custom ID that Step 1 cannot resolve directly
+    const customCalendarId = 'custom_cal_recovery_reordered_fix_1';
+    const leagueReorderedRecovery: League = {
+      ...step1.leagues[0],
+      calendarDates: [
+        {
+          dateStr: '2026-04-01',
+          dayOfWeek: 'WED',
+          dayNumber: 1,
+          month: 'Apr',
+          type: 'match',
+          matchFixture: {
+            id: customCalendarId,
+            homeTeamId: 'nat_ind',
+            awayTeamId: 'nat_aus',
+            homeTeamName: 'India',
+            awayTeamName: 'Australia',
+            seriesId: 'tour_ind_aus_2026',
+            matchNumber: 1,
+            expectedFixtureId: 'intl_fix_tour_ind_aus_2026_1', // Mapped explicitly to canonical ID of match #1
+            isInternational: true,
+            completed: false
+          } as any
+        }
+      ]
     };
+
+    const reorderedRecoveryCallback: MatchLiveState = {
+      ...finishedMatch41_1,
+      id: customCalendarId,
+      fixtureId: customCalendarId
+    };
+
     const step43_1 = applyRecordCompletedInternationalMatchState({
-      finishedMatch: match1Callback,
+      finishedMatch: reorderedRecoveryCallback,
       didUserWin: true,
       coachProfile: intlCoach41,
-      internationalSeries: reorderedSeries,
-      leagues: step1.leagues,
-      currentLeagueId: step1.leagues[0].id,
+      internationalSeries: reorderedSeriesNoFixIds,
+      leagues: [leagueReorderedRecovery],
+      currentLeagueId: leagueReorderedRecovery.id,
       nations: step1.nations
     });
-    assert.equal(step43_1.matchedFixtureId, 'intl_fix_tour_ind_aus_2026_1', 'REQ 43.1a: Match 1 resolved correctly despite reordered array');
-    assert.equal(step43_1.internationalSeries.matches[1].completed, true, 'REQ 43.1b: Series match at index 1 (match #1) marked completed');
-    assert.equal(step43_1.internationalSeries.matches[0].completed, false, 'REQ 43.1c: Series match at index 0 (match #2) remains completed: false');
+
+    // Assertions for positive calendar-linked recovery with reordered matches:
+    assert.equal(step43_1.matchedFixtureId, customCalendarId, 'REQ 43.1a: Resolved via calendar recovery path using custom calendar ID');
+    assert.equal(step43_1.internationalSeries.matches[1].completed, true, 'REQ 43.1b: Match #1 (located at array index 1) marked completed');
+    assert.equal(step43_1.internationalSeries.matches[0].completed, false, 'REQ 43.1c: Match #2 (located at array index 0) remains completed: false');
+    assert.equal(step43_1.internationalSeries.matches[2].completed, false, 'REQ 43.1d: Match #3 (located at array index 2) remains completed: false');
+    assert.equal(step43_1.internationalSeries.seriesWins, reorderedSeriesNoFixIds.seriesWins + 1, 'REQ 43.1e: Active series wins incremented');
+    assert.equal(step43_1.leagues[0].calendarDates[0].matchFixture?.completed, true, 'REQ 43.1f: Target calendar fixture marked completed: true');
+    assert.ok((step43_1.nations.find(n => n.id === 'nat_ind')?.ratingT20 || 0) > (step1.nations.find(n => n.id === 'nat_ind')?.ratingT20 || 0), 'REQ 43.1g: Winner ICC rating updated');
+
+    // Negative Control: Misleading expected canonical ID in calendar mapping
+    const leagueBadRecoveryMapping: League = {
+      ...step1.leagues[0],
+      calendarDates: [
+        {
+          dateStr: '2026-04-01',
+          dayOfWeek: 'WED',
+          dayNumber: 1,
+          month: 'Apr',
+          type: 'match',
+          matchFixture: {
+            id: 'custom_cal_bad_mapping_fix_1',
+            homeTeamId: 'nat_ind',
+            awayTeamId: 'nat_aus',
+            homeTeamName: 'India',
+            awayTeamName: 'Australia',
+            seriesId: 'tour_ind_aus_2026',
+            matchNumber: 1,
+            expectedFixtureId: 'intl_fix_tour_ind_aus_2026_999', // Invalid mapping!
+            completed: false
+          } as any
+        }
+      ]
+    };
+
+    const snapNegSeries = {
+      ...reorderedSeriesNoFixIds,
+      matches: reorderedSeriesNoFixIds.matches.map(m => ({ ...m }))
+    };
+    const snapNegLeagues = JSON.parse(JSON.stringify([leagueBadRecoveryMapping]));
+    const snapNegNations = JSON.parse(JSON.stringify(step1.nations));
+
+    const step43_1_neg = applyRecordCompletedInternationalMatchState({
+      finishedMatch: { ...finishedMatch41_1, id: 'custom_cal_bad_mapping_fix_1', fixtureId: 'custom_cal_bad_mapping_fix_1' },
+      didUserWin: true,
+      coachProfile: intlCoach41,
+      internationalSeries: reorderedSeriesNoFixIds,
+      leagues: [leagueBadRecoveryMapping],
+      currentLeagueId: leagueBadRecoveryMapping.id,
+      nations: step1.nations
+    });
+
+    assert.equal(step43_1_neg.matchedFixtureId, null, 'REQ 43.1_neg_a: Bad recovery mapping rejected safely');
+    assert.deepEqual(step43_1_neg.internationalSeries, snapNegSeries, 'REQ 43.1_neg_b: Series state completely unmutated');
+    assert.deepEqual(step43_1_neg.leagues, snapNegLeagues, 'REQ 43.1_neg_c: Leagues state completely unmutated');
+    assert.deepEqual(step43_1_neg.nations, snapNegNations, 'REQ 43.1_neg_d: Nations state completely unmutated');
 
     // 2. Nonsequential match numbers: [match #1, match #3, match #5]
     const nonsequentialSeries: InternationalSeriesState = {
