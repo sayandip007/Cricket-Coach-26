@@ -7248,10 +7248,95 @@ export function runCareerProgressionTests() {
     assert.deepEqual(step45_res.internationalSeries, snapDupSeries, 'REQ 45.1b: Active series matches completely unmutated');
     assert.deepEqual(step45_res.leagues, snapDupLeagues, 'REQ 45.1c: Calendar fixtures in both leagues remain completed: false');
     assert.deepEqual(step45_res.nations, snapDupNations, 'REQ 45.1d: ICC rankings completely unmutated');
+
+    // ==========================================================================
+    // SCENARIO 46: Phase 5.5 — Verify Duplicate Custom Fixture IDs Before Candidate Filtering
+    // ==========================================================================
+    const sharedDupConflictMetaId = 'dup_custom_id_conflicting_meta_999';
+
+    const leagueA_validMeta: League = {
+      ...step1.leagues[0],
+      id: 'league_A_valid_meta_tour',
+      calendarDates: [
+        {
+          dateStr: '2026-04-01',
+          dayOfWeek: 'WED',
+          dayNumber: 1,
+          month: 'Apr',
+          type: 'match',
+          matchFixture: {
+            id: sharedDupConflictMetaId,
+            homeTeamId: 'nat_ind',
+            awayTeamId: 'nat_aus',
+            homeTeamName: 'India',
+            awayTeamName: 'Australia',
+            seriesId: 'tour_ind_aus_2026',
+            matchNumber: 1,
+            expectedFixtureId: 'intl_fix_tour_ind_aus_2026_1', // Valid active series mapping
+            isInternational: true,
+            completed: false
+          } as any
+        }
+      ]
+    };
+
+    const leagueB_conflictingMeta: League = {
+      ...step1.leagues[0],
+      id: 'league_B_conflict_meta_tour',
+      calendarDates: [
+        {
+          dateStr: '2026-04-01',
+          dayOfWeek: 'WED',
+          dayNumber: 1,
+          month: 'Apr',
+          type: 'match',
+          matchFixture: {
+            id: sharedDupConflictMetaId,
+            homeTeamId: 'nat_eng',
+            awayTeamId: 'nat_nz',
+            homeTeamName: 'England',
+            awayTeamName: 'New Zealand',
+            seriesId: 'tour_eng_nz_2026', // Conflicting series ID and teams
+            matchNumber: 1,
+            expectedFixtureId: 'intl_fix_tour_eng_nz_2026_1',
+            isInternational: true,
+            completed: false
+          } as any
+        }
+      ]
+    };
+
+    const duplicateConflictMetaCallback: MatchLiveState = {
+      ...finishedMatch41_1,
+      id: sharedDupConflictMetaId,
+      fixtureId: sharedDupConflictMetaId
+    };
+
+    const snap46Series = {
+      ...reorderedSeriesNoFixIds,
+      matches: reorderedSeriesNoFixIds.matches.map(m => ({ ...m }))
+    };
+    const snap46Leagues = JSON.parse(JSON.stringify([leagueA_validMeta, leagueB_conflictingMeta]));
+    const snap46Nations = JSON.parse(JSON.stringify(step1.nations));
+
+    const step46_res = applyRecordCompletedInternationalMatchState({
+      finishedMatch: duplicateConflictMetaCallback,
+      didUserWin: true,
+      coachProfile: intlCoach41,
+      internationalSeries: reorderedSeriesNoFixIds,
+      leagues: [leagueA_validMeta, leagueB_conflictingMeta],
+      currentLeagueId: leagueA_validMeta.id,
+      nations: step1.nations
+    });
+
+    assert.equal(step46_res.matchedFixtureId, null, 'REQ 46.1a: Duplicate custom fixture ID verified and rejected before candidate filtering can silently ignore conflicting entry');
+    assert.deepEqual(step46_res.internationalSeries, snap46Series, 'REQ 46.1b: Active series matches completely unmutated');
+    assert.deepEqual(step46_res.leagues, snap46Leagues, 'REQ 46.1c: Calendar fixtures in both leagues remain completed: false');
+    assert.deepEqual(step46_res.nations, snap46Nations, 'REQ 46.1d: ICC rankings completely unmutated');
   }
 
   console.log('✅ ALL Career Progression, Multi-League Recovery, International Series IDs, Transition Idempotency & Verified Defect Tests PASSED!');
-  return { passedScenarios: 45, totalScenarios: 45 };
+  return { passedScenarios: 46, totalScenarios: 46 };
 }
 
 
