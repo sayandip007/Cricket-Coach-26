@@ -1682,6 +1682,7 @@ export function resolveActiveLeagueForRecovery(params: {
   coachProfile: CoachProfile;
   careerBoardReview: CareerBoardReview | null;
   expectedSeasonYear?: number;
+  internationalSeries?: InternationalSeriesState;
 }): {
   league: League | null;
   resolvedLeagueId: string | null;
@@ -1690,7 +1691,7 @@ export function resolveActiveLeagueForRecovery(params: {
   candidateLeagueIds: string[];
   error?: string;
 } {
-  const { leagues, currentLeagueId, coachProfile, careerBoardReview, expectedSeasonYear } = params;
+  const { leagues, currentLeagueId, coachProfile, careerBoardReview, expectedSeasonYear, internationalSeries } = params;
   const validLeagues = Array.isArray(leagues)
     ? leagues.filter(
         (l): l is League =>
@@ -1699,7 +1700,8 @@ export function resolveActiveLeagueForRecovery(params: {
               typeof l === 'object' &&
               typeof l.id === 'string' &&
               l.id.trim().length > 0 &&
-              Array.isArray(l.standings)
+              Array.isArray(l.standings) &&
+              Array.isArray(l.calendarDates)
           )
       )
     : [];
@@ -1755,12 +1757,47 @@ export function resolveActiveLeagueForRecovery(params: {
     return inStandings || inTeams || inFixtures;
   };
 
-  // Require an explicit team or competition link — never default to all leagues when team context is missing
+  // Require an explicit team, competition, or international series/nation link — never default to all leagues when context is missing
   let candidates: League[] = [];
   if (activeTeamId) {
     candidates = validLeagues.filter(l => leagueContainsTeam(l, activeTeamId));
   } else if (careerBoardReview?.competitionId) {
     candidates = validLeagues.filter(l => l.id === careerBoardReview.competitionId);
+  }
+
+  if (candidates.length === 0 && safeProfile.nationalTeamId) {
+    const natId = String(safeProfile.nationalTeamId).trim();
+    const seriesId =
+      internationalSeries && typeof internationalSeries.seriesId === 'string'
+        ? internationalSeries.seriesId.trim()
+        : '';
+    const intlMatched = validLeagues.filter(
+      l =>
+        Array.isArray(l.calendarDates) &&
+        l.calendarDates.some(cd => {
+          if (!cd) return false;
+          if (seriesId && typeof cd.id === 'string' && cd.id.startsWith(`cal_intl_${seriesId}_`)) {
+            return true;
+          }
+          const mf = cd.matchFixture;
+          if (mf && mf.isInternational) {
+            if (seriesId && typeof mf.id === 'string' && mf.id.startsWith(`intl_${seriesId}_`)) {
+              return true;
+            }
+            if (mf.homeTeamId === natId || mf.awayTeamId === natId) {
+              return true;
+            }
+          }
+          return (cd.internationalMatches || []).some(
+            im => im && (im.homeTeamId === natId || im.awayTeamId === natId)
+          );
+        })
+    );
+    if (intlMatched.length > 0) {
+      candidates = intlMatched;
+    } else if (validLeagues.length === 1) {
+      candidates = [validLeagues[0]];
+    }
   }
 
   // Narrow by expectedSeasonYear first when explicitly provided (e.g., from a save slot's seasonName)
@@ -2752,7 +2789,8 @@ export function validateAndRecoverCareerState(params: {
     currentLeagueId,
     coachProfile: safeCoachProfile,
     careerBoardReview: safeReview,
-    expectedSeasonYear
+    expectedSeasonYear,
+    internationalSeries: resolvedIntlSeries
   });
 
   if (leagueResolution.recoveredByPolicy) {
@@ -5060,11 +5098,24 @@ export function applyAdvanceCalendarToNextTourState(
     return unchanged(`Coached nation "${coachProfile.nationalTeamId}" was not found.`);
   }
 
-  const activeLeague = Array.isArray(leagues)
-    ? leagues.find(l => l && l.id === currentLeagueId) || leagues[0]
-    : undefined;
-  if (!activeLeague || !Array.isArray(activeLeague.calendarDates)) {
-    return unchanged('No active league calendar available.');
+  if (!Array.isArray(leagues) || leagues.length === 0) {
+    return unchanged('No leagues available in career state.');
+  }
+
+  if (typeof currentLeagueId !== 'string' || currentLeagueId.trim().length === 0) {
+    return unchanged('Missing or invalid currentLeagueId for international tour scheduling.');
+  }
+
+  const requestedLeagueId = currentLeagueId.trim();
+  const activeLeague = leagues.find(
+    (l): l is League =>
+      Boolean(l && typeof l === 'object' && typeof l.id === 'string' && l.id.trim() === requestedLeagueId)
+  );
+  if (!activeLeague) {
+    return unchanged(`Active league "${currentLeagueId}" was not found.`);
+  }
+  if (!Array.isArray(activeLeague.calendarDates) || !Array.isArray(activeLeague.standings)) {
+    return unchanged(`Active league "${activeLeague.id}" has a missing or malformed calendar or standings array.`);
   }
 
   const enforcedCoachProfile = enforceSingleCareerInvariant(
@@ -6351,7 +6402,7 @@ export function applyAdvanceCalendarToNextTourState(
   }));
 
   const updatedLeagues = leagues.map(l =>
-    l.id === activeLeague.id
+    l && typeof l === 'object' && l.id === activeLeague.id
       ? {
           ...l,
           standings: workingStandings,

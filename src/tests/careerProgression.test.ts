@@ -4092,10 +4092,345 @@ export function runCareerProgressionTests() {
     'REQ 36.4h: Repeated invocation does not double-count reconciled seriesWins'
   );
 
+  // ==========================================================================
+  // REQ 37: STRICT LEAGUE RESOLUTION IN applyAdvanceCalendarToNextTourState (9 REGRESSION TESTS)
+  // ==========================================================================
+  const req37Series = buildInitialSeriesForNation(indNation, baseNations, ausNation.id, 1);
+  const req37CoachProfile: CoachProfile = {
+    ...INITIAL_COACH_PROFILE,
+    clubTeamId: null as unknown as string,
+    nationalTeamId: indNation.id,
+    activeCareerMode: 'international'
+  };
+
+  const req37FirstLeague: League = {
+    ...baseLeagues[0],
+    id: 'league_first_decoy',
+    name: 'First League Decoy',
+    seasonYear: 2026,
+    seasonName: '2026',
+    currentDateIndex: 0,
+    calendarDates: [
+      {
+        id: 'cal_decoy_rest_1',
+        dateStr: '2026-06-01',
+        dayOfWeek: 'MON',
+        dayNumber: 1,
+        month: 'JUN',
+        isHome: true,
+        type: 'rest'
+      }
+    ]
+  };
+
+  const req37SecondLeague: League = {
+    ...baseLeagues[0],
+    id: 'league_second_target',
+    name: 'Second League Target',
+    seasonYear: 2026,
+    seasonName: '2026',
+    currentDateIndex: 0,
+    calendarDates: [
+      {
+        id: 'cal_target_rest_1',
+        dateStr: '2026-07-01',
+        dayOfWeek: 'WED',
+        dayNumber: 1,
+        month: 'JUL',
+        isHome: true,
+        type: 'rest'
+      }
+    ]
+  };
+
+  // 37.1: A valid league ID schedules or advances the tour successfully (even when it is NOT leagues[0])
+  const res37_1 = applyAdvanceCalendarToNextTourState({
+    leagues: [req37FirstLeague, req37SecondLeague],
+    currentLeagueId: 'league_second_target',
+    coachProfile: req37CoachProfile,
+    nations: baseNations,
+    teams: baseTeams,
+    players: freshPlayers,
+    internationalSeries: req37Series,
+    completedMatchesHistory: [],
+    careerPhase: 'international_series'
+  });
+  assert.equal(res37_1.success, true, 'REQ 37.1a: Valid currentLeagueId (index 1) schedules and advances tour successfully');
+  assert.equal(
+    res37_1.leagues[1].calendarDates.filter(d => d.id?.startsWith(`cal_intl_${req37Series.seriesId}_`)).length,
+    req37Series.matches.length,
+    'REQ 37.1b: Tour fixtures are scheduled into the requested valid league (league_second_target)'
+  );
+  assert.equal(
+    res37_1.leagues[0].calendarDates.length,
+    1,
+    'REQ 37.1c: First league (league_first_decoy) is untouched when second league is targeted'
+  );
+  assert.equal(res37_1.targetDateIndex, 1, 'REQ 37.1d: Calendar advances to Match 1 in the target league');
+
+  // 37.2: An invalid league ID fails clearly even when another league exists
+  const multiLeaguesForInvalidTest = [
+    JSON.parse(JSON.stringify(req37FirstLeague)) as League,
+    JSON.parse(JSON.stringify(req37SecondLeague)) as League
+  ];
+  const beforeInvalidLeaguesJson = JSON.stringify(multiLeaguesForInvalidTest);
+  const beforeInvalidSeriesJson = JSON.stringify(req37Series);
+  const beforeInvalidProfileJson = JSON.stringify(req37CoachProfile);
+
+  const res37_2 = applyAdvanceCalendarToNextTourState({
+    leagues: multiLeaguesForInvalidTest,
+    currentLeagueId: 'invalid_nonexistent_league_id',
+    coachProfile: req37CoachProfile,
+    nations: baseNations,
+    teams: baseTeams,
+    players: freshPlayers,
+    internationalSeries: req37Series,
+    completedMatchesHistory: [],
+    careerPhase: 'international_series'
+  });
+  assert.equal(res37_2.success, false, 'REQ 37.2a: Invalid currentLeagueId returns success: false even when valid leagues exist');
+  assert.ok(
+    res37_2.message.includes('invalid_nonexistent_league_id') && /not found/i.test(res37_2.message),
+    'REQ 37.2b: Returns a clear diagnostic failure message naming the invalid league ID'
+  );
+
+  // Also verify missing / whitespace currentLeagueId fails clearly
+  const res37_2_blank = applyAdvanceCalendarToNextTourState({
+    leagues: multiLeaguesForInvalidTest,
+    currentLeagueId: '   ',
+    coachProfile: req37CoachProfile,
+    nations: baseNations,
+    teams: baseTeams,
+    players: freshPlayers,
+    internationalSeries: req37Series,
+    completedMatchesHistory: [],
+    careerPhase: 'international_series'
+  });
+  assert.equal(res37_2_blank.success, false, 'REQ 37.2c: Blank currentLeagueId fails clearly');
+  assert.ok(/missing or invalid currentLeagueId/i.test(res37_2_blank.message), 'REQ 37.2d: Diagnostic message reports missing/invalid currentLeagueId');
+
+  // 37.3: An invalid league ID does not silently use the first league (leagues[0])
+  assert.equal(
+    res37_2.leagues[0].calendarDates.some(d => d && (d.type === 'international' || d.id?.startsWith('cal_intl_'))),
+    false,
+    'REQ 37.3a: Invalid currentLeagueId never writes international fixtures into leagues[0]'
+  );
+  assert.equal(
+    res37_2.leagues[0].currentDateIndex,
+    0,
+    'REQ 37.3b: leagues[0].currentDateIndex is not advanced on invalid currentLeagueId'
+  );
+
+  // 37.4: An empty leagues array fails safely
+  const res37_4 = applyAdvanceCalendarToNextTourState({
+    leagues: [],
+    currentLeagueId: 'pt20',
+    coachProfile: req37CoachProfile,
+    nations: baseNations,
+    teams: baseTeams,
+    players: freshPlayers,
+    internationalSeries: req37Series,
+    completedMatchesHistory: [],
+    careerPhase: 'international_series'
+  });
+  assert.equal(res37_4.success, false, 'REQ 37.4a: Empty leagues array returns success: false safely');
+  assert.ok(/no leagues available/i.test(res37_4.message), 'REQ 37.4b: Empty leagues array returns clear diagnostic message');
+  assert.deepEqual(res37_4.leagues, [], 'REQ 37.4c: Empty leagues array remains empty');
+  assert.equal(res37_4.targetDateIndex, 0, 'REQ 37.4d: Empty leagues array returns targetDateIndex = 0');
+
+  // 37.5: A null or malformed league entry is handled safely
+  const malformedLeagueEntry = {
+    id: 'malformed_league',
+    name: 'Malformed League',
+    calendarDates: null,
+    standings: null
+  } as unknown as League;
+
+  // 37.5a: Array containing only null and malformed entries fails safely without throwing
+  const res37_5a = applyAdvanceCalendarToNextTourState({
+    leagues: [null as unknown as League, undefined as unknown as League, malformedLeagueEntry],
+    currentLeagueId: 'malformed_league',
+    coachProfile: req37CoachProfile,
+    nations: baseNations,
+    teams: baseTeams,
+    players: freshPlayers,
+    internationalSeries: req37Series,
+    completedMatchesHistory: [],
+    careerPhase: 'international_series'
+  });
+  assert.equal(res37_5a.success, false, 'REQ 37.5a: Targeting a malformed league entry without calendarDates/standings fails safely');
+  assert.ok(/missing or malformed calendar/i.test(res37_5a.message), 'REQ 37.5b: Diagnostic message identifies malformed league calendar/standings');
+
+  // 37.5c: Array containing a null entry at index 0 alongside a valid league at index 1 succeeds when targeting the valid league
+  const res37_5c = applyAdvanceCalendarToNextTourState({
+    leagues: [null as unknown as League, JSON.parse(JSON.stringify(req37SecondLeague)) as League],
+    currentLeagueId: 'league_second_target',
+    coachProfile: req37CoachProfile,
+    nations: baseNations,
+    teams: baseTeams,
+    players: freshPlayers,
+    internationalSeries: req37Series,
+    completedMatchesHistory: [],
+    careerPhase: 'international_series'
+  });
+  assert.equal(res37_5c.success, true, 'REQ 37.5c: Null entry at leagues[0] does not crash when currentLeagueId matches valid leagues[1]');
+  assert.equal(res37_5c.leagues[0], null, 'REQ 37.5d: Null entry at leagues[0] is preserved without throwing');
+  assert.equal(
+    res37_5c.leagues[1].calendarDates.filter(d => d.id?.startsWith(`cal_intl_${req37Series.seriesId}_`)).length,
+    req37Series.matches.length,
+    'REQ 37.5e: Valid league at index 1 receives scheduled tour fixtures cleanly'
+  );
+
+  // 37.6: Invalid league resolution leaves all league calendars unchanged
+  assert.equal(
+    JSON.stringify(res37_2.leagues),
+    beforeInvalidLeaguesJson,
+    'REQ 37.6a: Returned leagues array on invalid league resolution is byte-for-byte identical to input'
+  );
+  assert.equal(
+    JSON.stringify(multiLeaguesForInvalidTest),
+    beforeInvalidLeaguesJson,
+    'REQ 37.6b: Input leagues array is not mutated in-place on invalid league resolution'
+  );
+
+  // 37.7: Invalid league resolution does not mutate the international series or career state
+  assert.equal(
+    JSON.stringify(res37_2.internationalSeries),
+    beforeInvalidSeriesJson,
+    'REQ 37.7a: International series state is completely unchanged on invalid league resolution'
+  );
+  assert.equal(
+    JSON.stringify(res37_2.coachProfile),
+    beforeInvalidProfileJson,
+    'REQ 37.7b: Coach profile (activeCareerMode, nationalTeamId, completedInternationalSeriesIds) is unchanged'
+  );
+  assert.equal(
+    res37_2.careerPhase,
+    'international_series',
+    'REQ 37.7c: Career phase remains unchanged on invalid league resolution'
+  );
+  assert.equal(
+    res37_2.daysAdvanced,
+    0,
+    'REQ 37.7d: daysAdvanced is 0 on invalid league resolution'
+  );
+  assert.equal(
+    res37_2.targetDateIndex,
+    0,
+    'REQ 37.7e: targetDateIndex is 0 on invalid league resolution'
+  );
+
+  // 37.8: A valid legacy save still works through the explicit recovery mechanism before calling applyAdvanceCalendarToNextTourState
+  const legacyIntlSaveLeague: League = {
+    ...JSON.parse(JSON.stringify(req37SecondLeague)),
+    id: 'league_legacy_recovered_2026'
+  };
+  const explicitRecovery = validateAndRecoverCareerState({
+    rawPhase: 'international_series',
+    coachProfile: req37CoachProfile,
+    teams: baseTeams,
+    leagues: [legacyIntlSaveLeague],
+    currentLeagueId: 'legacy_stale_missing_league_id', // invalid in legacy save
+    nations: baseNations,
+    nationalSquadIds: indEligiblePlayers.slice(0, 15).map(p => p.id),
+    careerBoardReview: null,
+    players: freshPlayers,
+    internationalSeries: req37Series
+  });
+  assert.equal(
+    explicitRecovery.resolvedLeagueId,
+    'league_legacy_recovered_2026',
+    'REQ 37.8a: Explicit recovery mechanism resolves the unique valid league for a legacy save'
+  );
+  assert.equal(
+    explicitRecovery.requiresLeagueSelection,
+    false,
+    'REQ 37.8b: Explicit recovery succeeds without requiring manual disambiguation when unique valid league exists'
+  );
+
+  const res37_8 = applyAdvanceCalendarToNextTourState({
+    leagues: [legacyIntlSaveLeague],
+    currentLeagueId: explicitRecovery.resolvedLeagueId!,
+    coachProfile: explicitRecovery.coachProfile,
+    nations: baseNations,
+    teams: baseTeams,
+    players: freshPlayers,
+    internationalSeries: explicitRecovery.internationalSeries || req37Series,
+    completedMatchesHistory: [],
+    careerPhase: explicitRecovery.careerPhase
+  });
+  assert.equal(
+    res37_8.success,
+    true,
+    'REQ 37.8c: Calling applyAdvanceCalendarToNextTourState with explicitly recovered leagueId succeeds'
+  );
+  assert.equal(
+    res37_8.leagues[0].calendarDates.filter(d => d.id?.startsWith(`cal_intl_${req37Series.seriesId}_`)).length,
+    req37Series.matches.length,
+    'REQ 37.8d: Explicitly recovered legacy save schedules all tour fixtures cleanly'
+  );
+
+  // 37.9: Repeated failed requests do not produce duplicate fixtures or unintended calendar advancement
+  let rollingLeagues = [
+    JSON.parse(JSON.stringify(req37FirstLeague)) as League,
+    JSON.parse(JSON.stringify(req37SecondLeague)) as League
+  ];
+  let rollingSeries = JSON.parse(JSON.stringify(req37Series)) as InternationalSeriesState;
+  let rollingProfile = JSON.parse(JSON.stringify(req37CoachProfile)) as CoachProfile;
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const failedAttempt = applyAdvanceCalendarToNextTourState({
+      leagues: rollingLeagues,
+      currentLeagueId: `invalid_league_attempt_${attempt}`,
+      coachProfile: rollingProfile,
+      nations: baseNations,
+      teams: baseTeams,
+      players: freshPlayers,
+      internationalSeries: rollingSeries,
+      completedMatchesHistory: [],
+      careerPhase: 'international_series'
+    });
+    assert.equal(failedAttempt.success, false, `REQ 37.9a (attempt ${attempt}): Invalid league request fails`);
+    rollingLeagues = failedAttempt.leagues;
+    rollingSeries = failedAttempt.internationalSeries;
+    rollingProfile = failedAttempt.coachProfile;
+  }
+
+  assert.equal(
+    JSON.stringify(rollingLeagues),
+    beforeInvalidLeaguesJson,
+    'REQ 37.9b: 3 repeated failed requests produce 0 duplicate fixtures and 0 calendar advancements across all leagues'
+  );
+  assert.equal(
+    JSON.stringify(rollingSeries),
+    beforeInvalidSeriesJson,
+    'REQ 37.9c: 3 repeated failed requests leave internationalSeries untouched'
+  );
+
+  // Subsequent valid request after repeated failed requests schedules exactly 1 set of tour fixtures
+  const validAfterFailures = applyAdvanceCalendarToNextTourState({
+    leagues: rollingLeagues,
+    currentLeagueId: 'league_second_target',
+    coachProfile: rollingProfile,
+    nations: baseNations,
+    teams: baseTeams,
+    players: freshPlayers,
+    internationalSeries: rollingSeries,
+    completedMatchesHistory: [],
+    careerPhase: 'international_series'
+  });
+  assert.equal(validAfterFailures.success, true, 'REQ 37.9d: Valid request after repeated failed requests succeeds cleanly');
+  assert.equal(
+    validAfterFailures.leagues[1].calendarDates.filter(d => d.id?.startsWith(`cal_intl_${req37Series.seriesId}_`)).length,
+    req37Series.matches.length,
+    'REQ 37.9e: Exactly 1 set of tour fixtures is scheduled after recovery from failed requests'
+  );
+  assert.equal(
+    validAfterFailures.leagues[0].calendarDates.length,
+    1,
+    'REQ 37.9f: First league remains untouched'
+  );
+
   console.log('✅ ALL Career Progression, Multi-League Recovery, International Series IDs, Transition Idempotency & Verified Defect Tests PASSED!');
-  return { passed: 195, total: 195 };
+  return { passed: 204, total: 204 };
 }
-
-
-
-
