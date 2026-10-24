@@ -5644,23 +5644,51 @@ export function applyRecordCompletedInternationalMatchState(params: {
               `intl_fix_${internationalSeries.seriesId}_${m.matchNumber}` === explicitFixtureId))
       );
 
-      // 2. Authoritative fixture-mapping recovery path: check leagues calendar metadata
-      if (targetMatchIdx === -1) {
+      // 2. Authoritative fixture-mapping recovery path with strict series identity and participant verification
+      if (targetMatchIdx === -1 && internationalSeries.seriesId) {
         for (const league of leagues) {
           if (!league || !Array.isArray(league.calendarDates)) continue;
           for (const cd of league.calendarDates) {
             if (!cd) continue;
-            const candMf = cd.matchFixture?.id === explicitFixtureId ? cd.matchFixture : null;
-            const candIm = Array.isArray(cd.internationalMatches)
-              ? cd.internationalMatches.find(im => im && im.id === explicitFixtureId)
+            const candMf: CalendarMatchFixture | null = cd.matchFixture?.id === explicitFixtureId ? cd.matchFixture : null;
+            const candIm: CalendarMatchFixture | null = Array.isArray(cd.internationalMatches)
+              ? (cd.internationalMatches.find(im => im && im.id === explicitFixtureId) as CalendarMatchFixture | undefined) || null
               : null;
-            const candFix = candMf || candIm;
-            if (candFix) {
-              const matchNum = (candFix as any).matchNumber || (candFix as any).seriesMatchNumber;
+            const candFix: CalendarMatchFixture | null = candMf || candIm;
+            if (!candFix) continue;
+
+            // Strict Verification:
+            // a) Series identity must match active international series
+            const fixSeriesId: string | undefined =
+              (candFix as any).seriesId ||
+              (candFix as any).competitionId ||
+              (typeof cd.id === 'string' && cd.id.startsWith('cal_intl_') ? cd.id.split('_')[2] : undefined);
+            const isSeriesIdentical: boolean = Boolean(
+              fixSeriesId && fixSeriesId === internationalSeries.seriesId
+            );
+
+            // b) Participants must match active international series nations
+            const isPairMatchingSeries: boolean = doesPairMatchFinishedTeams(
+              candFix.homeTeamId,
+              candFix.awayTeamId,
+              candFix.homeTeamName,
+              candFix.awayTeamName
+            );
+
+            // c) Match number verification against series match
+            const matchNum: number | undefined = (candFix as any).matchNumber || (candFix as any).seriesMatchNumber;
+            const isValidMatchNum: boolean =
+              typeof matchNum === 'number' &&
+              matchNum >= 1 &&
+              matchNum <= internationalSeries.matches.length;
+
+            if (isSeriesIdentical && isPairMatchingSeries && isValidMatchNum && typeof matchNum === 'number') {
+              const candidateSeriesMatch: InternationalSeriesMatch | undefined = internationalSeries.matches[matchNum - 1];
               if (
-                typeof matchNum === 'number' &&
-                matchNum >= 1 &&
-                matchNum <= internationalSeries.matches.length
+                candidateSeriesMatch &&
+                (candidateSeriesMatch.fixtureId === explicitFixtureId ||
+                  `intl_fix_${internationalSeries.seriesId}_${candidateSeriesMatch.matchNumber}` === explicitFixtureId ||
+                  !candidateSeriesMatch.fixtureId)
               ) {
                 targetMatchIdx = matchNum - 1;
                 break;

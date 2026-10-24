@@ -6434,9 +6434,69 @@ export function runCareerProgressionTests() {
     assert.equal(loaded41.series.matches[0].completed, true, 'REQ 41.12b: Loaded save preserves completed state');
     assert.equal(loaded41.league.calendarDates[0].matchFixture.completed, true, 'REQ 41.12c: Loaded save preserves calendar completed state');
     assert.equal(loaded41.nations.find((n: any) => n.id === 'nat_ind').ratingT20, step1.nations.find(n => n.id === 'nat_ind')?.ratingT20, 'REQ 41.12d: Loaded save preserves ratingT20');
+
+    // 13. An unrelated league contains the supplied fixture ID with the same matchNumber as an unfinished international series match
+    const unrelatedLeagueWithOverlap: League = {
+      ...INITIAL_LEAGUES[1],
+      id: 'league_domestic_overlap_41',
+      calendarDates: [
+        {
+          id: 'cal_overlap_1',
+          dateStr: '2026-09-01',
+          dayNumber: 1,
+          month: 'September',
+          dayOfWeek: 'Tuesday',
+          type: 'match',
+          matchFixture: {
+            id: 'unrelated_overlap_fixture_101',
+            homeTeamId: 'team_mum',
+            awayTeamId: 'team_kol',
+            homeTeamName: 'Mumbai Lions',
+            awayTeamName: 'Kolkata Knights',
+            venue: 'Wankhede Stadium, Mumbai',
+            completed: false,
+            format: 'T20',
+            isInternational: false,
+            matchNumber: 2
+          } as any
+        }
+      ],
+      currentDateIndex: 0
+    };
+    const overlapMatchCallback: MatchLiveState = {
+      ...finishedMatch41_1,
+      id: 'unrelated_overlap_fixture_101',
+      fixtureId: 'unrelated_overlap_fixture_101',
+      leagueId: 'league_domestic_overlap_41',
+      homeTeam: {
+        ...finishedMatch41_1.homeTeam,
+        id: 'team_mum',
+        name: 'Mumbai Lions'
+      },
+      awayTeam: {
+        ...finishedMatch41_1.awayTeam,
+        id: 'team_kol',
+        name: 'Kolkata Knights'
+      }
+    };
+    const step13 = applyRecordCompletedInternationalMatchState({
+      finishedMatch: overlapMatchCallback,
+      didUserWin: true,
+      coachProfile: intlCoach41,
+      internationalSeries: step1.internationalSeries, // Match 2 is unfinished with matchNumber: 2
+      leagues: [step1.leagues[0], unrelatedLeagueWithOverlap],
+      currentLeagueId: step1.leagues[0].id,
+      nations: step1.nations
+    });
+    assert.equal(step13.matchedFixtureId, null, 'REQ 41.13a: Callback for unrelated fixture ID with overlapping matchNumber rejected');
+    assert.equal(step13.internationalSeries.matches[1].completed, false, 'REQ 41.13b: Unfinished active international series match remains completed: false');
+    assert.equal(step13.internationalSeries.seriesWins, step1.internationalSeries.seriesWins, 'REQ 41.13c: Active series wins unchanged');
+    assert.equal(step13.leagues[0].calendarDates[1].matchFixture?.completed, false, 'REQ 41.13d: Active series calendar fixture remains completed: false');
+    assert.equal(step13.leagues[1].calendarDates[0].matchFixture?.completed, false, 'REQ 41.13e: Unrelated domestic league calendar fixture unmutated');
   }
 
   console.log('✅ ALL Career Progression, Multi-League Recovery, International Series IDs, Transition Idempotency & Verified Defect Tests PASSED!');
-  return { passed: 326, total: 326 };
+  return { passed: 331, total: 331 };
 }
+
 
