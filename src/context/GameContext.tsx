@@ -5493,6 +5493,16 @@ export function resolveEffectiveFixtureSeriesIdentity(
       ? candFix.competitionId.trim()
       : undefined;
 
+  const rawLeagueId: string | undefined =
+    typeof candFix.leagueId === 'string' && candFix.leagueId.trim() !== ''
+      ? candFix.leagueId.trim()
+      : undefined;
+
+  const rawSeriesName: string | undefined =
+    typeof candFix.seriesName === 'string' && candFix.seriesName.trim() !== ''
+      ? candFix.seriesName.trim()
+      : undefined;
+
   const competitionSeriesId: string | undefined =
     rawCompId && !genericCompTags.has(rawCompId.toLowerCase()) ? rawCompId : undefined;
 
@@ -5509,12 +5519,42 @@ export function resolveEffectiveFixtureSeriesIdentity(
     }
   }
 
+  const seriesNameLower = rawSeriesName ? rawSeriesName.toLowerCase() : '';
+  const seriesNameMentionsWtc =
+    seriesNameLower.includes('wtc') || seriesNameLower.includes('world test championship');
+  const seriesNameMentionsBilateral =
+    seriesNameLower.includes('bilateral') ||
+    seriesNameLower.includes('intl_fix_') ||
+    seriesNameLower.includes('cal_intl_');
+
+  const hasExplicitWtcIdentity =
+    (rawSeriesId !== undefined && ['wtc', 'wtc_test'].includes(rawSeriesId.toLowerCase())) ||
+    (rawCompId !== undefined && ['wtc', 'wtc_test'].includes(rawCompId.toLowerCase())) ||
+    (rawLeagueId !== undefined && ['wtc', 'wtc_test'].includes(rawLeagueId.toLowerCase()));
+
+  const hasExplicitNonWtcIdentity =
+    (rawSeriesId !== undefined && !['wtc', 'wtc_test'].includes(rawSeriesId.toLowerCase())) ||
+    (rawCompId !== undefined && !['wtc', 'wtc_test'].includes(rawCompId.toLowerCase())) ||
+    (rawLeagueId !== undefined && !['wtc', 'wtc_test', 'intl'].includes(rawLeagueId.toLowerCase())) ||
+    (calIntlSeriesId !== undefined && !['wtc', 'wtc_test'].includes(calIntlSeriesId.toLowerCase()));
+
+  if (
+    (seriesNameMentionsWtc && (hasExplicitNonWtcIdentity || seriesNameMentionsBilateral)) ||
+    (hasExplicitWtcIdentity && hasExplicitNonWtcIdentity) ||
+    (hasExplicitWtcIdentity && rawSeriesName !== undefined && (!seriesNameMentionsWtc || seriesNameMentionsBilateral))
+  ) {
+    return { isConflicted: true };
+  }
+
   const presentIdentities: string[] = [];
   if (rawSeriesId) presentIdentities.push(rawSeriesId);
   if (competitionSeriesId) presentIdentities.push(competitionSeriesId);
   if (calIntlSeriesId) presentIdentities.push(calIntlSeriesId);
 
   if (presentIdentities.length === 0) {
+    if (seriesNameMentionsWtc && !seriesNameMentionsBilateral) {
+      return { seriesId: 'wtc_test', isConflicted: false };
+    }
     return { isConflicted: false };
   }
 
@@ -5834,15 +5874,20 @@ export function applyRecordCompletedInternationalMatchState(params: {
           !(cd.id || '').trim().startsWith('wtc_') &&
           !(mf.id || '').trim().startsWith('wtc_') &&
           !(imList[0].id || '').trim().startsWith('wtc_') &&
+          (!internationalSeries?.wtcFixtureId ||
+            ((mf.id || '').trim() !== internationalSeries.wtcFixtureId.trim() &&
+              (imList[0].id || '').trim() !== internationalSeries.wtcFixtureId.trim())) &&
           (mf === imList[0] ||
             (!(mf as any).seriesId &&
               !(mf as any).competitionId &&
               !(mf as any).leagueId &&
+              !(mf as any).seriesName &&
               !(mf as any).expectedFixtureId &&
               !(mf as any).canonicalFixtureId &&
               !(imList[0] as any).seriesId &&
               !(imList[0] as any).competitionId &&
               !(imList[0] as any).leagueId &&
+              !(imList[0] as any).seriesName &&
               !(imList[0] as any).expectedFixtureId &&
               !(imList[0] as any).canonicalFixtureId &&
               (mf.id || '').trim() === (imList[0].id || '').trim() &&
@@ -5939,6 +5984,28 @@ export function applyRecordCompletedInternationalMatchState(params: {
     if (rawCallbackSeriesId && !['wtc', 'wtc_test'].includes(rawCallbackSeriesId.toLowerCase())) {
       return unchanged('identity_conflict');
     }
+    const rawCallbackSeriesName =
+      typeof (finishedMatch as any).seriesName === 'string'
+        ? (finishedMatch as any).seriesName.trim().toLowerCase()
+        : '';
+    if (rawCallbackSeriesName) {
+      const cbSeriesNameMentionsWtc =
+        rawCallbackSeriesName.includes('wtc') ||
+        rawCallbackSeriesName.includes('world test championship');
+      const cbSeriesNameHasNonWtcMarker =
+        rawCallbackSeriesName.includes('bilateral') ||
+        rawCallbackSeriesName.includes('intl_fix_') ||
+        rawCallbackSeriesName.includes('cal_intl_') ||
+        Boolean(
+          activeSeriesIdForWtcCheck &&
+            activeSeriesIdForWtcCheck.toLowerCase() !== 'wtc' &&
+            activeSeriesIdForWtcCheck.toLowerCase() !== 'wtc_test' &&
+            rawCallbackSeriesName.includes(activeSeriesIdForWtcCheck.toLowerCase())
+        );
+      if (!cbSeriesNameMentionsWtc || cbSeriesNameHasNonWtcMarker) {
+        return unchanged('identity_conflict');
+      }
+    }
     const rawCallbackMatchNumber = (finishedMatch as any).matchNumber;
     if (
       rawCallbackMatchNumber !== undefined &&
@@ -5996,7 +6063,13 @@ export function applyRecordCompletedInternationalMatchState(params: {
     const defaultWtcOppName = userNat.name === 'Australia' ? 'England' : 'Australia';
     const defaultWtcOppNat = resolveInternationalMatchParticipant(defaultWtcOppName, nations);
 
-    const isWtcCalendarEntry = (e: CollectedCalendarFixtureEntry): boolean => {
+    const authoritativeSeriesWtcId =
+      typeof internationalSeries.wtcFixtureId === 'string' &&
+      internationalSeries.wtcFixtureId.trim() !== ''
+        ? internationalSeries.wtcFixtureId.trim()
+        : undefined;
+
+    const hasWtcCalendarMarker = (e: CollectedCalendarFixtureEntry): boolean => {
       const rawComp =
         typeof (e.fixture as any).competitionId === 'string'
           ? (e.fixture as any).competitionId.trim().toLowerCase()
@@ -6014,6 +6087,7 @@ export function applyRecordCompletedInternationalMatchState(params: {
           ? (e.fixture as any).seriesName.trim().toLowerCase()
           : '';
       return (
+        Boolean(authoritativeSeriesWtcId && e.fixtureId === authoritativeSeriesWtcId) ||
         e.fixtureId.startsWith('wtc_') ||
         Boolean(e.calendarDateId && e.calendarDateId.startsWith('wtc_')) ||
         rawComp === 'wtc' ||
@@ -6040,15 +6114,33 @@ export function applyRecordCompletedInternationalMatchState(params: {
         typeof (e.fixture as any).seriesId === 'string'
           ? (e.fixture as any).seriesId.trim().toLowerCase()
           : '';
+      const rawSeriesName =
+        typeof (e.fixture as any).seriesName === 'string'
+          ? (e.fixture as any).seriesName.trim().toLowerCase()
+          : '';
       const rawFormat =
         typeof (e.fixture as any).format === 'string'
           ? (e.fixture as any).format.trim().toUpperCase()
           : '';
+      const seriesNameMentionsWtc =
+        rawSeriesName.includes('wtc') || rawSeriesName.includes('world test championship');
+      const seriesNameHasNonWtcMarker =
+        rawSeriesName.includes('bilateral') ||
+        rawSeriesName.includes('intl_fix_') ||
+        rawSeriesName.includes('cal_intl_') ||
+        Boolean(
+          activeSeriesIdForWtcCheck &&
+            activeSeriesIdForWtcCheck.toLowerCase() !== 'wtc' &&
+            activeSeriesIdForWtcCheck.toLowerCase() !== 'wtc_test' &&
+            rawSeriesName.includes(activeSeriesIdForWtcCheck.toLowerCase())
+        );
+
       if (e.isSeriesConflicted) return true;
       if (rawFormat && rawFormat !== 'TEST') return true;
       if (rawComp && rawComp !== 'wtc' && rawComp !== 'wtc_test') return true;
       if (rawLeague && rawLeague !== 'wtc' && rawLeague !== 'wtc_test' && rawLeague !== 'intl') return true;
       if (rawSeries && rawSeries !== 'wtc' && rawSeries !== 'wtc_test') return true;
+      if (rawSeriesName && (!seriesNameMentionsWtc || seriesNameHasNonWtcMarker)) return true;
       if (
         e.effectiveSeriesId &&
         e.effectiveSeriesId.toLowerCase() !== 'wtc' &&
@@ -6076,11 +6168,9 @@ export function applyRecordCompletedInternationalMatchState(params: {
       return false;
     };
 
-    const authoritativeSeriesWtcId =
-      typeof internationalSeries.wtcFixtureId === 'string' &&
-      internationalSeries.wtcFixtureId.trim() !== ''
-        ? internationalSeries.wtcFixtureId.trim()
-        : undefined;
+    const isWtcCalendarEntry = (e: CollectedCalendarFixtureEntry): boolean => {
+      return hasWtcCalendarMarker(e) && !isCalendarEntryWtcConflicted(e);
+    };
 
     let resolvedWtcFixtureId: string | null = explicitFixtureId;
 
@@ -6136,10 +6226,10 @@ export function applyRecordCompletedInternationalMatchState(params: {
         if (currentLeagueId && calEntry.leagueId !== currentLeagueId) {
           return unchanged('not_found');
         }
-        const activeLeagueWtcEntries = allCalendarEntries.filter(
-          e => (!currentLeagueId || e.leagueId === currentLeagueId) && isWtcCalendarEntry(e)
+        const activeLeagueWtcCandidates = allCalendarEntries.filter(
+          e => (!currentLeagueId || e.leagueId === currentLeagueId) && hasWtcCalendarMarker(e)
         );
-        for (const wtcEntry of activeLeagueWtcEntries) {
+        for (const wtcEntry of activeLeagueWtcCandidates) {
           if (isCalendarEntryWtcConflicted(wtcEntry)) {
             return unchanged('identity_conflict');
           }
@@ -6148,11 +6238,11 @@ export function applyRecordCompletedInternationalMatchState(params: {
       } else {
         // matchingIdCalendarEntries.length === 0:
         // If any WTC fixture is scheduled on the calendar, an unrecognized explicitFixtureId does not belong to it
-        const allWtcCalendarEntries = allCalendarEntries.filter(isWtcCalendarEntry);
-        if (allWtcCalendarEntries.some(isCalendarEntryWtcConflicted)) {
+        const allWtcCalendarCandidates = allCalendarEntries.filter(hasWtcCalendarMarker);
+        if (allWtcCalendarCandidates.some(isCalendarEntryWtcConflicted)) {
           return unchanged('identity_conflict');
         }
-        if (allWtcCalendarEntries.length > 0) {
+        if (allWtcCalendarCandidates.length > 0) {
           return unchanged('not_found');
         }
 
@@ -6202,14 +6292,15 @@ export function applyRecordCompletedInternationalMatchState(params: {
       if (homeNat.id !== userNat.id && awayNat.id !== userNat.id) {
         return unchanged('not_found');
       }
-      const activeLeagueWtcEntries = allCalendarEntries.filter(
-        e => (!currentLeagueId || e.leagueId === currentLeagueId) && isWtcCalendarEntry(e)
+      const activeLeagueWtcCandidates = allCalendarEntries.filter(
+        e => (!currentLeagueId || e.leagueId === currentLeagueId) && hasWtcCalendarMarker(e)
       );
-      for (const entry of activeLeagueWtcEntries) {
-        if (isCalendarEntryWtcConflicted(entry) || !entry.participantsMatch) {
+      for (const entry of activeLeagueWtcCandidates) {
+        if (!isWtcCalendarEntry(entry) || isCalendarEntryWtcConflicted(entry) || !entry.participantsMatch) {
           return unchanged('identity_conflict');
         }
       }
+      const activeLeagueWtcEntries = activeLeagueWtcCandidates.filter(isWtcCalendarEntry);
       if (activeLeagueWtcEntries.length > 1) {
         return unchanged('ambiguous');
       }
@@ -6230,7 +6321,7 @@ export function applyRecordCompletedInternationalMatchState(params: {
         }
         resolvedWtcFixtureId = calEntry.fixtureId || authoritativeSeriesWtcId || null;
       } else {
-        if (allCalendarEntries.some(isWtcCalendarEntry)) {
+        if (allCalendarEntries.some(hasWtcCalendarMarker)) {
           return unchanged('not_found');
         }
         const matchOppNat = homeNat.id === userNat.id ? awayNat : homeNat;

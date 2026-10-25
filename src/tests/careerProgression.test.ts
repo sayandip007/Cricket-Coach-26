@@ -10190,6 +10190,333 @@ export function runCareerProgressionTests() {
       assert.deepEqual(afterReloadRepeat.players, serializedReloaded.players, 'WTC-7: Post-reload players state unchanged');
       assert.deepEqual(afterReloadRepeat.teams, serializedReloaded.teams, 'WTC-7: Post-reload teams state unchanged');
     });
+
+    runMatrixCase(
+      'WTC-8',
+      'Consistent seriesName validation: valid consistent metadata, WTC seriesName with bilateral competitionId or conflicting seriesId, and missing optional metadata with authoritative wtcFixtureId',
+      () => {
+        // 8a: Valid WTC entry with consistent metadata (including seriesName, competitionId, seriesId, leagueId)
+        {
+          const { basePlayers, baseTeams, wtcSeries, baseNations, wtcFinishedMatch, wtcLeague, wtcFixId } =
+            buildWtcMatrixBaseState();
+          const consistentLeague: League = {
+            ...wtcLeague,
+            calendarDates: [
+              {
+                ...wtcLeague.calendarDates[0],
+                matchFixture: {
+                  ...wtcLeague.calendarDates[0].matchFixture!,
+                  id: wtcFixId,
+                  competitionId: 'wtc_test',
+                  leagueId: 'wtc_test',
+                  seriesId: 'wtc_test',
+                  seriesName: 'ICC World Test Championship Final',
+                  format: 'TEST'
+                } as any
+              }
+            ]
+          };
+          const res8a = applyRecordCompletedInternationalMatchState({
+            finishedMatch: {
+              ...wtcFinishedMatch,
+              competitionId: 'wtc_test',
+              seriesId: 'wtc_test',
+              seriesName: 'ICC World Test Championship Final'
+            } as any,
+            didUserWin: true,
+            coachProfile: intlCoach41,
+            internationalSeries: wtcSeries,
+            leagues: [consistentLeague],
+            currentLeagueId: consistentLeague.id,
+            nations: baseNations,
+            players: basePlayers,
+            teams: baseTeams
+          });
+          assert.equal(res8a.resolutionStatus, 'resolved', 'WTC-8a: Valid WTC entry with consistent metadata resolves');
+          assert.equal(res8a.matchedFixtureId, wtcFixId, 'WTC-8a: matchedFixtureId matches wtcFixId');
+          assert.equal(res8a.internationalSeries.wtcTestCompleted, true, 'WTC-8a: wtcTestCompleted set to true');
+          assert.equal(res8a.leagues[0].calendarDates[0].matchFixture?.completed, true, 'WTC-8a: Calendar fixture completed');
+        }
+
+        // 8b: Series name mentioning WTC while competitionId identifies a bilateral competition
+        {
+          const { basePlayers, baseTeams, wtcSeries, baseNations, wtcFinishedMatch, wtcLeague } =
+            buildWtcMatrixBaseState();
+          const customFixId = 'custom_intl_wtc_named_1';
+          const customSeries: InternationalSeriesState = {
+            ...wtcSeries,
+            wtcFixtureId: customFixId
+          };
+          const calWithWtcNameAndBilateralComp: League = {
+            ...wtcLeague,
+            calendarDates: [
+              {
+                id: 'cal_date_wtc_8b',
+                dateStr: '2026-06-15',
+                dayOfWeek: 'MON',
+                dayNumber: 15,
+                month: 'Jun',
+                type: 'international',
+                matchFixture: {
+                  id: customFixId,
+                  homeTeamId: 'nat_ind',
+                  awayTeamId: 'nat_aus',
+                  homeTeamName: 'India',
+                  awayTeamName: 'Australia',
+                  seriesName: 'ICC World Test Championship',
+                  competitionId: 'bilateral_series',
+                  format: 'TEST',
+                  isInternational: true,
+                  completed: false
+                } as any
+              }
+            ]
+          };
+          const snapS = JSON.parse(JSON.stringify(customSeries));
+          const snapL = JSON.parse(JSON.stringify([calWithWtcNameAndBilateralComp]));
+          const snapN = JSON.parse(JSON.stringify(baseNations));
+          const snapP = JSON.parse(JSON.stringify(basePlayers));
+          const snapT = JSON.parse(JSON.stringify(baseTeams));
+
+          // Calendar entry has WTC seriesName + bilateral competitionId
+          const resCalConflict = applyRecordCompletedInternationalMatchState({
+            finishedMatch: {
+              ...wtcFinishedMatch,
+              id: customFixId,
+              fixtureId: customFixId,
+              leagueId: 'wtc_test',
+              competitionId: 'wtc_test',
+              seriesName: 'ICC World Test Championship'
+            } as any,
+            didUserWin: true,
+            coachProfile: intlCoach41,
+            internationalSeries: customSeries,
+            leagues: [calWithWtcNameAndBilateralComp],
+            currentLeagueId: calWithWtcNameAndBilateralComp.id,
+            nations: baseNations,
+            players: basePlayers,
+            teams: baseTeams
+          });
+          assertFullStateUnchangedOnRejection(
+            'WTC-8b (calendar entry)',
+            resCalConflict,
+            'identity_conflict',
+            snapS,
+            snapL,
+            snapN,
+            snapP,
+            snapT
+          );
+
+          // Callback itself has WTC seriesName + bilateral competitionId
+          const snapDefaultS = JSON.parse(JSON.stringify(wtcSeries));
+          const snapDefaultL = JSON.parse(JSON.stringify([wtcLeague]));
+          const resCbConflict = applyRecordCompletedInternationalMatchState({
+            finishedMatch: {
+              ...wtcFinishedMatch,
+              leagueId: 'intl',
+              competitionId: 'bilateral_series',
+              seriesName: 'ICC World Test Championship'
+            } as any,
+            didUserWin: true,
+            coachProfile: intlCoach41,
+            internationalSeries: wtcSeries,
+            leagues: [wtcLeague],
+            currentLeagueId: wtcLeague.id,
+            nations: baseNations,
+            players: basePlayers,
+            teams: baseTeams
+          });
+          assertFullStateUnchangedOnRejection(
+            'WTC-8b (callback)',
+            resCbConflict,
+            'identity_conflict',
+            snapDefaultS,
+            snapDefaultL,
+            snapN,
+            snapP,
+            snapT
+          );
+        }
+
+        // 8c: Series name mentioning WTC while seriesId identifies a different competition
+        {
+          const { basePlayers, baseTeams, wtcSeries, baseNations, wtcFinishedMatch, wtcLeague } =
+            buildWtcMatrixBaseState();
+          const customFixId = 'custom_intl_wtc_named_2';
+          const customSeries: InternationalSeriesState = {
+            ...wtcSeries,
+            wtcFixtureId: customFixId
+          };
+          const calWithWtcNameAndOtherSeriesId: League = {
+            ...wtcLeague,
+            calendarDates: [
+              {
+                id: 'cal_date_wtc_8c',
+                dateStr: '2026-06-15',
+                dayOfWeek: 'MON',
+                dayNumber: 15,
+                month: 'Jun',
+                type: 'international',
+                matchFixture: {
+                  id: customFixId,
+                  homeTeamId: 'nat_ind',
+                  awayTeamId: 'nat_aus',
+                  homeTeamName: 'India',
+                  awayTeamName: 'Australia',
+                  seriesName: 'WTC Test Series',
+                  seriesId: 'tour_ind_aus_2026',
+                  format: 'TEST',
+                  isInternational: true,
+                  completed: false
+                } as any
+              }
+            ]
+          };
+          const snapS = JSON.parse(JSON.stringify(customSeries));
+          const snapL = JSON.parse(JSON.stringify([calWithWtcNameAndOtherSeriesId]));
+          const snapN = JSON.parse(JSON.stringify(baseNations));
+          const snapP = JSON.parse(JSON.stringify(basePlayers));
+          const snapT = JSON.parse(JSON.stringify(baseTeams));
+
+          // Calendar entry has WTC seriesName + non-WTC seriesId
+          const resCalSeriesConflict = applyRecordCompletedInternationalMatchState({
+            finishedMatch: {
+              ...wtcFinishedMatch,
+              id: customFixId,
+              fixtureId: customFixId,
+              leagueId: 'wtc_test',
+              competitionId: 'wtc_test',
+              seriesName: 'WTC Test Series'
+            } as any,
+            didUserWin: true,
+            coachProfile: intlCoach41,
+            internationalSeries: customSeries,
+            leagues: [calWithWtcNameAndOtherSeriesId],
+            currentLeagueId: calWithWtcNameAndOtherSeriesId.id,
+            nations: baseNations,
+            players: basePlayers,
+            teams: baseTeams
+          });
+          assertFullStateUnchangedOnRejection(
+            'WTC-8c (calendar entry)',
+            resCalSeriesConflict,
+            'identity_conflict',
+            snapS,
+            snapL,
+            snapN,
+            snapP,
+            snapT
+          );
+
+          // Callback itself has WTC seriesName + non-WTC seriesId
+          const snapDefaultS = JSON.parse(JSON.stringify(wtcSeries));
+          const snapDefaultL = JSON.parse(JSON.stringify([wtcLeague]));
+          const resCbSeriesConflict = applyRecordCompletedInternationalMatchState({
+            finishedMatch: {
+              ...wtcFinishedMatch,
+              leagueId: 'intl',
+              competitionId: undefined,
+              seriesId: 'tour_ind_aus_2026',
+              seriesName: 'WTC Test Series'
+            } as any,
+            didUserWin: true,
+            coachProfile: intlCoach41,
+            internationalSeries: wtcSeries,
+            leagues: [wtcLeague],
+            currentLeagueId: wtcLeague.id,
+            nations: baseNations,
+            players: basePlayers,
+            teams: baseTeams
+          });
+          assertFullStateUnchangedOnRejection(
+            'WTC-8c (callback)',
+            resCbSeriesConflict,
+            'identity_conflict',
+            snapDefaultS,
+            snapDefaultL,
+            snapN,
+            snapP,
+            snapT
+          );
+        }
+
+        // 8d: Missing optional metadata with a valid authoritative WTC fixture ID
+        {
+          const { basePlayers, baseTeams, wtcSeries, baseNations, wtcFinishedMatch, wtcLeague } =
+            buildWtcMatrixBaseState();
+          const authWtcId = 'auth_wtc_fixture_2026';
+          const seriesWithAuthId: InternationalSeriesState = {
+            ...wtcSeries,
+            wtcFixtureId: authWtcId,
+            wtcTestCompleted: false
+          };
+          const minimalMetadataLeague: League = {
+            ...wtcLeague,
+            calendarDates: [
+              {
+                id: 'cal_date_minimal_2026',
+                dateStr: '2026-06-15',
+                dayOfWeek: 'MON',
+                dayNumber: 15,
+                month: 'Jun',
+                type: 'international',
+                matchFixture: {
+                  id: authWtcId,
+                  homeTeamId: 'nat_ind',
+                  awayTeamId: 'nat_aus',
+                  homeTeamName: 'India',
+                  awayTeamName: 'Australia',
+                  completed: false
+                } as any
+              }
+            ]
+          };
+          const { competitionId: _c, seriesName: _sn, ...minimalMatchBase } = wtcFinishedMatch as any;
+          const minimalFinishedMatch: MatchLiveState = {
+            ...minimalMatchBase,
+            id: authWtcId,
+            fixtureId: authWtcId,
+            leagueId: '',
+            format: 'TEST'
+          };
+          const indBefore = baseNations.find((n: any) => n.id === 'nat_ind')!.ratingTest;
+          const res8d = applyRecordCompletedInternationalMatchState({
+            finishedMatch: minimalFinishedMatch,
+            didUserWin: true,
+            coachProfile: intlCoach41,
+            internationalSeries: seriesWithAuthId,
+            leagues: [minimalMetadataLeague],
+            currentLeagueId: minimalMetadataLeague.id,
+            nations: baseNations,
+            players: basePlayers,
+            teams: baseTeams
+          });
+          assert.equal(
+            res8d.resolutionStatus,
+            'resolved',
+            'WTC-8d: Missing optional metadata with valid authoritative wtcFixtureId resolves'
+          );
+          assert.equal(res8d.matchedFixtureId, authWtcId, 'WTC-8d: matchedFixtureId matches authoritative wtcFixtureId');
+          assert.equal(res8d.internationalSeries.wtcTestCompleted, true, 'WTC-8d: wtcTestCompleted set to true');
+          assert.equal(
+            res8d.nations.find((n: any) => n.id === 'nat_ind')!.ratingTest,
+            indBefore + 3,
+            'WTC-8d: Winner Test rating incremented by +3'
+          );
+          assert.equal(
+            res8d.leagues[0].calendarDates[0].matchFixture?.completed,
+            true,
+            'WTC-8d: Calendar fixture marked completed'
+          );
+          assert.equal(
+            res8d.players?.[0].competitionStats?.international?.runs,
+            84,
+            'WTC-8d: Player international runs updated (+84)'
+          );
+        }
+      }
+    );
   }
 
   const passedScenarios = passedScenariosSet.size;
