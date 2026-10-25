@@ -11736,6 +11736,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       id: fixtureId || `intl_match_${Date.now()}`,
       fixtureId,
       leagueId: assignedLeagueId,
+      isInternational: true,
       format,
       homeTeam: nationalHomeTeam,
       awayTeam: nationalAwayTeam,
@@ -11838,7 +11839,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         activeXIIds: activeTeam.playingXIIds,
         allPlayers: players,
         impactPlayerAlreadyUsed: prev.impactPlayerUsed,
-        isInternational: Boolean(prev.isInternational),
+        isInternational: Boolean(prev.isInternational || isInternationalMatchState(prev)),
         maxOverseasInXI: 4,
         outPlayerDismissalStatus: outBatterCard?.dismissal
       });
@@ -12409,6 +12410,9 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setLeagues(intlSync.leagues);
       } else if (intlSync.resolutionStatus === 'already_completed') {
         setLeagues(intlSync.leagues);
+        return;
+      } else {
+        return;
       }
     } else {
       setPlayers(prev => prev.map(applyStatsToPlayer));
@@ -12934,7 +12938,22 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         clubStints: updatedStints
       };
     });
-  }, [players, userTeam, unlockAchievement]);
+  }, [
+    players,
+    teams,
+    userTeam,
+    leagues,
+    currentLeagueId,
+    nations,
+    internationalSeries,
+    coachProfile,
+    careerBoardReview,
+    tournamentHonors,
+    setCareerPhase,
+    setCareerBoardReview,
+    setInternationalSeries,
+    unlockAchievement
+  ]);
 
   // Automatically record match outcome when matchLiveState transitions to finished
   useEffect(() => {

@@ -71,7 +71,7 @@ import {
   createHeadlessMatchState,
   simulateFullMatchHeadless
 } from '../engine/cricketEngine';
-import { recordMatchToPlayerStats } from '../utils/playerStatsHelpers';
+import { recordMatchToPlayerStats, validateImpactPlayerSubstitution } from '../utils/playerStatsHelpers';
 import {
   Player,
   Team,
@@ -10515,6 +10515,89 @@ export function runCareerProgressionTests() {
             'WTC-8d: Player international runs updated (+84)'
           );
         }
+      }
+    );
+
+    runMatrixCase(
+      'MAT 55.P6',
+      'Phase 6 UI Stabilization — WorldScreen bilateral fixtureId resolution and international Impact Player overseas exemption',
+      () => {
+        const { basePlayers, baseTeams, baseSeries, baseNations, baseFinishedMatch } = buildMatrixBaseState();
+        const nextSeriesMatch = baseSeries.matches.find(m => !m.completed)!;
+        const resolvedUiFixId =
+          nextSeriesMatch.fixtureId ||
+          (baseSeries.seriesId
+            ? `intl_fix_${baseSeries.seriesId}_${nextSeriesMatch.matchNumber}`
+            : undefined);
+        assert.equal(
+          resolvedUiFixId,
+          'intl_fix_tour_ind_aus_2026_1',
+          'MAT 55.P6a: WorldScreen nextSeriesMatch derives authoritative fixtureId for Match #1'
+        );
+
+        const resWithFixId = applyRecordCompletedInternationalMatchState({
+          finishedMatch: {
+            ...baseFinishedMatch,
+            id: resolvedUiFixId!,
+            fixtureId: resolvedUiFixId,
+            isInternational: true
+          },
+          didUserWin: true,
+          coachProfile: intlCoach41,
+          internationalSeries: baseSeries,
+          leagues: [step1.leagues[0]],
+          currentLeagueId: step1.leagues[0].id,
+          nations: baseNations,
+          players: basePlayers,
+          teams: baseTeams
+        });
+        assert.equal(
+          resWithFixId.resolutionStatus,
+          'resolved',
+          'MAT 55.P6b: Multi-match bilateral series Match #1 resolves when WorldScreen passes authoritative fixtureId'
+        );
+        assert.equal(
+          resWithFixId.internationalSeries.matches[0].completed,
+          true,
+          'MAT 55.P6c: Match #1 marked completed'
+        );
+
+        // Verify international Impact Player substitution for non-India national squad (e.g., Australia with 11 non-India players)
+        const ausPool: Player[] = Array.from({ length: 12 }, (_, idx) => ({
+          ...JSON.parse(JSON.stringify(INITIAL_PLAYERS[idx % INITIAL_PLAYERS.length])),
+          id: `aus_intl_p_${idx + 1}`,
+          name: `Aus Player ${idx + 1}`,
+          country: 'Australia',
+          isOverseas: true
+        }));
+        const ausXIIds = ausPool.slice(0, 11).map(p => p.id);
+        const ausBenchId = ausPool[11].id;
+        const subDomestic = validateImpactPlayerSubstitution({
+          benchPlayerId: ausBenchId,
+          outPlayerId: ausXIIds[0],
+          activeXIIds: ausXIIds,
+          allPlayers: ausPool,
+          isInternational: false,
+          maxOverseasInXI: 4
+        });
+        assert.equal(
+          subDomestic.isValid,
+          false,
+          'MAT 55.P6d: Domestic IPL mode enforces 4-overseas cap when 11 overseas players are in XI'
+        );
+        const subIntl = validateImpactPlayerSubstitution({
+          benchPlayerId: ausBenchId,
+          outPlayerId: ausXIIds[0],
+          activeXIIds: ausXIIds,
+          allPlayers: ausPool,
+          isInternational: true,
+          maxOverseasInXI: 4
+        });
+        assert.equal(
+          subIntl.isValid,
+          true,
+          'MAT 55.P6e: International mode (isInternational: true) permits Impact Player substitution for non-India national squads'
+        );
       }
     );
   }

@@ -1531,7 +1531,7 @@ export const LiveMatchEngine: React.FC = () => {
         activeXIPlayers={userXIPlayers.length > 0 ? userXIPlayers : players.filter(p => p.clubId === activeUserMatchTeam.id).slice(0, 8)}
         allPlayers={players}
         leagueId={activeUserMatchTeam.leagueId || 'ipl'}
-        isInternational={Boolean(matchLiveState.isInternational)}
+        isInternational={Boolean(matchLiveState.isInternational || activeUserMatchTeam.leagueId === 'intl')}
         onConfirmSubstitution={handleConfirmSubstitution}
       />
 

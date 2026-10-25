@@ -58,7 +58,9 @@ export const AuctionRoom: React.FC = () => {
     unlockAchievement,
     auctionSandbox,
     exitAuctionSandbox,
-    commitSandboxAuctionSale
+    commitSandboxAuctionSale,
+    careerPhase,
+    setCareerPhase
   } = useGame();
 
   const isSandbox = Boolean(auctionSandbox?.isActive);
@@ -829,6 +831,9 @@ export const AuctionRoom: React.FC = () => {
               if (isSandbox) {
                 exitAuctionSandbox();
               } else {
+                if (careerPhase === 'auction') {
+                  setCareerPhase('squad_confirmation');
+                }
                 setActiveTab('hub');
               }
             }}
@@ -1825,7 +1830,7 @@ export const AuctionRoom: React.FC = () => {
               RESUME AUCTION ({currentSetMeta.name})
             </button>
 
-            {isSandbox && (
+            {isSandbox ? (
               <button
                 onClick={() => {
                   sound.playTap();
@@ -1834,6 +1839,20 @@ export const AuctionRoom: React.FC = () => {
                 className="w-full py-3 bg-red-950/70 hover:bg-red-900 border border-red-700/60 text-red-200 font-bold text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer"
               >
                 EXIT AUCTION SANDBOX (RETURN TO TITLE SCREEN)
+              </button>
+            ) : (
+              <button
+                onClick={() => {
+                  sound.playTap();
+                  setIsSquadPlannerOpen(false);
+                  if (careerPhase === 'auction') {
+                    setCareerPhase('squad_confirmation');
+                  }
+                  setActiveTab('hub');
+                }}
+                className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-black font-black text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer"
+              >
+                FINISH AUCTION &amp; CONFIRM SQUAD →
               </button>
             )}
           </div>

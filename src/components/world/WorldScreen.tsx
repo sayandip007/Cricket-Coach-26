@@ -14,7 +14,9 @@ export const WorldScreen: React.FC = () => {
     coachProfile,
     players,
     startInternationalMatch,
-    simEntireMatch
+    simEntireMatch,
+    confirmNationalSquad,
+    completeInternationalSeries
   } = useGame();
 
   const [activeTab, setActiveTab] = useState<'rankings' | 'duty' | 'offers'>('rankings');
@@ -253,11 +255,17 @@ export const WorldScreen: React.FC = () => {
                         <button
                           onClick={() => {
                             sound.playCrowdCheer(0.8);
+                            const fixId =
+                              nextSeriesMatch.fixtureId ||
+                              (internationalSeries.seriesId
+                                ? `intl_fix_${internationalSeries.seriesId}_${nextSeriesMatch.matchNumber}`
+                                : undefined);
                             startInternationalMatch(
                               internationalSeries.opponentNationName,
                               internationalSeries.userNationName,
                               nextSeriesMatch.venue,
-                              'T20'
+                              (internationalSeries.format as 'T20' | 'ODI' | 'TEST') || 'T20',
+                              fixId
                             );
                           }}
                           className="py-2 px-3 bg-amber-400 hover:bg-amber-300 text-black font-black text-xs uppercase rounded-lg tracking-wider flex items-center justify-center gap-1.5 shadow-md shadow-amber-500/20 active:scale-95 transition-all"
@@ -267,11 +275,17 @@ export const WorldScreen: React.FC = () => {
                         <button
                           onClick={() => {
                             sound.playTap();
+                            const fixId =
+                              nextSeriesMatch.fixtureId ||
+                              (internationalSeries.seriesId
+                                ? `intl_fix_${internationalSeries.seriesId}_${nextSeriesMatch.matchNumber}`
+                                : undefined);
                             startInternationalMatch(
                               internationalSeries.opponentNationName,
                               internationalSeries.userNationName,
                               nextSeriesMatch.venue,
-                              'T20'
+                              (internationalSeries.format as 'T20' | 'ODI' | 'TEST') || 'T20',
+                              fixId
                             );
                             setTimeout(() => simEntireMatch(), 250);
                           }}
@@ -282,11 +296,20 @@ export const WorldScreen: React.FC = () => {
                       </div>
                     </div>
                   ) : (
-                    <div className="p-3 rounded-xl bg-emerald-950/50 border border-emerald-500/40 text-xs text-center">
+                    <div className="p-3 rounded-xl bg-emerald-950/50 border border-emerald-500/40 text-xs text-center space-y-2">
                       <Trophy className="w-5 h-5 text-amber-400 mx-auto mb-1" />
                       <span className="font-black text-emerald-300 uppercase block">
                         BILATERAL T20I SERIES CONCLUDED ({seriesStatusLabel})
                       </span>
+                      <button
+                        onClick={() => {
+                          sound.playCrowdCheer(0.8);
+                          completeInternationalSeries();
+                        }}
+                        className="w-full py-2 px-3 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs uppercase rounded-lg tracking-wider transition-all"
+                      >
+                        ADVANCE TO NEXT BILATERAL TOUR →
+                      </button>
                     </div>
                   )}
 
@@ -387,7 +410,7 @@ export const WorldScreen: React.FC = () => {
                     <button
                       onClick={() => {
                         sound.playTap();
-                        startInternationalMatch(tour.homeNation, tour.awayNation, tour.venue, tour.format);
+                        startInternationalMatch(tour.homeNation, tour.awayNation, tour.venue, tour.format, tour.id);
                       }}
                       className="px-2.5 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-black font-black text-[10px] font-mono shrink-0 ml-2 uppercase"
                     >
@@ -502,7 +525,11 @@ export const WorldScreen: React.FC = () => {
 
             <button
               onClick={() => {
-                setNationalSquadIds(selectedNationalPlayerIds);
+                if (coachedNation) {
+                  confirmNationalSquad(coachedNation.id, selectedNationalPlayerIds);
+                } else {
+                  setNationalSquadIds(selectedNationalPlayerIds);
+                }
                 sound.playCrowdCheer(0.7);
                 setShowSquadSelector(false);
               }}
