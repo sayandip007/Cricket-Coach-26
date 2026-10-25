@@ -10,7 +10,7 @@
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "test": "tsx src/tests/runAllTests.ts",
-    "test:e2e": "tsx src/tests/e2eBrowserGameplay.test.ts"
+    "test:e2e": "tsx scripts/runE2eWithServer.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

@@ -11839,7 +11839,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         activeXIIds: activeTeam.playingXIIds,
         allPlayers: players,
         impactPlayerAlreadyUsed: prev.impactPlayerUsed,
-        isInternational: Boolean(prev.isInternational || isInternationalMatchState(prev)),
+        isInternational: Boolean(prev.isInternational || prev.leagueId === 'intl'),
         maxOverseasInXI: 4,
         outPlayerDismissalStatus: outBatterCard?.dismissal
       });
