@@ -9697,6 +9697,499 @@ export function runCareerProgressionTests() {
       assert.deepEqual(afterReloadRepeat.players, reloadedState.players, 'MAT 55.D6: Post-reload players state unchanged');
       assert.deepEqual(afterReloadRepeat.teams, reloadedState.teams, 'MAT 55.D6: Post-reload teams state unchanged');
     });
+
+    // --------------------------------------------------------------------------
+    // 5. WTC FIXTURE IDENTITY & OWNERSHIP MATRIX (WTC-1 – WTC-7)
+    // --------------------------------------------------------------------------
+    const buildWtcMatrixBaseState = () => {
+      const { basePlayers, baseTeams, baseSeries, baseNations, baseFinishedMatch } = buildMatrixBaseState();
+      const wtcFixId = 'wtc_ind_aus_2026';
+      const wtcSeries: InternationalSeriesState = {
+        ...baseSeries,
+        wtcTestCompleted: false,
+        wtcFixtureId: wtcFixId
+      };
+      const wtcFinishedMatch: MatchLiveState = {
+        ...baseFinishedMatch,
+        id: wtcFixId,
+        fixtureId: wtcFixId,
+        leagueId: 'wtc_test',
+        format: 'TEST',
+        resultText: 'India won the WTC Test by 118 runs'
+      };
+      const wtcLeague: League = {
+        ...step1.leagues[0],
+        id: 'league_wtc_active',
+        calendarDates: [
+          {
+            id: 'wtc_cal_2026_1',
+            dateStr: '2026-06-15',
+            dayOfWeek: 'MON',
+            dayNumber: 15,
+            month: 'Jun',
+            type: 'international',
+            matchFixture: {
+              id: wtcFixId,
+              homeTeamId: 'nat_ind',
+              awayTeamId: 'nat_aus',
+              homeTeamName: 'India',
+              awayTeamName: 'Australia',
+              competitionId: 'wtc_test',
+              leagueId: 'wtc_test',
+              format: 'TEST',
+              isInternational: true,
+              completed: false
+            } as any
+          }
+        ]
+      };
+      return { basePlayers, baseTeams, wtcSeries, baseNations, wtcFinishedMatch, wtcLeague, wtcFixId };
+    };
+
+    runMatrixCase('WTC-1', 'Valid WTC fixture completes once and updates WTC flags, Test ratings/rankings, player stats, and calendar', () => {
+      const { basePlayers, baseTeams, wtcSeries, baseNations, wtcFinishedMatch, wtcLeague, wtcFixId } = buildWtcMatrixBaseState();
+      const indBefore = baseNations.find((n: any) => n.id === 'nat_ind')!.ratingTest;
+      const ausBefore = baseNations.find((n: any) => n.id === 'nat_aus')!.ratingTest;
+
+      const res = applyRecordCompletedInternationalMatchState({
+        finishedMatch: wtcFinishedMatch,
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: wtcSeries,
+        leagues: [wtcLeague],
+        currentLeagueId: wtcLeague.id,
+        nations: baseNations,
+        players: basePlayers,
+        teams: baseTeams
+      });
+
+      assert.equal(res.resolutionStatus, 'resolved', 'WTC-1: Valid WTC fixture resolves with status resolved');
+      assert.equal(res.matchedFixtureId, wtcFixId, 'WTC-1: matchedFixtureId equals wtc_ind_aus_2026');
+      assert.equal(res.internationalSeries.wtcTestCompleted, true, 'WTC-1: wtcTestCompleted set to true');
+      assert.ok(
+        Boolean(res.internationalSeries.wtcTestSummary && res.internationalSeries.wtcTestSummary.includes('India won')),
+        'WTC-1: wtcTestSummary recorded'
+      );
+      assert.equal(res.internationalSeries.wtcFixtureId, wtcFixId, 'WTC-1: Authoritative wtcFixtureId recorded on series');
+      assert.equal(res.internationalSeries.seriesWins, 0, 'WTC-1: Bilateral seriesWins untouched by WTC match');
+      assert.equal(res.internationalSeries.matches[0].completed, false, 'WTC-1: Bilateral series matches untouched by WTC match');
+      assert.equal(
+        res.nations.find((n: any) => n.id === 'nat_ind')!.ratingTest,
+        indBefore + 3,
+        'WTC-1: Winner nation Test rating incremented by +3'
+      );
+      assert.equal(
+        res.nations.find((n: any) => n.id === 'nat_aus')!.ratingTest,
+        Math.max(40, ausBefore - 2),
+        'WTC-1: Loser nation Test rating decremented by -2'
+      );
+      assert.equal(res.leagues[0].calendarDates[0].matchFixture?.completed, true, 'WTC-1: WTC calendar fixture marked completed: true');
+      assert.ok(
+        Boolean(res.leagues[0].calendarDates[0].matchFixture?.resultSummary?.includes('India won')),
+        'WTC-1: WTC calendar fixture resultSummary recorded'
+      );
+      assert.equal(res.players?.[0].competitionStats?.international?.runs, 84, 'WTC-1: Player international runs updated (+84)');
+      assert.equal(res.players?.[0].competitionStats?.international?.matches, 1, 'WTC-1: Player international matches incremented (+1)');
+      assert.equal(res.teams?.[0].squad?.[0].competitionStats?.international?.runs, 84, 'WTC-1: Team squad player runs updated (+84)');
+    });
+
+    runMatrixCase('WTC-2', 'Unrelated WTC fixture ID is rejected without mutating series, ratings, stats, or calendar', () => {
+      const { basePlayers, baseTeams, wtcSeries, baseNations, wtcFinishedMatch, wtcLeague } = buildWtcMatrixBaseState();
+      const snapS = JSON.parse(JSON.stringify(wtcSeries));
+      const snapL = JSON.parse(JSON.stringify([wtcLeague]));
+      const snapN = JSON.parse(JSON.stringify(baseNations));
+      const snapP = JSON.parse(JSON.stringify(basePlayers));
+      const snapT = JSON.parse(JSON.stringify(baseTeams));
+
+      // 2a: Callback claims WTC with an ID that does not match the competition's scheduled WTC fixture
+      const resUnrelatedScheduled = applyRecordCompletedInternationalMatchState({
+        finishedMatch: {
+          ...wtcFinishedMatch,
+          id: 'wtc_unrelated_fixture_999',
+          fixtureId: 'wtc_unrelated_fixture_999'
+        },
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: wtcSeries,
+        leagues: [wtcLeague],
+        currentLeagueId: wtcLeague.id,
+        nations: baseNations,
+        players: basePlayers,
+        teams: baseTeams
+      });
+      assertFullStateUnchangedOnRejection('WTC-2a', resUnrelatedScheduled, 'not_found', snapS, snapL, snapN, snapP, snapT);
+
+      // 2b: Even without a calendar entry or pre-set wtcFixtureId, an arbitrary unrelated WTC ID is rejected
+      const { wtcFixtureId: _omittedWtcId, ...unscheduledSeries } = wtcSeries;
+      const emptyCalLeague: League = { ...wtcLeague, calendarDates: [] };
+      const snapS2 = JSON.parse(JSON.stringify(unscheduledSeries));
+      const snapL2 = JSON.parse(JSON.stringify([emptyCalLeague]));
+      const resUnrelatedUnscheduled = applyRecordCompletedInternationalMatchState({
+        finishedMatch: {
+          ...wtcFinishedMatch,
+          id: 'wtc_other_competition_2026',
+          fixtureId: 'wtc_other_competition_2026'
+        },
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: unscheduledSeries,
+        leagues: [emptyCalLeague],
+        currentLeagueId: emptyCalLeague.id,
+        nations: baseNations,
+        players: basePlayers,
+        teams: baseTeams
+      });
+      assertFullStateUnchangedOnRejection('WTC-2b', resUnrelatedUnscheduled, 'not_found', snapS2, snapL2, snapN, snapP, snapT);
+    });
+
+    runMatrixCase('WTC-3', 'Callback or calendar entry with conflicting WTC and bilateral/series metadata is rejected', () => {
+      const { basePlayers, baseTeams, wtcSeries, baseNations, wtcFinishedMatch, wtcLeague, wtcFixId } = buildWtcMatrixBaseState();
+      const snapS = JSON.parse(JSON.stringify(wtcSeries));
+      const snapL = JSON.parse(JSON.stringify([wtcLeague]));
+      const snapN = JSON.parse(JSON.stringify(baseNations));
+      const snapP = JSON.parse(JSON.stringify(basePlayers));
+      const snapT = JSON.parse(JSON.stringify(baseTeams));
+
+      // 3a: Callback carries WTC fixtureId/leagueId but conflicting bilateral seriesId
+      const resSeriesConflict = applyRecordCompletedInternationalMatchState({
+        finishedMatch: {
+          ...wtcFinishedMatch,
+          seriesId: 'tour_ind_aus_2026'
+        } as any,
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: wtcSeries,
+        leagues: [wtcLeague],
+        currentLeagueId: wtcLeague.id,
+        nations: baseNations,
+        players: basePlayers,
+        teams: baseTeams
+      });
+      assertFullStateUnchangedOnRejection('WTC-3a', resSeriesConflict, 'identity_conflict', snapS, snapL, snapN, snapP, snapT);
+
+      // 3b: Callback carries WTC fixtureId but conflicting bilateral competitionId
+      const resCompConflict = applyRecordCompletedInternationalMatchState({
+        finishedMatch: {
+          ...wtcFinishedMatch,
+          competitionId: 'bilateral_series'
+        } as any,
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: wtcSeries,
+        leagues: [wtcLeague],
+        currentLeagueId: wtcLeague.id,
+        nations: baseNations,
+        players: basePlayers,
+        teams: baseTeams
+      });
+      assertFullStateUnchangedOnRejection('WTC-3b', resCompConflict, 'identity_conflict', snapS, snapL, snapN, snapP, snapT);
+
+      // 3c: Calendar entry for WTC fixture has conflicting bilateral seriesId metadata
+      const conflictedLeague: League = {
+        ...wtcLeague,
+        calendarDates: [
+          {
+            ...wtcLeague.calendarDates[0],
+            matchFixture: {
+              ...wtcLeague.calendarDates[0].matchFixture!,
+              id: wtcFixId,
+              seriesId: 'tour_ind_aus_2026',
+              competitionId: 'wtc_test'
+            } as any
+          }
+        ]
+      };
+      const snapConflictedL = JSON.parse(JSON.stringify([conflictedLeague]));
+      const resCalMetaConflict = applyRecordCompletedInternationalMatchState({
+        finishedMatch: wtcFinishedMatch,
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: wtcSeries,
+        leagues: [conflictedLeague],
+        currentLeagueId: conflictedLeague.id,
+        nations: baseNations,
+        players: basePlayers,
+        teams: baseTeams
+      });
+      assertFullStateUnchangedOnRejection('WTC-3c', resCalMetaConflict, 'identity_conflict', snapS, snapConflictedL, snapN, snapP, snapT);
+    });
+
+    runMatrixCase('WTC-4', 'Duplicate WTC fixture ID across leagues or calendar dates is rejected without state mutation', () => {
+      const { basePlayers, baseTeams, wtcSeries, baseNations, wtcFinishedMatch, wtcLeague, wtcFixId } = buildWtcMatrixBaseState();
+
+      // 4a: Same WTC ID exists in two leagues with conflicting participant/competition ownership -> identity_conflict
+      const conflictingOtherLeague: League = {
+        ...wtcLeague,
+        id: 'league_wtc_other_conflict',
+        calendarDates: [
+          {
+            id: 'wtc_cal_other_1',
+            dateStr: '2026-06-15',
+            dayOfWeek: 'MON',
+            dayNumber: 15,
+            month: 'Jun',
+            type: 'international',
+            matchFixture: {
+              id: wtcFixId,
+              homeTeamId: 'nat_eng',
+              awayTeamId: 'nat_sa',
+              homeTeamName: 'England',
+              awayTeamName: 'South Africa',
+              competitionId: 'wtc_test',
+              leagueId: 'wtc_test',
+              format: 'TEST',
+              isInternational: true,
+              completed: false
+            } as any
+          }
+        ]
+      };
+      const leagues4a = [wtcLeague, conflictingOtherLeague];
+      const snapS = JSON.parse(JSON.stringify(wtcSeries));
+      const snapL4a = JSON.parse(JSON.stringify(leagues4a));
+      const snapN = JSON.parse(JSON.stringify(baseNations));
+      const snapP = JSON.parse(JSON.stringify(basePlayers));
+      const snapT = JSON.parse(JSON.stringify(baseTeams));
+
+      const res4a = applyRecordCompletedInternationalMatchState({
+        finishedMatch: wtcFinishedMatch,
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: wtcSeries,
+        leagues: leagues4a,
+        currentLeagueId: wtcLeague.id,
+        nations: baseNations,
+        players: basePlayers,
+        teams: baseTeams
+      });
+      assertFullStateUnchangedOnRejection('WTC-4a', res4a, 'identity_conflict', snapS, snapL4a, snapN, snapP, snapT);
+
+      // 4b: Same WTC ID duplicated across two leagues with consistent metadata -> ambiguous
+      const duplicateConsistentOtherLeague: League = {
+        ...JSON.parse(JSON.stringify(wtcLeague)),
+        id: 'league_wtc_other_dup'
+      };
+      const leagues4b = [wtcLeague, duplicateConsistentOtherLeague];
+      const snapL4b = JSON.parse(JSON.stringify(leagues4b));
+
+      const res4b = applyRecordCompletedInternationalMatchState({
+        finishedMatch: wtcFinishedMatch,
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: wtcSeries,
+        leagues: leagues4b,
+        currentLeagueId: wtcLeague.id,
+        nations: baseNations,
+        players: basePlayers,
+        teams: baseTeams
+      });
+      assertFullStateUnchangedOnRejection('WTC-4b', res4b, 'ambiguous', snapS, snapL4b, snapN, snapP, snapT);
+    });
+
+    runMatrixCase('WTC-5', 'Same-date duplicate WTC entries in matchFixture and internationalMatches are inspected independently and rejected', () => {
+      const { basePlayers, baseTeams, wtcSeries, baseNations, wtcFinishedMatch, wtcLeague, wtcFixId } = buildWtcMatrixBaseState();
+      const snapS = JSON.parse(JSON.stringify(wtcSeries));
+      const snapN = JSON.parse(JSON.stringify(baseNations));
+      const snapP = JSON.parse(JSON.stringify(basePlayers));
+      const snapT = JSON.parse(JSON.stringify(baseTeams));
+
+      // 5a: Same ID in matchFixture (valid WTC) and internationalMatches[0] (conflicting seriesId) on same date -> identity_conflict
+      const sameDateConflictLeague: League = {
+        ...wtcLeague,
+        id: 'league_wtc_5a',
+        calendarDates: [
+          {
+            id: 'wtc_cal_2026_1',
+            dateStr: '2026-06-15',
+            dayOfWeek: 'MON',
+            dayNumber: 15,
+            month: 'Jun',
+            type: 'international',
+            matchFixture: {
+              id: wtcFixId,
+              homeTeamId: 'nat_ind',
+              awayTeamId: 'nat_aus',
+              competitionId: 'wtc_test',
+              format: 'TEST',
+              isInternational: true,
+              completed: false
+            } as any,
+            internationalMatches: [
+              {
+                id: wtcFixId,
+                homeTeamId: 'nat_ind',
+                awayTeamId: 'nat_aus',
+                seriesId: 'tour_ind_aus_2026',
+                competitionId: 'bilateral',
+                format: 'TEST',
+                isInternational: true,
+                completed: false
+              } as any
+            ]
+          }
+        ]
+      };
+      const snapL5a = JSON.parse(JSON.stringify([sameDateConflictLeague]));
+      const res5a = applyRecordCompletedInternationalMatchState({
+        finishedMatch: wtcFinishedMatch,
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: wtcSeries,
+        leagues: [sameDateConflictLeague],
+        currentLeagueId: sameDateConflictLeague.id,
+        nations: baseNations,
+        players: basePlayers,
+        teams: baseTeams
+      });
+      assertFullStateUnchangedOnRejection('WTC-5a', res5a, 'identity_conflict', snapS, snapL5a, snapN, snapP, snapT);
+
+      // 5b: Same ID in both matchFixture and internationalMatches[0] with identical WTC metadata on same date -> ambiguous
+      const sameDateDupLeague: League = {
+        ...wtcLeague,
+        id: 'league_wtc_5b',
+        calendarDates: [
+          {
+            id: 'wtc_cal_2026_1',
+            dateStr: '2026-06-15',
+            dayOfWeek: 'MON',
+            dayNumber: 15,
+            month: 'Jun',
+            type: 'international',
+            matchFixture: {
+              id: wtcFixId,
+              homeTeamId: 'nat_ind',
+              awayTeamId: 'nat_aus',
+              competitionId: 'wtc_test',
+              format: 'TEST',
+              isInternational: true,
+              completed: false
+            } as any,
+            internationalMatches: [
+              {
+                id: wtcFixId,
+                homeTeamId: 'nat_ind',
+                awayTeamId: 'nat_aus',
+                competitionId: 'wtc_test',
+                format: 'TEST',
+                isInternational: true,
+                completed: false
+              } as any
+            ]
+          }
+        ]
+      };
+      const snapL5b = JSON.parse(JSON.stringify([sameDateDupLeague]));
+      const res5b = applyRecordCompletedInternationalMatchState({
+        finishedMatch: wtcFinishedMatch,
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: wtcSeries,
+        leagues: [sameDateDupLeague],
+        currentLeagueId: sameDateDupLeague.id,
+        nations: baseNations,
+        players: basePlayers,
+        teams: baseTeams
+      });
+      assertFullStateUnchangedOnRejection('WTC-5b', res5b, 'ambiguous', snapS, snapL5b, snapN, snapP, snapT);
+    });
+
+    runMatrixCase('WTC-6', 'Repeated completion of a valid WTC fixture is idempotent and does not duplicate ratings, stats, or summaries', () => {
+      const { basePlayers, baseTeams, wtcSeries, baseNations, wtcFinishedMatch, wtcLeague, wtcFixId } = buildWtcMatrixBaseState();
+
+      const first = applyRecordCompletedInternationalMatchState({
+        finishedMatch: wtcFinishedMatch,
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: wtcSeries,
+        leagues: [wtcLeague],
+        currentLeagueId: wtcLeague.id,
+        nations: baseNations,
+        players: basePlayers,
+        teams: baseTeams
+      });
+      assert.equal(first.resolutionStatus, 'resolved', 'WTC-6: First completion resolves');
+
+      const snapAfterFirstS = JSON.parse(JSON.stringify(first.internationalSeries));
+      const snapAfterFirstL = JSON.parse(JSON.stringify(first.leagues));
+      const snapAfterFirstN = JSON.parse(JSON.stringify(first.nations));
+      const snapAfterFirstP = JSON.parse(JSON.stringify(first.players));
+      const snapAfterFirstT = JSON.parse(JSON.stringify(first.teams));
+
+      // Submit again (even with a different caller summary string to verify summary/rating protection)
+      const second = applyRecordCompletedInternationalMatchState({
+        finishedMatch: wtcFinishedMatch,
+        didUserWin: true,
+        intlShortSummary: 'Attempted overwrite summary on repeat callback',
+        coachProfile: intlCoach41,
+        internationalSeries: first.internationalSeries,
+        leagues: first.leagues,
+        currentLeagueId: wtcLeague.id,
+        nations: first.nations,
+        players: first.players,
+        teams: first.teams
+      });
+
+      assert.equal(second.resolutionStatus, 'already_completed', 'WTC-6: Second completion returns already_completed');
+      assert.equal(second.matchedFixtureId, wtcFixId, 'WTC-6: matchedFixtureId preserved');
+      assert.deepEqual(JSON.parse(JSON.stringify(second.internationalSeries)), snapAfterFirstS, 'WTC-6: internationalSeries (including wtcTestSummary) unchanged on repeat');
+      assert.deepEqual(JSON.parse(JSON.stringify(second.leagues)), snapAfterFirstL, 'WTC-6: leagues calendar state unchanged on repeat');
+      assert.deepEqual(JSON.parse(JSON.stringify(second.nations)), snapAfterFirstN, 'WTC-6: nations ratings and rankings unchanged on repeat');
+      assert.deepEqual(JSON.parse(JSON.stringify(second.players)), snapAfterFirstP, 'WTC-6: players statistics unchanged on repeat');
+      assert.deepEqual(JSON.parse(JSON.stringify(second.teams)), snapAfterFirstT, 'WTC-6: teams squad statistics unchanged on repeat');
+      assert.equal(second.players?.[0].competitionStats?.international?.runs, 84, 'WTC-6: Player runs remain 84 (not doubled)');
+      assert.equal(second.players?.[0].competitionStats?.international?.matches, 1, 'WTC-6: Player matches remain 1 (not incremented)');
+    });
+
+    runMatrixCase('WTC-7', 'Save, serialize, reload, and repeat WTC completion preserves idempotency and full state integrity', () => {
+      const { basePlayers, baseTeams, wtcSeries, baseNations, wtcFinishedMatch, wtcLeague, wtcFixId } = buildWtcMatrixBaseState();
+
+      const first = applyRecordCompletedInternationalMatchState({
+        finishedMatch: wtcFinishedMatch,
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: wtcSeries,
+        leagues: [wtcLeague],
+        currentLeagueId: wtcLeague.id,
+        nations: baseNations,
+        players: basePlayers,
+        teams: baseTeams
+      });
+      assert.equal(first.resolutionStatus, 'resolved', 'WTC-7: Initial WTC completion resolves');
+
+      const serializedReloaded = JSON.parse(
+        JSON.stringify({
+          internationalSeries: first.internationalSeries,
+          leagues: first.leagues,
+          nations: first.nations,
+          players: first.players,
+          teams: first.teams
+        })
+      );
+
+      const migratedCheck = migrateLegacyInternationalSeries(serializedReloaded.internationalSeries, serializedReloaded.nations);
+      assert.equal(migratedCheck.canMigrate, true, 'WTC-7: Reloaded WTC series passes migration validation');
+      assert.equal(migratedCheck.series?.wtcFixtureId, wtcFixId, 'WTC-7: Reloaded WTC series preserves wtcFixtureId');
+
+      const afterReloadRepeat = applyRecordCompletedInternationalMatchState({
+        finishedMatch: wtcFinishedMatch,
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: serializedReloaded.internationalSeries,
+        leagues: serializedReloaded.leagues,
+        currentLeagueId: wtcLeague.id,
+        nations: serializedReloaded.nations,
+        players: serializedReloaded.players,
+        teams: serializedReloaded.teams
+      });
+
+      assert.equal(afterReloadRepeat.resolutionStatus, 'already_completed', 'WTC-7: Post-reload repeat callback returns already_completed');
+      assert.equal(afterReloadRepeat.matchedFixtureId, wtcFixId, 'WTC-7: Post-reload matchedFixtureId preserved');
+      assert.deepEqual(afterReloadRepeat.internationalSeries, serializedReloaded.internationalSeries, 'WTC-7: Post-reload series state unchanged');
+      assert.deepEqual(afterReloadRepeat.leagues, serializedReloaded.leagues, 'WTC-7: Post-reload calendar state unchanged');
+      assert.deepEqual(afterReloadRepeat.nations, serializedReloaded.nations, 'WTC-7: Post-reload nations state unchanged');
+      assert.deepEqual(afterReloadRepeat.players, serializedReloaded.players, 'WTC-7: Post-reload players state unchanged');
+      assert.deepEqual(afterReloadRepeat.teams, serializedReloaded.teams, 'WTC-7: Post-reload teams state unchanged');
+    });
   }
 
   const passedScenarios = passedScenariosSet.size;

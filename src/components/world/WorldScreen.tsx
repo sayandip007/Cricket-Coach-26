@@ -307,11 +307,19 @@ export const WorldScreen: React.FC = () => {
                     <button
                       onClick={() => {
                         sound.playCrowdCheer(0.8);
+                        const wtcHostName = coachedNation.name === 'Australia' ? 'England' : 'Australia';
+                        const wtcHostCode = wtcHostName === 'England' ? 'eng' : 'aus';
+                        const userCodeSlug = (coachedNation.code || coachedNation.id.replace(/^nat_/, '')).toLowerCase();
+                        const wtcFixId =
+                          internationalSeries.wtcFixtureId ||
+                          `wtc_${wtcHostCode}_${userCodeSlug}_2026`;
                         startInternationalMatch(
-                          coachedNation.name === 'Australia' ? 'England' : 'Australia',
+                          wtcHostName,
                           coachedNation.name,
                           'Optus Stadium, Perth',
-                          'TEST'
+                          'TEST',
+                          wtcFixId,
+                          'wtc_test'
                         );
                       }}
                       className="w-full py-2 px-3 bg-rose-600 hover:bg-rose-500 text-white font-black text-xs uppercase rounded-lg tracking-wider flex items-center justify-center gap-1.5 shadow-md active:scale-95 transition-all"
