@@ -5565,6 +5565,54 @@ export function applyRecordCompletedInternationalMatchState(params: {
     );
   };
 
+  const getEffectiveFixtureSeriesIdentity = (
+    candFix: any,
+    cdId?: string
+  ): { seriesId?: string; isConflicted: boolean } => {
+    if (!candFix) return { isConflicted: false };
+
+    const seriesId: string | undefined =
+      typeof candFix.seriesId === 'string' && candFix.seriesId.trim() !== ''
+        ? candFix.seriesId.trim()
+        : undefined;
+
+    const competitionId: string | undefined =
+      typeof candFix.competitionId === 'string' && candFix.competitionId.trim() !== ''
+        ? candFix.competitionId.trim()
+        : undefined;
+
+    let calIntlSeriesId: string | undefined;
+    if (typeof cdId === 'string' && cdId.startsWith('cal_intl_')) {
+      const rest = cdId.slice(9);
+      const lastUnderscore = rest.lastIndexOf('_');
+      if (lastUnderscore > 0) {
+        const extracted = rest.slice(0, lastUnderscore).trim();
+        const genericLabels = ['day', 'date', 'match', 'round', 'fixture', 'game', 'event'];
+        if (extracted.length > 0 && !genericLabels.includes(extracted.toLowerCase())) {
+          calIntlSeriesId = extracted;
+        }
+      }
+    }
+
+    const presentIdentities: string[] = [];
+    if (seriesId) presentIdentities.push(seriesId);
+    if (competitionId) presentIdentities.push(competitionId);
+    if (calIntlSeriesId) presentIdentities.push(calIntlSeriesId);
+
+    if (presentIdentities.length === 0) {
+      return { isConflicted: false };
+    }
+
+    const first = presentIdentities[0];
+    const isConflicted = presentIdentities.some(id => id !== first);
+
+    if (isConflicted) {
+      return { isConflicted: true };
+    }
+
+    return { seriesId: first, isConflicted: false };
+  };
+
   let nextSeries = internationalSeries;
   const explicitFixtureId =
     typeof finishedMatch.fixtureId === 'string' && finishedMatch.fixtureId.trim().length > 0
@@ -5666,9 +5714,9 @@ export function applyRecordCompletedInternationalMatchState(params: {
 
               for (const candFix of candidates) {
                 if (!candFix || candFix.id !== explicitFixtureId) continue;
-                const fixSeriesId: string | undefined = (candFix as any).seriesId;
+                const { seriesId: fixSeriesId, isConflicted } = getEffectiveFixtureSeriesIdentity(candFix, cd.id);
 
-                if (fixSeriesId && fixSeriesId !== internationalSeries.seriesId) {
+                if (isConflicted || (fixSeriesId && fixSeriesId !== internationalSeries.seriesId)) {
                   hasConflictingCalendarSeries = true;
                   break;
                 }
@@ -5722,12 +5770,9 @@ export function applyRecordCompletedInternationalMatchState(params: {
 
               // Strict Verification:
               // a) Series identity must match active international series
-              const fixSeriesId: string | undefined =
-                (candFix as any).seriesId ||
-                (candFix as any).competitionId ||
-                (typeof cd.id === 'string' && cd.id.startsWith('cal_intl_') ? cd.id.split('_')[2] : undefined);
+              const { seriesId: fixSeriesId, isConflicted } = getEffectiveFixtureSeriesIdentity(candFix, cd.id);
               const isSeriesIdentical: boolean = Boolean(
-                fixSeriesId && fixSeriesId === internationalSeries.seriesId
+                !isConflicted && fixSeriesId && fixSeriesId === internationalSeries.seriesId
               );
 
               // b) Participants must match active international series nations

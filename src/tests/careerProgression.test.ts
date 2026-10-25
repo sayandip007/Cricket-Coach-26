@@ -7583,10 +7583,330 @@ export function runCareerProgressionTests() {
     assert.deepEqual(step49_res.internationalSeries, snap49Series, 'REQ 49.1b: Active series matches completely unmutated');
     assert.deepEqual(step49_res.leagues, snap49Leagues, 'REQ 49.1c: Calendar fixtures remain completed: false');
     assert.deepEqual(step49_res.nations, snap49Nations, 'REQ 49.1d: ICC rankings completely unmutated');
+
+    // ==========================================================================
+    // SCENARIO 50: Phase 5.8 — Conflicting Identity Expressed Only Through competitionId
+    // ==========================================================================
+    const directCompConflictCustomId = 'direct_id_comp_conflict_101';
+
+    const seriesCompConflict: InternationalSeriesState = {
+      seriesId: 'tour_ind_aus_2026',
+      userNationId: 'nat_ind',
+      opponentNationId: 'nat_aus',
+      userNationName: 'India',
+      userNationCode: 'IND',
+      userNationFlag: '🇮🇳',
+      opponentNationName: 'Australia',
+      opponentNationCode: 'AUS',
+      opponentNationFlag: '🇦🇺',
+      format: 'T20',
+      matches: [
+        {
+          matchNumber: 1,
+          city: 'Melbourne',
+          venue: 'MCG',
+          completed: false,
+          fixtureId: directCompConflictCustomId
+        }
+      ],
+      seriesWins: 0,
+      seriesLosses: 0
+    };
+
+    const leagueCompConflict: League = {
+      ...step1.leagues[0],
+      id: 'league_comp_conflict',
+      calendarDates: [
+        {
+          dateStr: '2026-05-01',
+          dayOfWeek: 'FRI',
+          dayNumber: 1,
+          month: 'May',
+          type: 'match',
+          matchFixture: {
+            id: directCompConflictCustomId,
+            homeTeamId: 'nat_ind',
+            awayTeamId: 'nat_aus',
+            competitionId: 'tour_other_2026', // Conflicting series identity in competitionId!
+            matchNumber: 1,
+            isInternational: true,
+            completed: false
+          } as any
+        }
+      ]
+    };
+
+    const finishedMatchCompConflict = {
+      ...finishedMatch41_1,
+      id: directCompConflictCustomId,
+      fixtureId: directCompConflictCustomId,
+      seriesId: 'tour_ind_aus_2026'
+    } as unknown as MatchLiveState;
+
+    const snap50Series = {
+      ...seriesCompConflict,
+      matches: seriesCompConflict.matches.map((m: any) => ({ ...m }))
+    };
+    const snap50Leagues = JSON.parse(JSON.stringify([leagueCompConflict]));
+    const snap50Nations = JSON.parse(JSON.stringify(step1.nations));
+
+    const step50_res = applyRecordCompletedInternationalMatchState({
+      finishedMatch: finishedMatchCompConflict,
+      didUserWin: true,
+      coachProfile: intlCoach41,
+      internationalSeries: seriesCompConflict,
+      leagues: [leagueCompConflict],
+      currentLeagueId: leagueCompConflict.id,
+      nations: step1.nations
+    });
+
+    assert.equal(step50_res.matchedFixtureId, null, 'REQ 50.1a: Direct-ID match with conflicting competitionId in calendar entry rejected cleanly');
+    assert.deepEqual(step50_res.internationalSeries, snap50Series, 'REQ 50.1b: Active series matches completely unmutated');
+    assert.deepEqual(step50_res.leagues, snap50Leagues, 'REQ 50.1c: Calendar fixtures remain completed: false');
+    assert.deepEqual(step50_res.nations, snap50Nations, 'REQ 50.1d: ICC rankings completely unmutated');
+
+    // ==========================================================================
+    // SCENARIO 51: Phase 5.8 — Conflicting Identity Expressed Through cal_intl_ Calendar Date ID
+    // ==========================================================================
+    const directCalIntlConflictCustomId = 'direct_id_cal_intl_conflict_102';
+
+    const seriesCalIntlConflict: InternationalSeriesState = {
+      seriesId: 'tour_ind_aus_2026',
+      userNationId: 'nat_ind',
+      opponentNationId: 'nat_aus',
+      userNationName: 'India',
+      userNationCode: 'IND',
+      userNationFlag: '🇮🇳',
+      opponentNationName: 'Australia',
+      opponentNationCode: 'AUS',
+      opponentNationFlag: '🇦🇺',
+      format: 'T20',
+      matches: [
+        {
+          matchNumber: 1,
+          city: 'Melbourne',
+          venue: 'MCG',
+          completed: false,
+          fixtureId: directCalIntlConflictCustomId
+        }
+      ],
+      seriesWins: 0,
+      seriesLosses: 0
+    };
+
+    const leagueCalIntlConflict: League = {
+      ...step1.leagues[0],
+      id: 'league_cal_intl_conflict',
+      calendarDates: [
+        {
+          id: 'cal_intl_tour_other_2026_date1', // cal_intl_ indicates conflicting series 'tour_other_2026'!
+          dateStr: '2026-05-01',
+          dayOfWeek: 'FRI',
+          dayNumber: 1,
+          month: 'May',
+          type: 'match',
+          matchFixture: {
+            id: directCalIntlConflictCustomId,
+            homeTeamId: 'nat_ind',
+            awayTeamId: 'nat_aus',
+            matchNumber: 1,
+            isInternational: true,
+            completed: false
+          } as any
+        }
+      ]
+    };
+
+    const finishedMatchCalIntlConflict = {
+      ...finishedMatch41_1,
+      id: directCalIntlConflictCustomId,
+      fixtureId: directCalIntlConflictCustomId,
+      seriesId: 'tour_ind_aus_2026'
+    } as unknown as MatchLiveState;
+
+    const snap51Series = {
+      ...seriesCalIntlConflict,
+      matches: seriesCalIntlConflict.matches.map((m: any) => ({ ...m }))
+    };
+    const snap51Leagues = JSON.parse(JSON.stringify([leagueCalIntlConflict]));
+    const snap51Nations = JSON.parse(JSON.stringify(step1.nations));
+
+    const step51_res = applyRecordCompletedInternationalMatchState({
+      finishedMatch: finishedMatchCalIntlConflict,
+      didUserWin: true,
+      coachProfile: intlCoach41,
+      internationalSeries: seriesCalIntlConflict,
+      leagues: [leagueCalIntlConflict],
+      currentLeagueId: leagueCalIntlConflict.id,
+      nations: step1.nations
+    });
+
+    assert.equal(step51_res.matchedFixtureId, null, 'REQ 51.1a: Direct-ID match with conflicting cal_intl_ encoded series ID rejected cleanly');
+    assert.deepEqual(step51_res.internationalSeries, snap51Series, 'REQ 51.1b: Active series matches completely unmutated');
+    assert.deepEqual(step51_res.leagues, snap51Leagues, 'REQ 51.1c: Calendar fixtures remain completed: false');
+    assert.deepEqual(step51_res.nations, snap51Nations, 'REQ 51.1d: ICC rankings completely unmutated');
+
+    // ==========================================================================
+    // SCENARIO 52: Phase 5.8 — Valid Direct-ID Match With Fully Consistent Metadata
+    // ==========================================================================
+    const directConsistentCustomId = 'direct_id_consistent_103';
+
+    const seriesConsistent: InternationalSeriesState = {
+      seriesId: 'tour_ind_aus_2026',
+      userNationId: 'nat_ind',
+      opponentNationId: 'nat_aus',
+      userNationName: 'India',
+      userNationCode: 'IND',
+      userNationFlag: '🇮🇳',
+      opponentNationName: 'Australia',
+      opponentNationCode: 'AUS',
+      opponentNationFlag: '🇦🇺',
+      format: 'T20',
+      matches: [
+        {
+          matchNumber: 1,
+          city: 'Melbourne',
+          venue: 'MCG',
+          completed: false,
+          fixtureId: directConsistentCustomId
+        }
+      ],
+      seriesWins: 0,
+      seriesLosses: 0
+    };
+
+    const leagueConsistent: League = {
+      ...step1.leagues[0],
+      id: 'league_consistent',
+      calendarDates: [
+        {
+          id: 'cal_intl_tour_ind_aus_2026_date1', // cal_intl_ matches active series 'tour_ind_aus_2026'!
+          dateStr: '2026-05-01',
+          dayOfWeek: 'FRI',
+          dayNumber: 1,
+          month: 'May',
+          type: 'match',
+          matchFixture: {
+            id: directConsistentCustomId,
+            homeTeamId: 'nat_ind',
+            awayTeamId: 'nat_aus',
+            seriesId: 'tour_ind_aus_2026',
+            competitionId: 'tour_ind_aus_2026',
+            matchNumber: 1,
+            isInternational: true,
+            completed: false
+          } as any
+        }
+      ]
+    };
+
+    const finishedMatchConsistent = {
+      ...finishedMatch41_1,
+      id: directConsistentCustomId,
+      fixtureId: directConsistentCustomId,
+      seriesId: 'tour_ind_aus_2026'
+    } as unknown as MatchLiveState;
+
+    const step52_res = applyRecordCompletedInternationalMatchState({
+      finishedMatch: finishedMatchConsistent,
+      didUserWin: true,
+      coachProfile: intlCoach41,
+      internationalSeries: seriesConsistent,
+      leagues: [leagueConsistent],
+      currentLeagueId: leagueConsistent.id,
+      nations: step1.nations
+    });
+
+    assert.equal(step52_res.matchedFixtureId, directConsistentCustomId, 'REQ 52.1a: Valid direct-ID match with consistent metadata completes successfully');
+    assert.equal(step52_res.internationalSeries.matches[0].completed, true, 'REQ 52.1b: Active series match marked completed: true');
+    assert.equal(step52_res.internationalSeries.seriesWins, 1, 'REQ 52.1c: Active series wins incremented to 1');
+    assert.equal(step52_res.leagues[0].calendarDates[0].matchFixture?.completed, true, 'REQ 52.1d: Calendar fixture marked completed: true');
+
+    // ==========================================================================
+    // SCENARIO 53: Phase 5.8 — Conflicting seriesId and competitionId Fields on Same Fixture
+    // ==========================================================================
+    const directInternalConflictCustomId = 'direct_id_internal_conflict_104';
+
+    const seriesInternalConflict: InternationalSeriesState = {
+      seriesId: 'tour_ind_aus_2026',
+      userNationId: 'nat_ind',
+      opponentNationId: 'nat_aus',
+      userNationName: 'India',
+      userNationCode: 'IND',
+      userNationFlag: '🇮🇳',
+      opponentNationName: 'Australia',
+      opponentNationCode: 'AUS',
+      opponentNationFlag: '🇦🇺',
+      format: 'T20',
+      matches: [
+        {
+          matchNumber: 1,
+          city: 'Melbourne',
+          venue: 'MCG',
+          completed: false,
+          fixtureId: directInternalConflictCustomId
+        }
+      ],
+      seriesWins: 0,
+      seriesLosses: 0
+    };
+
+    const leagueInternalConflict: League = {
+      ...step1.leagues[0],
+      id: 'league_internal_conflict',
+      calendarDates: [
+        {
+          dateStr: '2026-05-01',
+          dayOfWeek: 'FRI',
+          dayNumber: 1,
+          month: 'May',
+          type: 'match',
+          matchFixture: {
+            id: directInternalConflictCustomId,
+            homeTeamId: 'nat_ind',
+            awayTeamId: 'nat_aus',
+            seriesId: 'tour_ind_aus_2026',
+            competitionId: 'tour_other_2026', // Internal contradiction between seriesId and competitionId!
+            matchNumber: 1,
+            isInternational: true,
+            completed: false
+          } as any
+        }
+      ]
+    };
+
+    const finishedMatchInternalConflict = {
+      ...finishedMatch41_1,
+      id: directInternalConflictCustomId,
+      fixtureId: directInternalConflictCustomId,
+      seriesId: 'tour_ind_aus_2026'
+    } as unknown as MatchLiveState;
+
+    const snap53Series = {
+      ...seriesInternalConflict,
+      matches: seriesInternalConflict.matches.map((m: any) => ({ ...m }))
+    };
+    const snap53Leagues = JSON.parse(JSON.stringify([leagueInternalConflict]));
+    const snap53Nations = JSON.parse(JSON.stringify(step1.nations));
+
+    const step53_res = applyRecordCompletedInternationalMatchState({
+      finishedMatch: finishedMatchInternalConflict,
+      didUserWin: true,
+      coachProfile: intlCoach41,
+      internationalSeries: seriesInternalConflict,
+      leagues: [leagueInternalConflict],
+      currentLeagueId: leagueInternalConflict.id,
+      nations: step1.nations
+    });
+
+    assert.equal(step53_res.matchedFixtureId, null, 'REQ 53.1a: Internal metadata conflict (seriesId vs competitionId) on calendar fixture rejected cleanly');
+    assert.deepEqual(step53_res.internationalSeries, snap53Series, 'REQ 53.1b: Active series matches completely unmutated');
+    assert.deepEqual(step53_res.leagues, snap53Leagues, 'REQ 53.1c: Calendar fixtures remain completed: false');
+    assert.deepEqual(step53_res.nations, snap53Nations, 'REQ 53.1d: ICC rankings completely unmutated');
   }
 
   console.log('✅ ALL Career Progression, Multi-League Recovery, International Series IDs, Transition Idempotency & Verified Defect Tests PASSED!');
-  return { passedScenarios: 49, totalScenarios: 49 };
+  return { passedScenarios: 53, totalScenarios: 53 };
 }
 
 
