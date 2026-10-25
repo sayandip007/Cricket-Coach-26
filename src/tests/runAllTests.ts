@@ -1,4 +1,4 @@
-import assert from 'node:assert/strict';
+import rawAssert from 'node:assert/strict';
 import { StyleSheet, Platform, Dimensions, AppRegistry } from '../rn/react-native';
 import { CSV_PLAYERS, CSV_TEAM_XIS, CSV_TEAM_CAPTAINS } from '../data/csvPlayers';
 import {
@@ -79,6 +79,35 @@ interface TestResult {
 }
 
 const results: TestResult[] = [];
+let directAssertionsTotal = 0;
+let directAssertionsPassed = 0;
+let subSuiteTestCasesTotal = 0;
+let subSuiteTestCasesPassed = 0;
+let subSuiteAssertionsTotal = 0;
+let subSuiteAssertionsPassed = 0;
+let careerScenariosTotal = 0;
+let careerScenariosPassed = 0;
+
+const assert: typeof rawAssert = new Proxy(rawAssert, {
+  apply(target, thisArg, argArray) {
+    directAssertionsTotal++;
+    const res = Reflect.apply(target, thisArg, argArray);
+    directAssertionsPassed++;
+    return res;
+  },
+  get(target, prop, receiver) {
+    const orig = Reflect.get(target, prop, receiver);
+    if (typeof orig === 'function') {
+      return (...args: unknown[]) => {
+        directAssertionsTotal++;
+        const res = orig.apply(target, args);
+        directAssertionsPassed++;
+        return res;
+      };
+    }
+    return orig;
+  }
+});
 
 function runTest(suite: 'UNIT' | 'SMOKE' | 'REGRESSION', name: string, fn: () => void) {
   try {
@@ -1940,6 +1969,8 @@ runTest('REGRESSION', 'Phase 24: Dynamic Player Overview & Career Dashboard', ()
 
 runTest('REGRESSION', 'Phase 25: Complete Match Engine Audit, Cricket Rules & Batch Realism Verification (18 Suites)', () => {
   const auditRes = runMatchEngineAuditTests();
+  subSuiteTestCasesPassed += auditRes.passed;
+  subSuiteTestCasesTotal += auditRes.total;
   assert.equal(auditRes.passed, auditRes.total, `Expected all ${auditRes.total} match engine audit tests to pass`);
   console.log('\n--- BATCH SIMULATION REALISM METRICS ---');
   console.log(JSON.stringify(auditRes.batchReport, null, 2));
@@ -1947,17 +1978,38 @@ runTest('REGRESSION', 'Phase 25: Complete Match Engine Audit, Cricket Rules & Ba
 
 runTest('REGRESSION', 'Phase 26: Cricket Engine Bugfixes — Bowler Selection, 5-Bowler Deadlock & IPL Impact Player Overseas Limit', () => {
   const bugRes = runCricketBugsRegressionTests();
+  subSuiteTestCasesPassed += bugRes.passed;
+  subSuiteTestCasesTotal += bugRes.total;
   assert.equal(bugRes.passed, bugRes.total, `Expected all ${bugRes.total} cricket bugs regression tests to pass`);
 });
 
-runTest('REGRESSION', 'Phase 27: Career Mode Progression, Playoff Brackets, Board Review & Next-Season Advancement (Scenarios 1–54)', () => {
+runTest('REGRESSION', 'Phase 27: Career Mode Progression, Playoff Brackets, Board Review, Next-Season Advancement & Authoritative Fixture Resolution Matrix (Scenarios 1–55)', () => {
   const careerRes = runCareerProgressionTests();
-  assert.equal(careerRes.passedScenarios, careerRes.totalScenarios, `Expected all ${careerRes.totalScenarios} career progression scenarios to pass`);
+  careerScenariosPassed = careerRes.passedScenarios;
+  careerScenariosTotal = careerRes.totalScenarios;
+  subSuiteTestCasesPassed += careerRes.passedTestCases;
+  subSuiteTestCasesTotal += careerRes.totalTestCases;
+  subSuiteAssertionsPassed += careerRes.passedAssertions;
+  subSuiteAssertionsTotal += careerRes.totalAssertions;
+  assert.equal(careerRes.passedScenarios, careerRes.totalScenarios, `Expected all ${careerRes.totalScenarios} career progression scenario groups to pass`);
+  assert.equal(careerRes.passedTestCases, careerRes.totalTestCases, `Expected all ${careerRes.totalTestCases} career progression test cases to pass`);
+  assert.equal(careerRes.passedAssertions, careerRes.totalAssertions, `Expected all ${careerRes.totalAssertions} career progression assertions to pass`);
 });
 
 const failed = results.filter(r => !r.passed);
+const standaloneSuitesTotal = results.length - 3; // Suites outside Phase 25, 26, 27 sub-suite aggregators
+const standaloneSuitesPassed = results.slice(0, results.length - 3).filter(r => r.passed).length;
+const totalTestCases = standaloneSuitesTotal + subSuiteTestCasesTotal;
+const passedTestCases = standaloneSuitesPassed + subSuiteTestCasesPassed;
+const totalAssertions = directAssertionsTotal + subSuiteAssertionsTotal;
+const passedAssertions = directAssertionsPassed + subSuiteAssertionsPassed;
+
 console.log(`\n=============================================================`);
-console.log(`TEST SUMMARY: ${results.length - failed.length}/${results.length} PASSED (${failed.length} FAILED)`);
+console.log(`TEST SUMMARY:`);
+console.log(`  Top-Level Suites : ${results.length - failed.length}/${results.length} PASSED (${failed.length} FAILED)`);
+console.log(`  Career Scenarios : ${careerScenariosPassed}/${careerScenariosTotal} PASSED`);
+console.log(`  Total Test Cases : ${passedTestCases}/${totalTestCases} PASSED`);
+console.log(`  Total Assertions : ${passedAssertions}/${totalAssertions} PASSED (${directAssertionsPassed} in runAllTests + ${subSuiteAssertionsPassed} in careerProgression)`);
 console.log(`=============================================================\n`);
 
 if (failed.length > 0) {

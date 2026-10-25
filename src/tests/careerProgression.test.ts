@@ -1,4 +1,4 @@
-import assert from 'node:assert/strict';
+import rawAssert from 'node:assert/strict';
 import { CSV_PLAYERS } from '../data/csvPlayers';
 import {
   INITIAL_PLAYERS,
@@ -47,6 +47,7 @@ import {
   applySwitchUserClubState,
   applyAcceptJobOfferState,
   applyResignNationalJobState,
+  resolveEffectiveFixtureSeriesIdentity,
   InternationalSeriesState
 } from '../context/GameContext';
 import {
@@ -88,6 +89,137 @@ import {
 
 export function runCareerProgressionTests() {
   console.log('🧪 Starting Career Mode & Progression Regression Tests...');
+
+  let totalAssertions = 0;
+  let passedAssertions = 0;
+  let currentMatrixCaseId: string | null = null;
+  const totalTestCasesSet = new Set<string>();
+  const passedTestCasesSet = new Set<string>();
+  const failedTestCasesSet = new Set<string>();
+  const totalScenariosSet = new Set<string>();
+  const passedScenariosSet = new Set<string>();
+  const failedScenariosSet = new Set<string>();
+
+  const deriveCaseAndScenarioTags = (args: unknown[]): { caseTag: string; scenarioTag: string } => {
+    let rawMsg = '';
+    for (let i = args.length - 1; i >= 0; i--) {
+      if (typeof args[i] === 'string' && (args[i] as string).trim().length > 0) {
+        rawMsg = (args[i] as string).trim();
+        break;
+      }
+    }
+    const colonIdx = rawMsg.indexOf(':');
+    const prefix = colonIdx > 0 ? rawMsg.slice(0, colonIdx).trim() : rawMsg;
+    const caseTag =
+      currentMatrixCaseId ||
+      (prefix.length > 0 ? prefix.replace(/[a-z]$/i, '') : `assertion_case_${totalAssertions}`);
+
+    let scenarioTag = 'SCENARIO_GENERAL';
+    if (currentMatrixCaseId) {
+      scenarioTag = 'SCENARIO 55';
+    } else if (/^Part 4 Scenario\s+\d+/i.test(prefix)) {
+      scenarioTag = prefix.match(/^Part 4 Scenario\s+\d+/i)![0].toUpperCase();
+    } else if (/^Scenario\s+\d+/i.test(prefix)) {
+      scenarioTag = prefix.match(/^Scenario\s+\d+/i)![0].toUpperCase();
+    } else if (/^REQ\s+\d+/i.test(prefix)) {
+      scenarioTag = prefix.match(/^REQ\s+\d+/i)![0].toUpperCase();
+    } else if (/^Defect\s+32/i.test(prefix)) {
+      scenarioTag = 'REQ 32';
+    } else if (/^Loop Guard\s+29/i.test(prefix)) {
+      scenarioTag = 'REQ 29';
+    } else if (/^Idempotency\s+27/i.test(prefix)) {
+      scenarioTag = 'REQ 27';
+    } else if (/^League Recovery\s+26/i.test(prefix)) {
+      scenarioTag = 'REQ 26';
+    } else if (/^Series ID\s+25/i.test(prefix)) {
+      scenarioTag = 'REQ 25';
+    } else if (/^Intl Edge\s+23/i.test(prefix)) {
+      scenarioTag = 'REQ 23';
+    } else if (/^Calendar Req\s+\d+/i.test(prefix)) {
+      scenarioTag = prefix.match(/^Calendar Req\s+\d+/i)![0].toUpperCase();
+    } else if (/^Save Req\s+\d+/i.test(prefix)) {
+      scenarioTag = prefix.match(/^Save Req\s+\d+/i)![0].toUpperCase();
+    } else if (/^Franchise Req\s+\d+/i.test(prefix)) {
+      scenarioTag = prefix.match(/^Franchise Req\s+\d+/i)![0].toUpperCase();
+    } else if (/^Int Req\s+\d+/i.test(prefix)) {
+      scenarioTag = prefix.match(/^Int Req\s+\d+/i)![0].toUpperCase();
+    }
+    return { caseTag, scenarioTag };
+  };
+
+  const assert: typeof rawAssert = new Proxy(rawAssert, {
+    apply(target, thisArg, argArray) {
+      totalAssertions++;
+      const { caseTag, scenarioTag } = deriveCaseAndScenarioTags(argArray);
+      totalTestCasesSet.add(caseTag);
+      totalScenariosSet.add(scenarioTag);
+      try {
+        const res = Reflect.apply(target, thisArg, argArray);
+        passedAssertions++;
+        if (!failedTestCasesSet.has(caseTag)) passedTestCasesSet.add(caseTag);
+        if (!failedScenariosSet.has(scenarioTag)) passedScenariosSet.add(scenarioTag);
+        return res;
+      } catch (err) {
+        failedTestCasesSet.add(caseTag);
+        passedTestCasesSet.delete(caseTag);
+        failedScenariosSet.add(scenarioTag);
+        passedScenariosSet.delete(scenarioTag);
+        throw err;
+      }
+    },
+    get(target, prop, receiver) {
+      const orig = Reflect.get(target, prop, receiver);
+      if (typeof orig === 'function') {
+        return (...args: unknown[]) => {
+          totalAssertions++;
+          const { caseTag, scenarioTag } = deriveCaseAndScenarioTags(args);
+          totalTestCasesSet.add(caseTag);
+          totalScenariosSet.add(scenarioTag);
+          try {
+            const res = orig.apply(target, args);
+            passedAssertions++;
+            if (!failedTestCasesSet.has(caseTag)) passedTestCasesSet.add(caseTag);
+            if (!failedScenariosSet.has(scenarioTag)) passedScenariosSet.add(scenarioTag);
+            return res;
+          } catch (err) {
+            failedTestCasesSet.add(caseTag);
+            passedTestCasesSet.delete(caseTag);
+            failedScenariosSet.add(scenarioTag);
+            passedScenariosSet.delete(scenarioTag);
+            throw err;
+          }
+        };
+      }
+      return orig;
+    }
+  });
+
+  const runMatrixCase = (caseId: string, description: string, fn: () => void) => {
+    currentMatrixCaseId = caseId;
+    totalTestCasesSet.add(caseId);
+    totalScenariosSet.add('SCENARIO 55');
+    const assertionsBefore = passedAssertions;
+    try {
+      fn();
+      if (passedAssertions <= assertionsBefore) {
+        throw new Error(`Matrix case ${caseId} (${description}) executed 0 assertions`);
+      }
+      if (!failedTestCasesSet.has(caseId)) {
+        passedTestCasesSet.add(caseId);
+      }
+      if (!failedScenariosSet.has('SCENARIO 55')) {
+        passedScenariosSet.add('SCENARIO 55');
+      }
+    } catch (err) {
+      failedTestCasesSet.add(caseId);
+      passedTestCasesSet.delete(caseId);
+      failedScenariosSet.add('SCENARIO 55');
+      passedScenariosSet.delete('SCENARIO 55');
+      throw err;
+    } finally {
+      currentMatrixCaseId = null;
+    }
+  };
 
   // ==========================================================================
   // SCENARIO 1: Playoff bracket displays top 4 teams when qualification is determined
@@ -8011,10 +8143,1578 @@ export function runCareerProgressionTests() {
     assert.deepEqual(step54_res.internationalSeries, snap54Series, 'REQ 54.1b: Active series matches & completion flags completely unmutated');
     assert.deepEqual(step54_res.leagues, snap54Leagues, 'REQ 54.1c: Both calendar entries remain completed: false');
     assert.deepEqual(step54_res.nations, snap54Nations, 'REQ 54.1d: ICC rankings completely unmutated');
+
+    // ==========================================================================
+    // SCENARIO 55: Complete Authoritative International Fixture Resolution Matrix
+    // Exercises every branch ('resolved', 'already_completed', 'not_found',
+    // 'ambiguous', 'identity_conflict') across Direct Identity, Calendar Recovery,
+    // Legacy Callbacks, and Idempotency & Full State Integrity (including players & teams).
+    // ==========================================================================
+    const buildMatrixBaseState = () => {
+      const basePlayers: Player[] = INITIAL_PLAYERS.slice(0, 6).map((p, idx) => ({
+        ...JSON.parse(JSON.stringify(p)),
+        id: `mat55_p_${idx + 1}`,
+        name: idx === 0 ? 'Shubman Gill' : `Matrix Player ${idx + 1}`,
+        nationality: idx < 3 ? 'India' : 'Australia'
+      }));
+      const baseTeams: Team[] = [
+        {
+          ...JSON.parse(JSON.stringify(INITIAL_TEAMS[0])),
+          id: 'nat_ind',
+          name: 'India',
+          shortName: 'IND',
+          squad: JSON.parse(JSON.stringify(basePlayers.slice(0, 3)))
+        },
+        {
+          ...JSON.parse(JSON.stringify(INITIAL_TEAMS[1])),
+          id: 'nat_aus',
+          name: 'Australia',
+          shortName: 'AUS',
+          squad: JSON.parse(JSON.stringify(basePlayers.slice(3, 6)))
+        }
+      ];
+      const baseSeries: InternationalSeriesState = {
+        seriesId: 'tour_ind_aus_2026',
+        userNationId: 'nat_ind',
+        opponentNationId: 'nat_aus',
+        userNationName: 'India',
+        userNationCode: 'IND',
+        userNationFlag: '🇮🇳',
+        opponentNationName: 'Australia',
+        opponentNationCode: 'AUS',
+        opponentNationFlag: '🇦🇺',
+        format: 'T20',
+        matches: [
+          {
+            matchNumber: 1,
+            format: 'T20',
+            city: 'Melbourne',
+            venue: 'MCG',
+            completed: false,
+            fixtureId: 'intl_fix_tour_ind_aus_2026_1'
+          },
+          {
+            matchNumber: 2,
+            format: 'T20',
+            city: 'Sydney',
+            venue: 'SCG',
+            completed: false,
+            fixtureId: 'intl_fix_tour_ind_aus_2026_2'
+          },
+          {
+            matchNumber: 3,
+            format: 'T20',
+            city: 'Brisbane',
+            venue: 'Gabba',
+            completed: false,
+            fixtureId: 'intl_fix_tour_ind_aus_2026_3'
+          }
+        ],
+        seriesWins: 0,
+        seriesLosses: 0
+      };
+      const baseNations = JSON.parse(JSON.stringify(step1.nations));
+      const baseFinishedMatch: MatchLiveState = {
+        ...JSON.parse(JSON.stringify(finishedMatch41_1)),
+        id: 'intl_fix_tour_ind_aus_2026_1',
+        fixtureId: 'intl_fix_tour_ind_aus_2026_1',
+        isInternational: true,
+        leagueId: 'intl',
+        seasonName: 'Season 2026',
+        homeTeamId: 'nat_ind',
+        awayTeamId: 'nat_aus',
+        homeTeamName: 'India',
+        awayTeamName: 'Australia',
+        winnerId: 'nat_ind',
+        resultText: 'India won by 24 runs',
+        innings1: {
+          ...JSON.parse(JSON.stringify(finishedMatch41_1.innings1)),
+          battingTeamId: 'nat_ind',
+          bowlingTeamId: 'nat_aus',
+          runs: 188,
+          wickets: 4,
+          overs: 20,
+          batters: [
+            {
+              playerId: 'mat55_p_1',
+              name: 'Shubman Gill',
+              runs: 84,
+              balls: 52,
+              fours: 8,
+              sixes: 3,
+              dismissal: 'not out',
+              isOut: false,
+              strikeRate: 161.5,
+              isOnStrike: true
+            }
+          ],
+          bowlers: []
+        }
+      };
+      return { basePlayers, baseTeams, baseSeries, baseNations, baseFinishedMatch };
+    };
+
+    const assertFullStateUnchangedOnRejection = (
+      tag: string,
+      res: ReturnType<typeof applyRecordCompletedInternationalMatchState>,
+      expectedStatus: 'not_found' | 'ambiguous' | 'identity_conflict',
+      snapSeries: InternationalSeriesState,
+      snapLeagues: League[],
+      snapNations: typeof step1.nations,
+      snapPlayers: Player[],
+      snapTeams: Team[]
+    ) => {
+      assert.equal(res.resolutionStatus, expectedStatus, `${tag}: Expected resolutionStatus === '${expectedStatus}'`);
+      assert.equal(res.matchedFixtureId, null, `${tag}: Rejected callback returns matchedFixtureId === null`);
+      assert.deepEqual(res.internationalSeries, snapSeries, `${tag}: internationalSeries state completely unchanged`);
+      assert.deepEqual(res.leagues, snapLeagues, `${tag}: leagues & calendar fixtures completely unchanged`);
+      assert.deepEqual(res.nations, snapNations, `${tag}: nations ICC rankings completely unchanged`);
+      assert.deepEqual(res.players, snapPlayers, `${tag}: players career statistics completely unchanged`);
+      assert.deepEqual(res.teams, snapTeams, `${tag}: teams matchHistory completely unchanged`);
+    };
+
+    // --------------------------------------------------------------------------
+    // 1. DIRECT IDENTITY MATRIX (MAT 55.A1 – 55.A8)
+    // --------------------------------------------------------------------------
+    runMatrixCase('MAT 55.A1', 'Valid unique direct fixture ID resolves and mutates all target state once', () => {
+      const { basePlayers, baseTeams, baseSeries, baseNations, baseFinishedMatch } = buildMatrixBaseState();
+      const customDirectId = 'mat55_valid_direct_1';
+      baseSeries.matches[0].fixtureId = customDirectId;
+      const league: League = {
+        ...step1.leagues[0],
+        id: 'league_mat55_a1',
+        calendarDates: [
+          {
+            id: 'cal_intl_tour_ind_aus_2026_1',
+            dateStr: '2026-06-01',
+            dayOfWeek: 'MON',
+            dayNumber: 1,
+            month: 'Jun',
+            type: 'international',
+            matchFixture: {
+              id: customDirectId,
+              homeTeamId: 'nat_ind',
+              awayTeamId: 'nat_aus',
+              seriesId: 'tour_ind_aus_2026',
+              matchNumber: 1,
+              isInternational: true,
+              completed: false
+            } as any
+          }
+        ]
+      };
+      const res = applyRecordCompletedInternationalMatchState({
+        finishedMatch: { ...baseFinishedMatch, id: customDirectId, fixtureId: customDirectId },
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: baseSeries,
+        leagues: [league],
+        currentLeagueId: league.id,
+        nations: baseNations,
+        players: basePlayers,
+        teams: baseTeams
+      });
+      assert.equal(res.resolutionStatus, 'resolved', 'MAT 55.A1: Valid unique direct ID classified as resolved');
+      assert.equal(res.matchedFixtureId, customDirectId, 'MAT 55.A1: Direct ID matched');
+      assert.equal(res.internationalSeries.matches[0].completed, true, 'MAT 55.A1: Match #1 marked completed');
+      assert.equal(res.internationalSeries.seriesWins, 1, 'MAT 55.A1: Series wins incremented to 1');
+      assert.equal(res.leagues[0].calendarDates[0].matchFixture?.completed, true, 'MAT 55.A1: Calendar fixture marked completed');
+      assert.equal(res.players?.[0].competitionStats?.international?.runs, 84, 'MAT 55.A1: Player international runs updated');
+      assert.equal(res.teams?.[0].squad?.[0].competitionStats?.international?.runs, 84, 'MAT 55.A1: Team squad player stats updated');
+    });
+
+    runMatrixCase('MAT 55.A2', 'Direct fixture ID belonging to another series is rejected with identity_conflict', () => {
+      const { basePlayers, baseTeams, baseSeries, baseNations, baseFinishedMatch } = buildMatrixBaseState();
+      const league: League = { ...step1.leagues[0], id: 'league_mat55_a2', calendarDates: [] };
+      const snapS = JSON.parse(JSON.stringify(baseSeries));
+      const snapL = JSON.parse(JSON.stringify([league]));
+      const snapN = JSON.parse(JSON.stringify(baseNations));
+      const snapP = JSON.parse(JSON.stringify(basePlayers));
+      const snapT = JSON.parse(JSON.stringify(baseTeams));
+
+      const res = applyRecordCompletedInternationalMatchState({
+        finishedMatch: {
+          ...baseFinishedMatch,
+          id: 'intl_fix_tour_other_series_2026_1',
+          fixtureId: 'intl_fix_tour_other_series_2026_1'
+        },
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: baseSeries,
+        leagues: [league],
+        currentLeagueId: league.id,
+        nations: baseNations,
+        players: basePlayers,
+        teams: baseTeams
+      });
+      assertFullStateUnchangedOnRejection('MAT 55.A2', res, 'identity_conflict', snapS, snapL, snapN, snapP, snapT);
+    });
+
+    runMatrixCase('MAT 55.A3', 'Direct fixture ID duplicated across two leagues is rejected', () => {
+      const { basePlayers, baseTeams, baseSeries, baseNations, baseFinishedMatch } = buildMatrixBaseState();
+      const sharedId = 'mat55_shared_cross_league_id';
+      baseSeries.matches[0].fixtureId = sharedId;
+      const makeLeague = (id: string): League => ({
+        ...step1.leagues[0],
+        id,
+        calendarDates: [
+          {
+            id: 'cal_intl_tour_ind_aus_2026_1',
+            dateStr: '2026-06-01',
+            dayOfWeek: 'MON',
+            dayNumber: 1,
+            month: 'Jun',
+            type: 'match',
+            matchFixture: {
+              id: sharedId,
+              homeTeamId: 'nat_ind',
+              awayTeamId: 'nat_aus',
+              seriesId: 'tour_ind_aus_2026',
+              matchNumber: 1,
+              isInternational: true,
+              completed: false
+            } as any
+          }
+        ]
+      });
+      const leagues = [makeLeague('lg_1'), makeLeague('lg_2')];
+      const snapS = JSON.parse(JSON.stringify(baseSeries));
+      const snapL = JSON.parse(JSON.stringify(leagues));
+      const snapN = JSON.parse(JSON.stringify(baseNations));
+      const snapP = JSON.parse(JSON.stringify(basePlayers));
+      const snapT = JSON.parse(JSON.stringify(baseTeams));
+
+      const res = applyRecordCompletedInternationalMatchState({
+        finishedMatch: { ...baseFinishedMatch, id: sharedId, fixtureId: sharedId },
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: baseSeries,
+        leagues,
+        currentLeagueId: 'lg_1',
+        nations: baseNations,
+        players: basePlayers,
+        teams: baseTeams
+      });
+      assertFullStateUnchangedOnRejection('MAT 55.A3', res, 'ambiguous', snapS, snapL, snapN, snapP, snapT);
+    });
+
+    runMatrixCase('MAT 55.A4', 'Direct fixture ID duplicated across two tours with identical participants is rejected', () => {
+      const { basePlayers, baseTeams, baseSeries, baseNations, baseFinishedMatch } = buildMatrixBaseState();
+      const sharedId = 'mat55_dup_two_tours_same_teams';
+      baseSeries.matches[0].fixtureId = sharedId;
+      const league: League = {
+        ...step1.leagues[0],
+        id: 'league_mat55_a4',
+        calendarDates: [
+          {
+            id: 'cal_intl_tour_ind_aus_2026_1',
+            dateStr: '2026-06-01',
+            dayOfWeek: 'MON',
+            dayNumber: 1,
+            month: 'Jun',
+            type: 'match',
+            matchFixture: {
+              id: sharedId,
+              homeTeamId: 'nat_ind',
+              awayTeamId: 'nat_aus',
+              seriesId: 'tour_ind_aus_2026',
+              matchNumber: 1,
+              isInternational: true,
+              completed: false
+            } as any
+          },
+          {
+            id: 'cal_intl_tour_ind_aus_late_2026_1',
+            dateStr: '2026-11-01',
+            dayOfWeek: 'SUN',
+            dayNumber: 1,
+            month: 'Nov',
+            type: 'match',
+            matchFixture: {
+              id: sharedId,
+              homeTeamId: 'nat_ind',
+              awayTeamId: 'nat_aus',
+              seriesId: 'tour_ind_aus_late_2026',
+              matchNumber: 1,
+              isInternational: true,
+              completed: false
+            } as any
+          }
+        ]
+      };
+      const snapS = JSON.parse(JSON.stringify(baseSeries));
+      const snapL = JSON.parse(JSON.stringify([league]));
+      const snapN = JSON.parse(JSON.stringify(baseNations));
+      const snapP = JSON.parse(JSON.stringify(basePlayers));
+      const snapT = JSON.parse(JSON.stringify(baseTeams));
+
+      const res = applyRecordCompletedInternationalMatchState({
+        finishedMatch: { ...baseFinishedMatch, id: sharedId, fixtureId: sharedId },
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: baseSeries,
+        leagues: [league],
+        currentLeagueId: league.id,
+        nations: baseNations,
+        players: basePlayers,
+        teams: baseTeams
+      });
+      assertFullStateUnchangedOnRejection('MAT 55.A4', res, 'identity_conflict', snapS, snapL, snapN, snapP, snapT);
+    });
+
+    runMatrixCase('MAT 55.A5', 'Direct fixture ID duplicated on the same date in matchFixture and internationalMatches is rejected', () => {
+      const { basePlayers, baseTeams, baseSeries, baseNations, baseFinishedMatch } = buildMatrixBaseState();
+      const sharedId = 'mat55_same_date_dual_slot';
+      baseSeries.matches[0].fixtureId = sharedId;
+      const league: League = {
+        ...step1.leagues[0],
+        id: 'league_mat55_a5',
+        calendarDates: [
+          {
+            dateStr: '2026-06-01',
+            dayOfWeek: 'MON',
+            dayNumber: 1,
+            month: 'Jun',
+            type: 'match',
+            matchFixture: {
+              id: sharedId,
+              homeTeamId: 'nat_ind',
+              awayTeamId: 'nat_aus',
+              seriesId: 'tour_ind_aus_2026',
+              matchNumber: 1,
+              isInternational: true,
+              completed: false
+            } as any,
+            internationalMatches: [
+              {
+                id: sharedId,
+                homeTeamId: 'nat_ind',
+                awayTeamId: 'nat_aus',
+                seriesId: 'tour_ind_aus_2026',
+                matchNumber: 1,
+                isInternational: true,
+                completed: false
+              } as any
+            ]
+          }
+        ]
+      };
+      const snapS = JSON.parse(JSON.stringify(baseSeries));
+      const snapL = JSON.parse(JSON.stringify([league]));
+      const snapN = JSON.parse(JSON.stringify(baseNations));
+      const snapP = JSON.parse(JSON.stringify(basePlayers));
+      const snapT = JSON.parse(JSON.stringify(baseTeams));
+
+      const res = applyRecordCompletedInternationalMatchState({
+        finishedMatch: { ...baseFinishedMatch, id: sharedId, fixtureId: sharedId },
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: baseSeries,
+        leagues: [league],
+        currentLeagueId: league.id,
+        nations: baseNations,
+        players: basePlayers,
+        teams: baseTeams
+      });
+      assertFullStateUnchangedOnRejection('MAT 55.A5', res, 'ambiguous', snapS, snapL, snapN, snapP, snapT);
+    });
+
+    runMatrixCase('MAT 55.A6', 'Duplicate direct IDs with identical metadata on separate dates are rejected as ambiguous', () => {
+      const { basePlayers, baseTeams, baseSeries, baseNations, baseFinishedMatch } = buildMatrixBaseState();
+      const sharedId = 'mat55_dup_identical_meta';
+      baseSeries.matches[0].fixtureId = sharedId;
+      const league: League = {
+        ...step1.leagues[0],
+        id: 'league_mat55_a6',
+        calendarDates: [
+          {
+            id: 'cal_intl_tour_ind_aus_2026_d1',
+            dateStr: '2026-06-01',
+            dayOfWeek: 'MON',
+            dayNumber: 1,
+            month: 'Jun',
+            type: 'match',
+            matchFixture: {
+              id: sharedId,
+              homeTeamId: 'nat_ind',
+              awayTeamId: 'nat_aus',
+              seriesId: 'tour_ind_aus_2026',
+              competitionId: 'tour_ind_aus_2026',
+              matchNumber: 1,
+              isInternational: true,
+              completed: false
+            } as any
+          },
+          {
+            id: 'cal_intl_tour_ind_aus_2026_d2',
+            dateStr: '2026-06-03',
+            dayOfWeek: 'WED',
+            dayNumber: 3,
+            month: 'Jun',
+            type: 'match',
+            matchFixture: {
+              id: sharedId,
+              homeTeamId: 'nat_ind',
+              awayTeamId: 'nat_aus',
+              seriesId: 'tour_ind_aus_2026',
+              competitionId: 'tour_ind_aus_2026',
+              matchNumber: 1,
+              isInternational: true,
+              completed: false
+            } as any
+          }
+        ]
+      };
+      const snapS = JSON.parse(JSON.stringify(baseSeries));
+      const snapL = JSON.parse(JSON.stringify([league]));
+      const snapN = JSON.parse(JSON.stringify(baseNations));
+      const snapP = JSON.parse(JSON.stringify(basePlayers));
+      const snapT = JSON.parse(JSON.stringify(baseTeams));
+
+      const res = applyRecordCompletedInternationalMatchState({
+        finishedMatch: { ...baseFinishedMatch, id: sharedId, fixtureId: sharedId },
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: baseSeries,
+        leagues: [league],
+        currentLeagueId: league.id,
+        nations: baseNations,
+        players: basePlayers,
+        teams: baseTeams
+      });
+      assertFullStateUnchangedOnRejection('MAT 55.A6', res, 'ambiguous', snapS, snapL, snapN, snapP, snapT);
+    });
+
+    runMatrixCase('MAT 55.A7', 'Duplicate direct IDs with conflicting matchNumber metadata are rejected with identity_conflict', () => {
+      const { basePlayers, baseTeams, baseSeries, baseNations, baseFinishedMatch } = buildMatrixBaseState();
+      const sharedId = 'mat55_dup_conflicting_meta';
+      baseSeries.matches[0].fixtureId = sharedId;
+      const league: League = {
+        ...step1.leagues[0],
+        id: 'league_mat55_a7',
+        calendarDates: [
+          {
+            id: 'cal_intl_tour_ind_aus_2026_d1',
+            dateStr: '2026-06-01',
+            dayOfWeek: 'MON',
+            dayNumber: 1,
+            month: 'Jun',
+            type: 'match',
+            matchFixture: {
+              id: sharedId,
+              homeTeamId: 'nat_ind',
+              awayTeamId: 'nat_aus',
+              seriesId: 'tour_ind_aus_2026',
+              matchNumber: 1,
+              isInternational: true,
+              completed: false
+            } as any
+          },
+          {
+            id: 'cal_intl_tour_ind_aus_2026_d2',
+            dateStr: '2026-06-03',
+            dayOfWeek: 'WED',
+            dayNumber: 3,
+            month: 'Jun',
+            type: 'match',
+            matchFixture: {
+              id: sharedId,
+              homeTeamId: 'nat_ind',
+              awayTeamId: 'nat_aus',
+              seriesId: 'tour_ind_aus_2026',
+              matchNumber: 2, // Conflicting matchNumber on duplicate ID
+              isInternational: true,
+              completed: false
+            } as any
+          }
+        ]
+      };
+      const snapS = JSON.parse(JSON.stringify(baseSeries));
+      const snapL = JSON.parse(JSON.stringify([league]));
+      const snapN = JSON.parse(JSON.stringify(baseNations));
+      const snapP = JSON.parse(JSON.stringify(basePlayers));
+      const snapT = JSON.parse(JSON.stringify(baseTeams));
+
+      const res = applyRecordCompletedInternationalMatchState({
+        finishedMatch: { ...baseFinishedMatch, id: sharedId, fixtureId: sharedId },
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: baseSeries,
+        leagues: [league],
+        currentLeagueId: league.id,
+        nations: baseNations,
+        players: basePlayers,
+        teams: baseTeams
+      });
+      assertFullStateUnchangedOnRejection('MAT 55.A7', res, 'identity_conflict', snapS, snapL, snapN, snapP, snapT);
+    });
+
+    runMatrixCase('MAT 55.A8', 'Conflicting seriesId and competitionId on callback or fixture is rejected with identity_conflict', () => {
+      const { basePlayers, baseTeams, baseSeries, baseNations, baseFinishedMatch } = buildMatrixBaseState();
+      const customId = 'mat55_conflict_series_comp';
+      baseSeries.matches[0].fixtureId = customId;
+      const league: League = {
+        ...step1.leagues[0],
+        id: 'league_mat55_a8',
+        calendarDates: [
+          {
+            dateStr: '2026-06-01',
+            dayOfWeek: 'MON',
+            dayNumber: 1,
+            month: 'Jun',
+            type: 'match',
+            matchFixture: {
+              id: customId,
+              homeTeamId: 'nat_ind',
+              awayTeamId: 'nat_aus',
+              seriesId: 'tour_ind_aus_2026',
+              competitionId: 'tour_contradictory_2026',
+              matchNumber: 1,
+              isInternational: true,
+              completed: false
+            } as any
+          }
+        ]
+      };
+      const helperCheck = resolveEffectiveFixtureSeriesIdentity(league.calendarDates[0].matchFixture, undefined);
+      assert.equal(helperCheck.isConflicted, true, 'MAT 55.A8: Shared helper flags seriesId vs competitionId contradiction');
+
+      const snapS = JSON.parse(JSON.stringify(baseSeries));
+      const snapL = JSON.parse(JSON.stringify([league]));
+      const snapN = JSON.parse(JSON.stringify(baseNations));
+      const snapP = JSON.parse(JSON.stringify(basePlayers));
+      const snapT = JSON.parse(JSON.stringify(baseTeams));
+
+      const res = applyRecordCompletedInternationalMatchState({
+        finishedMatch: { ...baseFinishedMatch, id: customId, fixtureId: customId },
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: baseSeries,
+        leagues: [league],
+        currentLeagueId: league.id,
+        nations: baseNations,
+        players: basePlayers,
+        teams: baseTeams
+      });
+      assertFullStateUnchangedOnRejection('MAT 55.A8', res, 'identity_conflict', snapS, snapL, snapN, snapP, snapT);
+    });
+
+    // --------------------------------------------------------------------------
+    // 2. CALENDAR RECOVERY MATRIX (MAT 55.B1 – 55.B11)
+    // --------------------------------------------------------------------------
+    runMatrixCase('MAT 55.B1', 'Valid calendar fixture with unique authoritative mapping to active series resolves via recovery', () => {
+      const { basePlayers, baseTeams, baseSeries, baseNations, baseFinishedMatch } = buildMatrixBaseState();
+      const recoveryCalId = 'mat55_cal_recovery_valid_2';
+      const league: League = {
+        ...step1.leagues[0],
+        id: 'league_mat55_b1',
+        calendarDates: [
+          {
+            id: 'cal_intl_tour_ind_aus_2026_2',
+            dateStr: '2026-06-03',
+            dayOfWeek: 'WED',
+            dayNumber: 3,
+            month: 'Jun',
+            type: 'match',
+            matchFixture: {
+              id: recoveryCalId,
+              homeTeamId: 'nat_ind',
+              awayTeamId: 'nat_aus',
+              seriesId: 'tour_ind_aus_2026',
+              matchNumber: 2,
+              expectedFixtureId: 'intl_fix_tour_ind_aus_2026_2',
+              isInternational: true,
+              completed: false
+            } as any
+          }
+        ]
+      };
+      const res = applyRecordCompletedInternationalMatchState({
+        finishedMatch: { ...baseFinishedMatch, id: recoveryCalId, fixtureId: recoveryCalId },
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: baseSeries,
+        leagues: [league],
+        currentLeagueId: league.id,
+        nations: baseNations,
+        players: basePlayers,
+        teams: baseTeams
+      });
+      assert.equal(res.resolutionStatus, 'resolved', 'MAT 55.B1: Calendar-linked recovery classified as resolved');
+      assert.equal(res.matchedFixtureId, recoveryCalId, 'MAT 55.B1: Returned recovery calendar ID');
+      assert.equal(res.internationalSeries.matches[1].completed, true, 'MAT 55.B1: Match #2 marked completed');
+      assert.equal(res.internationalSeries.matches[0].completed, false, 'MAT 55.B1: Match #1 remains incomplete');
+      assert.equal(res.leagues[0].calendarDates[0].matchFixture?.completed, true, 'MAT 55.B1: Calendar fixture marked completed');
+      assert.equal(res.players?.[0].competitionStats?.international?.runs, 84, 'MAT 55.B1: Player stats updated once');
+    });
+
+    runMatrixCase('MAT 55.B2', 'Reordered series matches resolve by authoritative matchNumber, never array index', () => {
+      const { basePlayers, baseTeams, baseSeries, baseNations, baseFinishedMatch } = buildMatrixBaseState();
+      baseSeries.matches = [
+        { matchNumber: 3, format: 'T20', city: 'Brisbane', venue: 'Gabba', completed: false, fixtureId: 'intl_fix_tour_ind_aus_2026_3' },
+        { matchNumber: 1, format: 'T20', city: 'Melbourne', venue: 'MCG', completed: false, fixtureId: 'intl_fix_tour_ind_aus_2026_1' },
+        { matchNumber: 2, format: 'T20', city: 'Sydney', venue: 'SCG', completed: false, fixtureId: 'intl_fix_tour_ind_aus_2026_2' }
+      ];
+      const calId = 'mat55_reordered_cal_match_1';
+      const league: League = {
+        ...step1.leagues[0],
+        id: 'league_mat55_b2',
+        calendarDates: [
+          {
+            id: 'cal_intl_tour_ind_aus_2026_1',
+            dateStr: '2026-06-01',
+            dayOfWeek: 'MON',
+            dayNumber: 1,
+            month: 'Jun',
+            type: 'match',
+            matchFixture: {
+              id: calId,
+              homeTeamId: 'nat_ind',
+              awayTeamId: 'nat_aus',
+              seriesId: 'tour_ind_aus_2026',
+              matchNumber: 1,
+              canonicalFixtureId: 'intl_fix_tour_ind_aus_2026_1',
+              isInternational: true,
+              completed: false
+            } as any
+          }
+        ]
+      };
+      const res = applyRecordCompletedInternationalMatchState({
+        finishedMatch: { ...baseFinishedMatch, id: calId, fixtureId: calId },
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: baseSeries,
+        leagues: [league],
+        currentLeagueId: league.id,
+        nations: baseNations,
+        players: basePlayers,
+        teams: baseTeams
+      });
+      assert.equal(res.resolutionStatus, 'resolved', 'MAT 55.B2: Reordered series resolved cleanly');
+      assert.equal(res.internationalSeries.matches[1].completed, true, 'MAT 55.B2: Match #1 at array index 1 completed');
+      assert.equal(res.internationalSeries.matches[0].completed, false, 'MAT 55.B2: Match #3 at array index 0 NOT completed');
+    });
+
+    runMatrixCase('MAT 55.B3', 'Missing direct fixtureId on series match still resolves via canonical ID mapping', () => {
+      const { basePlayers, baseTeams, baseSeries, baseNations, baseFinishedMatch } = buildMatrixBaseState();
+      baseSeries.matches[0].fixtureId = undefined;
+      const calId = 'mat55_missing_direct_id_cal_1';
+      const league: League = {
+        ...step1.leagues[0],
+        id: 'league_mat55_b3',
+        calendarDates: [
+          {
+            id: 'cal_intl_tour_ind_aus_2026_1',
+            dateStr: '2026-06-01',
+            dayOfWeek: 'MON',
+            dayNumber: 1,
+            month: 'Jun',
+            type: 'match',
+            matchFixture: {
+              id: calId,
+              homeTeamId: 'nat_ind',
+              awayTeamId: 'nat_aus',
+              seriesId: 'tour_ind_aus_2026',
+              matchNumber: 1,
+              expectedFixtureId: 'intl_fix_tour_ind_aus_2026_1',
+              isInternational: true,
+              completed: false
+            } as any
+          }
+        ]
+      };
+      const res = applyRecordCompletedInternationalMatchState({
+        finishedMatch: { ...baseFinishedMatch, id: calId, fixtureId: calId },
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: baseSeries,
+        leagues: [league],
+        currentLeagueId: league.id,
+        nations: baseNations,
+        players: basePlayers,
+        teams: baseTeams
+      });
+      assert.equal(res.resolutionStatus, 'resolved', 'MAT 55.B3: Resolved via canonical ID when series match has no fixtureId');
+      assert.equal(res.internationalSeries.matches[0].completed, true, 'MAT 55.B3: Match #1 marked completed');
+      assert.equal(res.internationalSeries.matches[0].fixtureId, 'intl_fix_tour_ind_aus_2026_1', 'MAT 55.B3: Canonical fixtureId stamped onto series match');
+    });
+
+    runMatrixCase('MAT 55.B4', 'Incorrect expectedFixtureId on calendar entry is rejected with identity_conflict', () => {
+      const { basePlayers, baseTeams, baseSeries, baseNations, baseFinishedMatch } = buildMatrixBaseState();
+      const calId = 'mat55_bad_expected_fix_id';
+      const league: League = {
+        ...step1.leagues[0],
+        id: 'league_mat55_b4',
+        calendarDates: [
+          {
+            id: 'cal_intl_tour_ind_aus_2026_1',
+            dateStr: '2026-06-01',
+            dayOfWeek: 'MON',
+            dayNumber: 1,
+            month: 'Jun',
+            type: 'match',
+            matchFixture: {
+              id: calId,
+              homeTeamId: 'nat_ind',
+              awayTeamId: 'nat_aus',
+              seriesId: 'tour_ind_aus_2026',
+              matchNumber: 1,
+              expectedFixtureId: 'intl_fix_tour_ind_aus_2026_99',
+              isInternational: true,
+              completed: false
+            } as any
+          }
+        ]
+      };
+      const snapS = JSON.parse(JSON.stringify(baseSeries));
+      const snapL = JSON.parse(JSON.stringify([league]));
+      const snapN = JSON.parse(JSON.stringify(baseNations));
+      const snapP = JSON.parse(JSON.stringify(basePlayers));
+      const snapT = JSON.parse(JSON.stringify(baseTeams));
+
+      const res = applyRecordCompletedInternationalMatchState({
+        finishedMatch: { ...baseFinishedMatch, id: calId, fixtureId: calId },
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: baseSeries,
+        leagues: [league],
+        currentLeagueId: league.id,
+        nations: baseNations,
+        players: basePlayers,
+        teams: baseTeams
+      });
+      assertFullStateUnchangedOnRejection('MAT 55.B4', res, 'identity_conflict', snapS, snapL, snapN, snapP, snapT);
+    });
+
+    runMatrixCase('MAT 55.B5', 'Incorrect canonicalFixtureId on calendar entry is rejected with identity_conflict', () => {
+      const { basePlayers, baseTeams, baseSeries, baseNations, baseFinishedMatch } = buildMatrixBaseState();
+      const calId = 'mat55_bad_canonical_fix_id';
+      const league: League = {
+        ...step1.leagues[0],
+        id: 'league_mat55_b5',
+        calendarDates: [
+          {
+            id: 'cal_intl_tour_ind_aus_2026_1',
+            dateStr: '2026-06-01',
+            dayOfWeek: 'MON',
+            dayNumber: 1,
+            month: 'Jun',
+            type: 'match',
+            matchFixture: {
+              id: calId,
+              homeTeamId: 'nat_ind',
+              awayTeamId: 'nat_aus',
+              seriesId: 'tour_ind_aus_2026',
+              matchNumber: 1,
+              canonicalFixtureId: 'intl_fix_tour_ind_aus_2026_2', // Points to match 2 instead of match 1
+              isInternational: true,
+              completed: false
+            } as any
+          }
+        ]
+      };
+      const snapS = JSON.parse(JSON.stringify(baseSeries));
+      const snapL = JSON.parse(JSON.stringify([league]));
+      const snapN = JSON.parse(JSON.stringify(baseNations));
+      const snapP = JSON.parse(JSON.stringify(basePlayers));
+      const snapT = JSON.parse(JSON.stringify(baseTeams));
+
+      const res = applyRecordCompletedInternationalMatchState({
+        finishedMatch: { ...baseFinishedMatch, id: calId, fixtureId: calId },
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: baseSeries,
+        leagues: [league],
+        currentLeagueId: league.id,
+        nations: baseNations,
+        players: basePlayers,
+        teams: baseTeams
+      });
+      assertFullStateUnchangedOnRejection('MAT 55.B5', res, 'identity_conflict', snapS, snapL, snapN, snapP, snapT);
+    });
+
+    runMatrixCase('MAT 55.B6', 'Conflicting calendar date series identity (cal_intl_) is rejected with identity_conflict', () => {
+      const { basePlayers, baseTeams, baseSeries, baseNations, baseFinishedMatch } = buildMatrixBaseState();
+      const calId = 'mat55_conflict_cal_date_id';
+      const league: League = {
+        ...step1.leagues[0],
+        id: 'league_mat55_b6',
+        calendarDates: [
+          {
+            id: 'cal_intl_tour_different_2026_1',
+            dateStr: '2026-06-01',
+            dayOfWeek: 'MON',
+            dayNumber: 1,
+            month: 'Jun',
+            type: 'match',
+            matchFixture: {
+              id: calId,
+              homeTeamId: 'nat_ind',
+              awayTeamId: 'nat_aus',
+              matchNumber: 1,
+              expectedFixtureId: 'intl_fix_tour_ind_aus_2026_1',
+              isInternational: true,
+              completed: false
+            } as any
+          }
+        ]
+      };
+      const snapS = JSON.parse(JSON.stringify(baseSeries));
+      const snapL = JSON.parse(JSON.stringify([league]));
+      const snapN = JSON.parse(JSON.stringify(baseNations));
+      const snapP = JSON.parse(JSON.stringify(basePlayers));
+      const snapT = JSON.parse(JSON.stringify(baseTeams));
+
+      const res = applyRecordCompletedInternationalMatchState({
+        finishedMatch: { ...baseFinishedMatch, id: calId, fixtureId: calId },
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: baseSeries,
+        leagues: [league],
+        currentLeagueId: league.id,
+        nations: baseNations,
+        players: basePlayers,
+        teams: baseTeams
+      });
+      assertFullStateUnchangedOnRejection('MAT 55.B6', res, 'identity_conflict', snapS, snapL, snapN, snapP, snapT);
+    });
+
+    runMatrixCase('MAT 55.B7', 'Duplicate recovery candidate in another league is rejected as ambiguous', () => {
+      const { basePlayers, baseTeams, baseSeries, baseNations, baseFinishedMatch } = buildMatrixBaseState();
+      const calId = 'mat55_dup_recovery_cross_league';
+      const makeLg = (id: string): League => ({
+        ...step1.leagues[0],
+        id,
+        calendarDates: [
+          {
+            id: 'cal_intl_tour_ind_aus_2026_1',
+            dateStr: '2026-06-01',
+            dayOfWeek: 'MON',
+            dayNumber: 1,
+            month: 'Jun',
+            type: 'match',
+            matchFixture: {
+              id: calId,
+              homeTeamId: 'nat_ind',
+              awayTeamId: 'nat_aus',
+              seriesId: 'tour_ind_aus_2026',
+              matchNumber: 1,
+              expectedFixtureId: 'intl_fix_tour_ind_aus_2026_1',
+              isInternational: true,
+              completed: false
+            } as any
+          }
+        ]
+      });
+      const leagues = [makeLg('lg_rec_1'), makeLg('lg_rec_2')];
+      const snapS = JSON.parse(JSON.stringify(baseSeries));
+      const snapL = JSON.parse(JSON.stringify(leagues));
+      const snapN = JSON.parse(JSON.stringify(baseNations));
+      const snapP = JSON.parse(JSON.stringify(basePlayers));
+      const snapT = JSON.parse(JSON.stringify(baseTeams));
+
+      const res = applyRecordCompletedInternationalMatchState({
+        finishedMatch: { ...baseFinishedMatch, id: calId, fixtureId: calId },
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: baseSeries,
+        leagues,
+        currentLeagueId: 'lg_rec_1',
+        nations: baseNations,
+        players: basePlayers,
+        teams: baseTeams
+      });
+      assertFullStateUnchangedOnRejection('MAT 55.B7', res, 'ambiguous', snapS, snapL, snapN, snapP, snapT);
+    });
+
+    runMatrixCase('MAT 55.B8', 'Duplicate recovery candidate with different teams is rejected with identity_conflict', () => {
+      const { basePlayers, baseTeams, baseSeries, baseNations, baseFinishedMatch } = buildMatrixBaseState();
+      const calId = 'mat55_dup_recovery_diff_teams';
+      const lg1: League = {
+        ...step1.leagues[0],
+        id: 'lg_diff_teams_1',
+        calendarDates: [
+          {
+            id: 'cal_intl_tour_ind_aus_2026_1',
+            dateStr: '2026-06-01',
+            dayOfWeek: 'MON',
+            dayNumber: 1,
+            month: 'Jun',
+            type: 'match',
+            matchFixture: {
+              id: calId,
+              homeTeamId: 'nat_ind',
+              awayTeamId: 'nat_aus',
+              seriesId: 'tour_ind_aus_2026',
+              matchNumber: 1,
+              expectedFixtureId: 'intl_fix_tour_ind_aus_2026_1',
+              isInternational: true,
+              completed: false
+            } as any
+          }
+        ]
+      };
+      const lg2: League = {
+        ...step1.leagues[0],
+        id: 'lg_diff_teams_2',
+        calendarDates: [
+          {
+            dateStr: '2026-06-01',
+            dayOfWeek: 'MON',
+            dayNumber: 1,
+            month: 'Jun',
+            type: 'match',
+            matchFixture: {
+              id: calId,
+              homeTeamId: 'nat_eng',
+              awayTeamId: 'nat_rsa',
+              matchNumber: 1,
+              isInternational: true,
+              completed: false
+            } as any
+          }
+        ]
+      };
+      const leagues = [lg1, lg2];
+      const snapS = JSON.parse(JSON.stringify(baseSeries));
+      const snapL = JSON.parse(JSON.stringify(leagues));
+      const snapN = JSON.parse(JSON.stringify(baseNations));
+      const snapP = JSON.parse(JSON.stringify(basePlayers));
+      const snapT = JSON.parse(JSON.stringify(baseTeams));
+
+      const res = applyRecordCompletedInternationalMatchState({
+        finishedMatch: { ...baseFinishedMatch, id: calId, fixtureId: calId },
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: baseSeries,
+        leagues,
+        currentLeagueId: 'lg_diff_teams_1',
+        nations: baseNations,
+        players: basePlayers,
+        teams: baseTeams
+      });
+      assertFullStateUnchangedOnRejection('MAT 55.B8', res, 'identity_conflict', snapS, snapL, snapN, snapP, snapT);
+    });
+
+    runMatrixCase('MAT 55.B9', 'Duplicate recovery candidate with same teams but different series identity is rejected with identity_conflict', () => {
+      const { basePlayers, baseTeams, baseSeries, baseNations, baseFinishedMatch } = buildMatrixBaseState();
+      const calId = 'mat55_dup_recovery_diff_series';
+      const lg1: League = {
+        ...step1.leagues[0],
+        id: 'lg_diff_ser_1',
+        calendarDates: [
+          {
+            id: 'cal_intl_tour_ind_aus_2026_1',
+            dateStr: '2026-06-01',
+            dayOfWeek: 'MON',
+            dayNumber: 1,
+            month: 'Jun',
+            type: 'match',
+            matchFixture: {
+              id: calId,
+              homeTeamId: 'nat_ind',
+              awayTeamId: 'nat_aus',
+              seriesId: 'tour_ind_aus_2026',
+              matchNumber: 1,
+              expectedFixtureId: 'intl_fix_tour_ind_aus_2026_1',
+              isInternational: true,
+              completed: false
+            } as any
+          }
+        ]
+      };
+      const lg2: League = {
+        ...step1.leagues[0],
+        id: 'lg_diff_ser_2',
+        calendarDates: [
+          {
+            id: 'cal_intl_tour_ind_aus_autumn_2026_1',
+            dateStr: '2026-09-01',
+            dayOfWeek: 'TUE',
+            dayNumber: 1,
+            month: 'Sep',
+            type: 'match',
+            matchFixture: {
+              id: calId,
+              homeTeamId: 'nat_ind',
+              awayTeamId: 'nat_aus',
+              seriesId: 'tour_ind_aus_autumn_2026',
+              matchNumber: 1,
+              isInternational: true,
+              completed: false
+            } as any
+          }
+        ]
+      };
+      const leagues = [lg1, lg2];
+      const snapS = JSON.parse(JSON.stringify(baseSeries));
+      const snapL = JSON.parse(JSON.stringify(leagues));
+      const snapN = JSON.parse(JSON.stringify(baseNations));
+      const snapP = JSON.parse(JSON.stringify(basePlayers));
+      const snapT = JSON.parse(JSON.stringify(baseTeams));
+
+      const res = applyRecordCompletedInternationalMatchState({
+        finishedMatch: { ...baseFinishedMatch, id: calId, fixtureId: calId },
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: baseSeries,
+        leagues,
+        currentLeagueId: 'lg_diff_ser_1',
+        nations: baseNations,
+        players: basePlayers,
+        teams: baseTeams
+      });
+      assertFullStateUnchangedOnRejection('MAT 55.B9', res, 'identity_conflict', snapS, snapL, snapN, snapP, snapT);
+    });
+
+    runMatrixCase('MAT 55.B10', 'Multiple calendar entries with different IDs claiming the same canonical fixture are rejected as ambiguous', () => {
+      const { basePlayers, baseTeams, baseSeries, baseNations, baseFinishedMatch } = buildMatrixBaseState();
+      const calIdA = 'mat55_claim_same_canonical_A';
+      const calIdB = 'mat55_claim_same_canonical_B';
+      const league: League = {
+        ...step1.leagues[0],
+        id: 'league_mat55_b10',
+        calendarDates: [
+          {
+            id: 'cal_intl_tour_ind_aus_2026_1a',
+            dateStr: '2026-06-01',
+            dayOfWeek: 'MON',
+            dayNumber: 1,
+            month: 'Jun',
+            type: 'match',
+            matchFixture: {
+              id: calIdA,
+              homeTeamId: 'nat_ind',
+              awayTeamId: 'nat_aus',
+              seriesId: 'tour_ind_aus_2026',
+              matchNumber: 1,
+              expectedFixtureId: 'intl_fix_tour_ind_aus_2026_1',
+              isInternational: true,
+              completed: false
+            } as any
+          },
+          {
+            id: 'cal_intl_tour_ind_aus_2026_1b',
+            dateStr: '2026-06-02',
+            dayOfWeek: 'TUE',
+            dayNumber: 2,
+            month: 'Jun',
+            type: 'match',
+            matchFixture: {
+              id: calIdB,
+              homeTeamId: 'nat_ind',
+              awayTeamId: 'nat_aus',
+              seriesId: 'tour_ind_aus_2026',
+              matchNumber: 1,
+              expectedFixtureId: 'intl_fix_tour_ind_aus_2026_1',
+              isInternational: true,
+              completed: false
+            } as any
+          }
+        ]
+      };
+      const snapS = JSON.parse(JSON.stringify(baseSeries));
+      const snapL = JSON.parse(JSON.stringify([league]));
+      const snapN = JSON.parse(JSON.stringify(baseNations));
+      const snapP = JSON.parse(JSON.stringify(basePlayers));
+      const snapT = JSON.parse(JSON.stringify(baseTeams));
+
+      const res = applyRecordCompletedInternationalMatchState({
+        finishedMatch: { ...baseFinishedMatch, id: calIdA, fixtureId: calIdA },
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: baseSeries,
+        leagues: [league],
+        currentLeagueId: league.id,
+        nations: baseNations,
+        players: basePlayers,
+        teams: baseTeams
+      });
+      assertFullStateUnchangedOnRejection('MAT 55.B10', res, 'ambiguous', snapS, snapL, snapN, snapP, snapT);
+    });
+
+    runMatrixCase('MAT 55.B11', 'Missing, duplicate, or nonsequential match numbers are rejected cleanly', () => {
+      const { basePlayers, baseTeams, baseSeries, baseNations, baseFinishedMatch } = buildMatrixBaseState();
+      // Duplicate matchNumber 1 in series
+      baseSeries.matches = [
+        { matchNumber: 1, format: 'T20', city: 'Melbourne', venue: 'MCG', completed: false, fixtureId: 'intl_fix_tour_ind_aus_2026_1A' },
+        { matchNumber: 1, format: 'T20', city: 'Sydney', venue: 'SCG', completed: false, fixtureId: 'intl_fix_tour_ind_aus_2026_1B' }
+      ];
+      const calId = 'mat55_dup_match_num_cal';
+      const league: League = {
+        ...step1.leagues[0],
+        id: 'league_mat55_b11',
+        calendarDates: [
+          {
+            id: 'cal_intl_tour_ind_aus_2026_1',
+            dateStr: '2026-06-01',
+            dayOfWeek: 'MON',
+            dayNumber: 1,
+            month: 'Jun',
+            type: 'match',
+            matchFixture: {
+              id: calId,
+              homeTeamId: 'nat_ind',
+              awayTeamId: 'nat_aus',
+              seriesId: 'tour_ind_aus_2026',
+              matchNumber: 1,
+              expectedFixtureId: 'intl_fix_tour_ind_aus_2026_1',
+              isInternational: true,
+              completed: false
+            } as any
+          }
+        ]
+      };
+      const snapS = JSON.parse(JSON.stringify(baseSeries));
+      const snapL = JSON.parse(JSON.stringify([league]));
+      const snapN = JSON.parse(JSON.stringify(baseNations));
+      const snapP = JSON.parse(JSON.stringify(basePlayers));
+      const snapT = JSON.parse(JSON.stringify(baseTeams));
+
+      const res = applyRecordCompletedInternationalMatchState({
+        finishedMatch: { ...baseFinishedMatch, id: calId, fixtureId: calId },
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: baseSeries,
+        leagues: [league],
+        currentLeagueId: league.id,
+        nations: baseNations,
+        players: basePlayers,
+        teams: baseTeams
+      });
+      assertFullStateUnchangedOnRejection('MAT 55.B11', res, 'ambiguous', snapS, snapL, snapN, snapP, snapT);
+    });
+
+    // --------------------------------------------------------------------------
+    // 3. LEGACY CALLBACKS MATRIX (MAT 55.C1 – 55.C3)
+    // --------------------------------------------------------------------------
+    runMatrixCase('MAT 55.C1', 'Legacy callback without fixture ID resolves when exactly one unfinished match is eligible', () => {
+      const { basePlayers, baseTeams, baseSeries, baseNations, baseFinishedMatch } = buildMatrixBaseState();
+      baseSeries.matches[0].completed = true;
+      baseSeries.matches[1].completed = true;
+      baseSeries.matches[2].completed = false;
+      const league: League = {
+        ...step1.leagues[0],
+        id: 'league_mat55_c1',
+        calendarDates: [
+          {
+            id: 'cal_intl_tour_ind_aus_2026_3',
+            dateStr: '2026-06-05',
+            dayOfWeek: 'FRI',
+            dayNumber: 5,
+            month: 'Jun',
+            type: 'international',
+            matchFixture: {
+              id: 'intl_fix_tour_ind_aus_2026_3',
+              homeTeamId: 'nat_ind',
+              awayTeamId: 'nat_aus',
+              seriesId: 'tour_ind_aus_2026',
+              matchNumber: 3,
+              isInternational: true,
+              completed: false
+            } as any
+          }
+        ]
+      };
+      const res = applyRecordCompletedInternationalMatchState({
+        finishedMatch: { ...baseFinishedMatch, id: '', fixtureId: undefined },
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: baseSeries,
+        leagues: [league],
+        currentLeagueId: league.id,
+        nations: baseNations,
+        players: basePlayers,
+        teams: baseTeams
+      });
+      assert.equal(res.resolutionStatus, 'resolved', 'MAT 55.C1: Unambiguous legacy callback resolved');
+      assert.equal(res.matchedFixtureId, 'intl_fix_tour_ind_aus_2026_3', 'MAT 55.C1: Resolved to sole unfinished Match #3');
+      assert.equal(res.internationalSeries.matches[2].completed, true, 'MAT 55.C1: Match #3 marked completed');
+      assert.equal(res.leagues[0].calendarDates[0].matchFixture?.completed, true, 'MAT 55.C1: Calendar fixture marked completed');
+      assert.equal(res.players?.[0].competitionStats?.international?.runs, 84, 'MAT 55.C1: Player stats updated');
+    });
+
+    runMatrixCase('MAT 55.C2', 'Legacy callback without fixture ID when multiple unfinished matches exist is rejected as ambiguous', () => {
+      const { basePlayers, baseTeams, baseSeries, baseNations, baseFinishedMatch } = buildMatrixBaseState();
+      // Matches 1, 2, 3 are all unfinished
+      const league: League = { ...step1.leagues[0], id: 'league_mat55_c2', calendarDates: [] };
+      const snapS = JSON.parse(JSON.stringify(baseSeries));
+      const snapL = JSON.parse(JSON.stringify([league]));
+      const snapN = JSON.parse(JSON.stringify(baseNations));
+      const snapP = JSON.parse(JSON.stringify(basePlayers));
+      const snapT = JSON.parse(JSON.stringify(baseTeams));
+
+      const res = applyRecordCompletedInternationalMatchState({
+        finishedMatch: { ...baseFinishedMatch, id: '', fixtureId: undefined },
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: baseSeries,
+        leagues: [league],
+        currentLeagueId: league.id,
+        nations: baseNations,
+        players: basePlayers,
+        teams: baseTeams
+      });
+      assertFullStateUnchangedOnRejection('MAT 55.C2', res, 'ambiguous', snapS, snapL, snapN, snapP, snapT);
+    });
+
+    runMatrixCase('MAT 55.C3', 'Legacy callback without fixture ID when conflicting calendar identity evidence exists is rejected with identity_conflict', () => {
+      const { basePlayers, baseTeams, baseSeries, baseNations, baseFinishedMatch } = buildMatrixBaseState();
+      baseSeries.matches[0].completed = true;
+      baseSeries.matches[1].completed = true;
+      baseSeries.matches[2].completed = false;
+      const league: League = {
+        ...step1.leagues[0],
+        id: 'league_mat55_c3',
+        calendarDates: [
+          {
+            id: 'cal_intl_tour_other_2026_3', // Conflicting series identity in calendar date!
+            dateStr: '2026-06-05',
+            dayOfWeek: 'FRI',
+            dayNumber: 5,
+            month: 'Jun',
+            type: 'international',
+            matchFixture: {
+              id: 'intl_fix_tour_ind_aus_2026_3',
+              homeTeamId: 'nat_ind',
+              awayTeamId: 'nat_aus',
+              matchNumber: 3,
+              isInternational: true,
+              completed: false
+            } as any
+          }
+        ]
+      };
+      const snapS = JSON.parse(JSON.stringify(baseSeries));
+      const snapL = JSON.parse(JSON.stringify([league]));
+      const snapN = JSON.parse(JSON.stringify(baseNations));
+      const snapP = JSON.parse(JSON.stringify(basePlayers));
+      const snapT = JSON.parse(JSON.stringify(baseTeams));
+
+      const res = applyRecordCompletedInternationalMatchState({
+        finishedMatch: { ...baseFinishedMatch, id: '', fixtureId: undefined },
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: baseSeries,
+        leagues: [league],
+        currentLeagueId: league.id,
+        nations: baseNations,
+        players: basePlayers,
+        teams: baseTeams
+      });
+      assertFullStateUnchangedOnRejection('MAT 55.C3', res, 'identity_conflict', snapS, snapL, snapN, snapP, snapT);
+    });
+
+    // --------------------------------------------------------------------------
+    // 4. IDEMPOTENCY AND STATE INTEGRITY MATRIX (MAT 55.D1 – 55.D6)
+    // --------------------------------------------------------------------------
+    runMatrixCase('MAT 55.D1', 'Submitting the same valid completion callback twice classifies 1st as resolved and 2nd as already_completed', () => {
+      const { basePlayers, baseTeams, baseSeries, baseNations, baseFinishedMatch } = buildMatrixBaseState();
+      const league: League = {
+        ...step1.leagues[0],
+        id: 'league_mat55_d1',
+        calendarDates: [
+          {
+            id: 'cal_intl_tour_ind_aus_2026_1',
+            dateStr: '2026-06-01',
+            dayOfWeek: 'MON',
+            dayNumber: 1,
+            month: 'Jun',
+            type: 'international',
+            matchFixture: {
+              id: 'intl_fix_tour_ind_aus_2026_1',
+              homeTeamId: 'nat_ind',
+              awayTeamId: 'nat_aus',
+              seriesId: 'tour_ind_aus_2026',
+              matchNumber: 1,
+              isInternational: true,
+              completed: false
+            } as any
+          }
+        ]
+      };
+      const first = applyRecordCompletedInternationalMatchState({
+        finishedMatch: baseFinishedMatch,
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: baseSeries,
+        leagues: [league],
+        currentLeagueId: league.id,
+        nations: baseNations,
+        players: basePlayers,
+        teams: baseTeams
+      });
+      assert.equal(first.resolutionStatus, 'resolved', 'MAT 55.D1: First callback is resolved');
+
+      const second = applyRecordCompletedInternationalMatchState({
+        finishedMatch: baseFinishedMatch,
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: first.internationalSeries,
+        leagues: first.leagues,
+        currentLeagueId: league.id,
+        nations: first.nations,
+        players: first.players,
+        teams: first.teams
+      });
+      assert.equal(second.resolutionStatus, 'already_completed', 'MAT 55.D1: Second callback is already_completed');
+      assert.equal(second.matchedFixtureId, 'intl_fix_tour_ind_aus_2026_1', 'MAT 55.D1: Second callback still returns matchedFixtureId');
+    });
+
+    runMatrixCase('MAT 55.D2', 'Submitting a rejected callback leaves full state (series, leagues, nations, players, teams) completely untouched', () => {
+      const { basePlayers, baseTeams, baseSeries, baseNations, baseFinishedMatch } = buildMatrixBaseState();
+      const league: League = {
+        ...step1.leagues[0],
+        id: 'league_mat55_d2',
+        calendarDates: [
+          {
+            id: 'cal_intl_tour_ind_aus_2026_1',
+            dateStr: '2026-06-01',
+            dayOfWeek: 'MON',
+            dayNumber: 1,
+            month: 'Jun',
+            type: 'international',
+            matchFixture: {
+              id: 'intl_fix_tour_ind_aus_2026_1',
+              homeTeamId: 'nat_ind',
+              awayTeamId: 'nat_aus',
+              seriesId: 'tour_ind_aus_2026',
+              matchNumber: 1,
+              isInternational: true,
+              completed: false
+            } as any
+          }
+        ]
+      };
+      const snapS = JSON.parse(JSON.stringify(baseSeries));
+      const snapL = JSON.parse(JSON.stringify([league]));
+      const snapN = JSON.parse(JSON.stringify(baseNations));
+      const snapP = JSON.parse(JSON.stringify(basePlayers));
+      const snapT = JSON.parse(JSON.stringify(baseTeams));
+
+      const rejected = applyRecordCompletedInternationalMatchState({
+        finishedMatch: {
+          ...baseFinishedMatch,
+          id: 'nonexistent_fixture_id_999',
+          fixtureId: 'nonexistent_fixture_id_999'
+        },
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: baseSeries,
+        leagues: [league],
+        currentLeagueId: league.id,
+        nations: baseNations,
+        players: basePlayers,
+        teams: baseTeams
+      });
+      assertFullStateUnchangedOnRejection('MAT 55.D2', rejected, 'not_found', snapS, snapL, snapN, snapP, snapT);
+    });
+
+    runMatrixCase('MAT 55.D3', 'Rankings and series wins/losses are applied exactly once across repeated callbacks', () => {
+      const { basePlayers, baseTeams, baseSeries, baseNations, baseFinishedMatch } = buildMatrixBaseState();
+      const league: League = { ...step1.leagues[0], id: 'league_mat55_d3', calendarDates: [] };
+      const first = applyRecordCompletedInternationalMatchState({
+        finishedMatch: baseFinishedMatch,
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: baseSeries,
+        leagues: [league],
+        currentLeagueId: league.id,
+        nations: baseNations,
+        players: basePlayers,
+        teams: baseTeams
+      });
+      const indRatingAfter1 = first.nations.find(n => n.id === 'nat_ind')?.ratingT20;
+      const ausRatingAfter1 = first.nations.find(n => n.id === 'nat_aus')?.ratingT20;
+      assert.equal(first.internationalSeries.seriesWins, 1, 'MAT 55.D3: seriesWins === 1 after 1st call');
+      assert.equal(first.internationalSeries.seriesLosses, 0, 'MAT 55.D3: seriesLosses === 0 after 1st call');
+
+      const second = applyRecordCompletedInternationalMatchState({
+        finishedMatch: baseFinishedMatch,
+        didUserWin: false, // Even if caller passes opposite win flag on repeat
+        coachProfile: intlCoach41,
+        internationalSeries: first.internationalSeries,
+        leagues: first.leagues,
+        currentLeagueId: league.id,
+        nations: first.nations,
+        players: first.players,
+        teams: first.teams
+      });
+      assert.equal(second.internationalSeries.seriesWins, 1, 'MAT 55.D3: seriesWins remains 1 after repeat call');
+      assert.equal(second.internationalSeries.seriesLosses, 0, 'MAT 55.D3: seriesLosses remains 0 after repeat call');
+      assert.equal(second.nations.find(n => n.id === 'nat_ind')?.ratingT20, indRatingAfter1, 'MAT 55.D3: Winner rating unchanged on repeat call');
+      assert.equal(second.nations.find(n => n.id === 'nat_aus')?.ratingT20, ausRatingAfter1, 'MAT 55.D3: Loser rating unchanged on repeat call');
+    });
+
+    runMatrixCase('MAT 55.D4', 'Player career statistics and team matchHistory are applied once and never duplicated on repeat callback', () => {
+      const { basePlayers, baseTeams, baseSeries, baseNations, baseFinishedMatch } = buildMatrixBaseState();
+      const league: League = { ...step1.leagues[0], id: 'league_mat55_d4', calendarDates: [] };
+      const first = applyRecordCompletedInternationalMatchState({
+        finishedMatch: baseFinishedMatch,
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: baseSeries,
+        leagues: [league],
+        currentLeagueId: league.id,
+        nations: baseNations,
+        players: basePlayers,
+        teams: baseTeams
+      });
+      assert.equal(first.players?.[0].competitionStats?.international?.runs, 84, 'MAT 55.D4: Player runs === 84 after 1st callback');
+      assert.equal(first.players?.[0].competitionStats?.international?.matches, 1, 'MAT 55.D4: Player matches === 1 after 1st callback');
+      assert.equal(first.teams?.[0].squad?.[0].competitionStats?.international?.runs, 84, 'MAT 55.D4: Team squad player runs === 84 after 1st callback');
+
+      const second = applyRecordCompletedInternationalMatchState({
+        finishedMatch: baseFinishedMatch,
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: first.internationalSeries,
+        leagues: first.leagues,
+        currentLeagueId: league.id,
+        nations: first.nations,
+        players: first.players,
+        teams: first.teams
+      });
+      assert.equal(second.players?.[0].competitionStats?.international?.runs, 84, 'MAT 55.D4: Player runs NOT doubled on 2nd callback');
+      assert.equal(second.players?.[0].competitionStats?.international?.matches, 1, 'MAT 55.D4: Player matches NOT incremented on 2nd callback');
+      assert.equal(second.teams?.[0].squad?.[0].competitionStats?.international?.runs, 84, 'MAT 55.D4: Team squad player runs NOT doubled on 2nd callback');
+    });
+
+    runMatrixCase('MAT 55.D5', 'Calendar reconciliation on already_completed match syncs unsynced calendar fixture without duplicating match outcome', () => {
+      const { basePlayers, baseTeams, baseSeries, baseNations, baseFinishedMatch } = buildMatrixBaseState();
+      // Series match #1 is already completed, but calendar fixture is still completed: false
+      baseSeries.matches[0].completed = true;
+      baseSeries.matches[0].summary = 'India won by 24 runs';
+      baseSeries.seriesWins = 1;
+      const league: League = {
+        ...step1.leagues[0],
+        id: 'league_mat55_d5',
+        calendarDates: [
+          {
+            id: 'cal_intl_tour_ind_aus_2026_1',
+            dateStr: '2026-06-01',
+            dayOfWeek: 'MON',
+            dayNumber: 1,
+            month: 'Jun',
+            type: 'international',
+            matchFixture: {
+              id: 'intl_fix_tour_ind_aus_2026_1',
+              homeTeamId: 'nat_ind',
+              awayTeamId: 'nat_aus',
+              seriesId: 'tour_ind_aus_2026',
+              matchNumber: 1,
+              isInternational: true,
+              completed: false
+            } as any
+          }
+        ]
+      };
+      const snapN = JSON.parse(JSON.stringify(baseNations));
+      const snapP = JSON.parse(JSON.stringify(basePlayers));
+      const snapT = JSON.parse(JSON.stringify(baseTeams));
+
+      const reconciled = applyRecordCompletedInternationalMatchState({
+        finishedMatch: baseFinishedMatch,
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: baseSeries,
+        leagues: [league],
+        currentLeagueId: league.id,
+        nations: baseNations,
+        players: basePlayers,
+        teams: baseTeams
+      });
+      assert.equal(reconciled.resolutionStatus, 'already_completed', 'MAT 55.D5: Classified as already_completed');
+      assert.equal(reconciled.leagues[0].calendarDates[0].matchFixture?.completed, true, 'MAT 55.D5: Unsynced calendar fixture reconciled to completed: true');
+      assert.equal(reconciled.leagues[0].calendarDates[0].matchFixture?.resultSummary, 'India won by 24 runs', 'MAT 55.D5: Authoritative summary preserved on calendar fixture');
+      assert.equal(reconciled.internationalSeries.seriesWins, 1, 'MAT 55.D5: seriesWins NOT incremented during reconciliation');
+      assert.deepEqual(reconciled.nations, snapN, 'MAT 55.D5: Nations ratings untouched during reconciliation');
+      assert.deepEqual(reconciled.players, snapP, 'MAT 55.D5: Players stats untouched during reconciliation');
+      assert.deepEqual(reconciled.teams, snapT, 'MAT 55.D5: Teams history untouched during reconciliation');
+    });
+
+    runMatrixCase('MAT 55.D6', 'Serialize and reload state, then repeat completion callback preserves idempotency', () => {
+      const { basePlayers, baseTeams, baseSeries, baseNations, baseFinishedMatch } = buildMatrixBaseState();
+      const league: League = {
+        ...step1.leagues[0],
+        id: 'league_mat55_d6',
+        calendarDates: [
+          {
+            id: 'cal_intl_tour_ind_aus_2026_1',
+            dateStr: '2026-06-01',
+            dayOfWeek: 'MON',
+            dayNumber: 1,
+            month: 'Jun',
+            type: 'international',
+            matchFixture: {
+              id: 'intl_fix_tour_ind_aus_2026_1',
+              homeTeamId: 'nat_ind',
+              awayTeamId: 'nat_aus',
+              seriesId: 'tour_ind_aus_2026',
+              matchNumber: 1,
+              isInternational: true,
+              completed: false
+            } as any
+          }
+        ]
+      };
+      const first = applyRecordCompletedInternationalMatchState({
+        finishedMatch: baseFinishedMatch,
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: baseSeries,
+        leagues: [league],
+        currentLeagueId: league.id,
+        nations: baseNations,
+        players: basePlayers,
+        teams: baseTeams
+      });
+      const reloadedState = JSON.parse(
+        JSON.stringify({
+          internationalSeries: first.internationalSeries,
+          leagues: first.leagues,
+          nations: first.nations,
+          players: first.players,
+          teams: first.teams
+        })
+      );
+      const afterReloadRepeat = applyRecordCompletedInternationalMatchState({
+        finishedMatch: baseFinishedMatch,
+        didUserWin: true,
+        coachProfile: intlCoach41,
+        internationalSeries: reloadedState.internationalSeries,
+        leagues: reloadedState.leagues,
+        currentLeagueId: league.id,
+        nations: reloadedState.nations,
+        players: reloadedState.players,
+        teams: reloadedState.teams
+      });
+      assert.equal(afterReloadRepeat.resolutionStatus, 'already_completed', 'MAT 55.D6: Post-reload repeat callback classified as already_completed');
+      assert.deepEqual(afterReloadRepeat.internationalSeries, reloadedState.internationalSeries, 'MAT 55.D6: Post-reload series state unchanged');
+      assert.deepEqual(afterReloadRepeat.leagues, reloadedState.leagues, 'MAT 55.D6: Post-reload calendar state unchanged');
+      assert.deepEqual(afterReloadRepeat.nations, reloadedState.nations, 'MAT 55.D6: Post-reload nations state unchanged');
+      assert.deepEqual(afterReloadRepeat.players, reloadedState.players, 'MAT 55.D6: Post-reload players state unchanged');
+      assert.deepEqual(afterReloadRepeat.teams, reloadedState.teams, 'MAT 55.D6: Post-reload teams state unchanged');
+    });
   }
 
-  console.log('✅ ALL Career Progression, Multi-League Recovery, International Series IDs, Transition Idempotency & Verified Defect Tests PASSED!');
-  return { passedScenarios: 54, totalScenarios: 54 };
+  const passedScenarios = passedScenariosSet.size;
+  const totalScenarios = totalScenariosSet.size;
+  const passedTestCases = passedTestCasesSet.size;
+  const totalTestCases = totalTestCasesSet.size;
+
+  console.log(
+    `✅ ALL Career Progression Tests PASSED! (${passedScenarios}/${totalScenarios} scenario groups, ${passedTestCases}/${totalTestCases} test cases, ${passedAssertions}/${totalAssertions} assertions)`
+  );
+  return {
+    passedScenarios,
+    totalScenarios,
+    passedTestCases,
+    totalTestCases,
+    passedAssertions,
+    totalAssertions
+  };
 }
 
 

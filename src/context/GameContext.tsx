@@ -5432,21 +5432,131 @@ function reconcileCalendarForInternationalMatch(params: {
 
         return {
           ...cd,
-          matchFixture: updatedMatchFixture,
-          internationalMatches: updatedIntlMatches
+          ...(updatedMatchFixture !== undefined ? { matchFixture: updatedMatchFixture } : {}),
+          ...(updatedIntlMatches !== undefined ? { internationalMatches: updatedIntlMatches } : {})
         };
       })
     };
   });
 }
 
+export type InternationalFixtureResolutionStatus =
+  | 'resolved'
+  | 'already_completed'
+  | 'not_found'
+  | 'ambiguous'
+  | 'identity_conflict';
+
 /**
- * Authoritative pure state helper for recording a completed international match:
- * - Authoritatively determines competition identity (distinguishing bilateral Test matches from WTC).
- * - Enforces idempotency against repeated completion callbacks (skips ranking and score duplicates).
- * - Reconciles at most ONE matching uncompleted fixture in `internationalSeries.matches` (preferring exact `fixtureId`).
- * - Marks ONLY the corresponding single calendar fixture completed.
- * - Fails safely without state corruption if competition identity is unknown/ambiguous.
+ * Shared authoritative helper for resolving a calendar fixture's effective series identity
+ * across `seriesId`, `competitionId`, and `cal_intl_<seriesId>_<suffix>` calendar date IDs.
+ * - Never allows a lower-priority field to silently override a contradictory explicit field.
+ * - Flags any disagreement among present identity fields as `{ isConflicted: true }`.
+ */
+export function resolveEffectiveFixtureSeriesIdentity(
+  candFix: any,
+  cdId?: string
+): { seriesId?: string; isConflicted: boolean } {
+  if (!candFix || typeof candFix !== 'object') return { isConflicted: false };
+
+  const genericCompTags = new Set([
+    'bilateral',
+    'bilateral_series',
+    't20i_bilateral',
+    'odi_bilateral',
+    'test_bilateral',
+    'intl'
+  ]);
+
+  const rawSeriesId: string | undefined =
+    typeof candFix.seriesId === 'string' && candFix.seriesId.trim() !== ''
+      ? candFix.seriesId.trim()
+      : undefined;
+
+  const rawCompId: string | undefined =
+    typeof candFix.competitionId === 'string' && candFix.competitionId.trim() !== ''
+      ? candFix.competitionId.trim()
+      : undefined;
+
+  const competitionSeriesId: string | undefined =
+    rawCompId && !genericCompTags.has(rawCompId.toLowerCase()) ? rawCompId : undefined;
+
+  let calIntlSeriesId: string | undefined;
+  if (typeof cdId === 'string' && cdId.startsWith('cal_intl_')) {
+    const rest = cdId.slice(9);
+    const lastUnderscore = rest.lastIndexOf('_');
+    if (lastUnderscore > 0) {
+      const extracted = rest.slice(0, lastUnderscore).trim();
+      const genericLabels = ['day', 'date', 'match', 'round', 'fixture', 'game', 'event'];
+      if (extracted.length > 0 && !genericLabels.includes(extracted.toLowerCase())) {
+        calIntlSeriesId = extracted;
+      }
+    }
+  }
+
+  const presentIdentities: string[] = [];
+  if (rawSeriesId) presentIdentities.push(rawSeriesId);
+  if (competitionSeriesId) presentIdentities.push(competitionSeriesId);
+  if (calIntlSeriesId) presentIdentities.push(calIntlSeriesId);
+
+  if (presentIdentities.length === 0) {
+    return { isConflicted: false };
+  }
+
+  const first = presentIdentities[0];
+  const isConflicted = presentIdentities.some(id => id !== first);
+  if (isConflicted) {
+    return { isConflicted: true };
+  }
+
+  return { seriesId: first, isConflicted: false };
+}
+
+interface CollectedCalendarFixtureEntry {
+  leagueId: string;
+  leagueIndex: number;
+  dateIndex: number;
+  calendarDateId?: string;
+  calendarDateType?: string;
+  slot: 'matchFixture' | 'internationalMatches' | 'mirroredInternationalDate';
+  intlMatchIndex?: number;
+  fixture: CalendarMatchFixture;
+  fixtureId: string;
+  effectiveSeriesId?: string;
+  isSeriesConflicted: boolean;
+  participantsMatch: boolean;
+  hasExplicitMatchNumber: boolean;
+  matchNumber?: number;
+  isInvalidMatchNumber: boolean;
+  expectedFixtureId?: string;
+  canonicalFixtureId?: string;
+}
+
+/**
+ * Authoritative pure state helper for recording a completed international match.
+ *
+ * AUTHORITATIVE IDENTITY CONTRACT:
+ * 1. Single Authoritative Identity: Every bilateral series match is identified by its
+ *    canonical identity `intl_fix_${seriesId}_${matchNumber}` and optional explicit `fixtureId`.
+ * 2. Match-Number Invariance: Series matches are resolved by authoritative identity and
+ *    validated against `matchNumber`, never by array position alone.
+ * 3. Ownership Proof: Matching teams, match number, or caller metadata alone cannot prove
+ *    ownership when a fixture ID is unrecognized or unproven.
+ * 4. Pre-Mutation Validation: All conflicts and duplicate-ID ambiguities are rejected before
+ *    mutating series state, wins/losses, ICC rankings, player stats, or calendar entries.
+ * 5. Independent Calendar Inspection: Both `matchFixture` and every item in `internationalMatches`
+ *    are inspected independently across all leagues and calendar dates.
+ * 6. Global Duplicate-ID Detection: Duplicate fixture IDs across leagues, tours, dates, or
+ *    fixture slots are rejected, except when disambiguated by the canonical tour schedule
+ *    (`cal_intl_${seriesId}_${matchNumber}` in `currentLeagueId` vs unlinked non-active placeholders).
+ * 7. Unified Metadata Resolution: `seriesId`, `competitionId`, and `cal_intl_` date IDs are
+ *    validated via `resolveEffectiveFixtureSeriesIdentity`; any contradiction causes rejection.
+ * 8. Unified Direct & Recovery Contract: Direct ID matches and calendar-linked recovery share
+ *    the exact same conflict and duplicate-ID validation pipeline.
+ * 9. Safe Legacy Fallback: Callbacks without `fixtureId` resolve only when exactly one unfinished
+ *    match exists in the active series and no conflicting calendar identity evidence exists.
+ * 10. Idempotency: Repeating a completed match callback reconciles missing calendar flags
+ *     without re-applying wins/losses, rankings, or player statistics.
  */
 export function applyRecordCompletedInternationalMatchState(params: {
   finishedMatch: MatchLiveState;
@@ -5457,11 +5567,16 @@ export function applyRecordCompletedInternationalMatchState(params: {
   leagues: League[];
   currentLeagueId: string;
   nations: Nation[];
+  players?: Player[];
+  teams?: Team[];
 }): {
   internationalSeries: InternationalSeriesState;
   leagues: League[];
   nations: Nation[];
+  players?: Player[];
+  teams?: Team[];
   matchedFixtureId: string | null;
+  resolutionStatus: InternationalFixtureResolutionStatus;
 } {
   const {
     finishedMatch,
@@ -5469,10 +5584,28 @@ export function applyRecordCompletedInternationalMatchState(params: {
     internationalSeries,
     leagues,
     currentLeagueId,
-    nations
+    nations,
+    players,
+    teams
   } = params;
 
-  // 1. Authoritatively classify competition
+  const unchanged = (status: InternationalFixtureResolutionStatus) => ({
+    internationalSeries,
+    leagues,
+    nations,
+    ...(players !== undefined ? { players } : {}),
+    ...(teams !== undefined ? { teams } : {}),
+    matchedFixtureId: null,
+    resolutionStatus: status
+  });
+
+  if (!finishedMatch || !finishedMatch.homeTeam || !finishedMatch.awayTeam) {
+    return unchanged('not_found');
+  }
+
+  // ==========================================================================
+  // STAGE A: Parse and Validate Callback Identity
+  // ==========================================================================
   const competitionType = classifyInternationalCompetition({
     finishedMatch,
     internationalSeries,
@@ -5480,15 +5613,45 @@ export function applyRecordCompletedInternationalMatchState(params: {
   });
 
   if (competitionType === 'unknown') {
-    // Fail safely for ambiguous/unrecognized international fixtures:
-    // Do not corrupt active series, do not mutate leagues or rankings
-    return {
-      internationalSeries,
-      leagues,
-      nations,
-      matchedFixtureId: null
-    };
+    return unchanged('not_found');
   }
+
+  const explicitFixtureId =
+    typeof finishedMatch.fixtureId === 'string' && finishedMatch.fixtureId.trim().length > 0
+      ? finishedMatch.fixtureId.trim()
+      : null;
+
+  const genericCompTags = new Set([
+    'bilateral',
+    'bilateral_series',
+    't20i_bilateral',
+    'odi_bilateral',
+    'test_bilateral',
+    'wtc',
+    'wtc_test',
+    'intl'
+  ]);
+
+  const rawCallbackSeriesId: string | undefined =
+    typeof (finishedMatch as any).seriesId === 'string' && (finishedMatch as any).seriesId.trim() !== ''
+      ? (finishedMatch as any).seriesId.trim()
+      : undefined;
+
+  const rawCallbackCompId: string | undefined =
+    typeof (finishedMatch as any).competitionId === 'string' && (finishedMatch as any).competitionId.trim() !== ''
+      ? (finishedMatch as any).competitionId.trim()
+      : undefined;
+
+  const callbackCompSeriesId: string | undefined =
+    rawCallbackCompId && !genericCompTags.has(rawCallbackCompId.toLowerCase())
+      ? rawCallbackCompId
+      : undefined;
+
+  if (rawCallbackSeriesId && callbackCompSeriesId && rawCallbackSeriesId !== callbackCompSeriesId) {
+    return unchanged('identity_conflict');
+  }
+
+  const effectiveCallbackSeriesId = rawCallbackSeriesId || callbackCompSeriesId;
 
   const winnerId = finishedMatch.winnerTeamId || finishedMatch.homeTeam.id;
   const loserId = winnerId === finishedMatch.homeTeam.id ? finishedMatch.awayTeam.id : finishedMatch.homeTeam.id;
@@ -5502,8 +5665,16 @@ export function applyRecordCompletedInternationalMatchState(params: {
 
   const winnerNat = winnerId === finishedMatch.homeTeam.id ? homeNat : awayNat;
   const loserNat = loserId === finishedMatch.homeTeam.id ? homeNat : awayNat;
-  const winnerNameLower = (winnerNat?.name || (winnerId === finishedMatch.homeTeam.id ? finishedMatch.homeTeam.name : finishedMatch.awayTeam.name) || '').toLowerCase();
-  const loserNameLower = (loserNat?.name || (loserId === finishedMatch.homeTeam.id ? finishedMatch.homeTeam.name : finishedMatch.awayTeam.name) || '').toLowerCase();
+  const winnerNameLower = (
+    winnerNat?.name ||
+    (winnerId === finishedMatch.homeTeam.id ? finishedMatch.homeTeam.name : finishedMatch.awayTeam.name) ||
+    ''
+  ).toLowerCase();
+  const loserNameLower = (
+    loserNat?.name ||
+    (loserId === finishedMatch.homeTeam.id ? finishedMatch.homeTeam.name : finishedMatch.awayTeam.name) ||
+    ''
+  ).toLowerCase();
 
   const userNatId = coachProfile?.nationalTeamId || internationalSeries?.userNationId || '';
   const didUserWin =
@@ -5565,74 +5736,154 @@ export function applyRecordCompletedInternationalMatchState(params: {
     );
   };
 
-  const getEffectiveFixtureSeriesIdentity = (
-    candFix: any,
-    cdId?: string
-  ): { seriesId?: string; isConflicted: boolean } => {
-    if (!candFix) return { isConflicted: false };
+  // ==========================================================================
+  // STAGE B: Collect Every Relevant Calendar Entry Without Discarding Duplicates
+  // ==========================================================================
+  const buildEntry = (
+    fix: CalendarMatchFixture,
+    league: League,
+    leagueIndex: number,
+    cd: League['calendarDates'][number],
+    dateIndex: number,
+    slot: 'matchFixture' | 'internationalMatches' | 'mirroredInternationalDate',
+    intlMatchIndex?: number
+  ): CollectedCalendarFixtureEntry => {
+    const { seriesId: effectiveSeriesId, isConflicted: isSeriesConflicted } =
+      resolveEffectiveFixtureSeriesIdentity(fix, cd.id);
+    const participantsMatch = doesPairMatchFinishedTeams(
+      fix.homeTeamId,
+      fix.awayTeamId,
+      fix.homeTeamName,
+      fix.awayTeamName
+    );
+    const rawMatchNum = (fix as any).matchNumber ?? (fix as any).seriesMatchNumber;
+    const hasExplicitMatchNumber = rawMatchNum !== undefined && rawMatchNum !== null;
+    const validMatchNumber =
+      typeof rawMatchNum === 'number' && Number.isInteger(rawMatchNum) && rawMatchNum >= 1
+        ? rawMatchNum
+        : undefined;
+    const isInvalidMatchNumber = hasExplicitMatchNumber && validMatchNumber === undefined;
 
-    const seriesId: string | undefined =
-      typeof candFix.seriesId === 'string' && candFix.seriesId.trim() !== ''
-        ? candFix.seriesId.trim()
+    const expectedFixtureId =
+      typeof (fix as any).expectedFixtureId === 'string' && (fix as any).expectedFixtureId.trim() !== ''
+        ? (fix as any).expectedFixtureId.trim()
+        : undefined;
+    const canonicalFixtureId =
+      typeof (fix as any).canonicalFixtureId === 'string' && (fix as any).canonicalFixtureId.trim() !== ''
+        ? (fix as any).canonicalFixtureId.trim()
         : undefined;
 
-    const competitionId: string | undefined =
-      typeof candFix.competitionId === 'string' && candFix.competitionId.trim() !== ''
-        ? candFix.competitionId.trim()
-        : undefined;
-
-    let calIntlSeriesId: string | undefined;
-    if (typeof cdId === 'string' && cdId.startsWith('cal_intl_')) {
-      const rest = cdId.slice(9);
-      const lastUnderscore = rest.lastIndexOf('_');
-      if (lastUnderscore > 0) {
-        const extracted = rest.slice(0, lastUnderscore).trim();
-        const genericLabels = ['day', 'date', 'match', 'round', 'fixture', 'game', 'event'];
-        if (extracted.length > 0 && !genericLabels.includes(extracted.toLowerCase())) {
-          calIntlSeriesId = extracted;
-        }
-      }
-    }
-
-    const presentIdentities: string[] = [];
-    if (seriesId) presentIdentities.push(seriesId);
-    if (competitionId) presentIdentities.push(competitionId);
-    if (calIntlSeriesId) presentIdentities.push(calIntlSeriesId);
-
-    if (presentIdentities.length === 0) {
-      return { isConflicted: false };
-    }
-
-    const first = presentIdentities[0];
-    const isConflicted = presentIdentities.some(id => id !== first);
-
-    if (isConflicted) {
-      return { isConflicted: true };
-    }
-
-    return { seriesId: first, isConflicted: false };
+    return {
+      leagueId: league.id,
+      leagueIndex,
+      dateIndex,
+      calendarDateId: cd.id,
+      calendarDateType: cd.type,
+      slot,
+      intlMatchIndex,
+      fixture: fix,
+      fixtureId: typeof fix.id === 'string' ? fix.id.trim() : '',
+      effectiveSeriesId,
+      isSeriesConflicted,
+      participantsMatch,
+      hasExplicitMatchNumber,
+      matchNumber: validMatchNumber,
+      isInvalidMatchNumber,
+      expectedFixtureId,
+      canonicalFixtureId
+    };
   };
 
-  let nextSeries = internationalSeries;
-  const explicitFixtureId =
-    typeof finishedMatch.fixtureId === 'string' && finishedMatch.fixtureId.trim().length > 0
-      ? finishedMatch.fixtureId.trim()
-      : null;
-  let matchedFixtureId: string | null = explicitFixtureId;
+  const allCalendarEntries: CollectedCalendarFixtureEntry[] = [];
+  if (Array.isArray(leagues)) {
+    leagues.forEach((league, leagueIndex) => {
+      if (!league || !Array.isArray(league.calendarDates)) return;
+      league.calendarDates.forEach((cd, dateIndex) => {
+        if (!cd) return;
+        const mf = cd.matchFixture && typeof cd.matchFixture === 'object' ? cd.matchFixture : null;
+        const imList = Array.isArray(cd.internationalMatches)
+          ? cd.internationalMatches.filter(im => Boolean(im && typeof im === 'object'))
+          : [];
 
-  // 2. WTC Completion Handling vs Bilateral Series Completion Handling with Idempotency Guard
+        // Check whether mf and imList[0] represent the single synchronized mirror slot created for an
+        // 'international' calendar date (e.g., by applyAdvanceCalendarToNextTourState).
+        // If either slot carries independent explicit seriesId/competitionId/expectedFixtureId/canonicalFixtureId
+        // or if cd.type !== 'international' or imList.length !== 1, inspect and retain them as separate entries!
+        const isTrustedSingleInternationalDateMirror =
+          cd.type === 'international' &&
+          mf !== null &&
+          imList.length === 1 &&
+          (mf === imList[0] ||
+            (!(mf as any).seriesId &&
+              !(mf as any).competitionId &&
+              !(mf as any).expectedFixtureId &&
+              !(mf as any).canonicalFixtureId &&
+              !(imList[0] as any).seriesId &&
+              !(imList[0] as any).competitionId &&
+              !(imList[0] as any).expectedFixtureId &&
+              !(imList[0] as any).canonicalFixtureId &&
+              (mf.id || '').trim() === (imList[0].id || '').trim() &&
+              (mf.homeTeamId || '').trim() === (imList[0].homeTeamId || '').trim() &&
+              (mf.awayTeamId || '').trim() === (imList[0].awayTeamId || '').trim() &&
+              (mf.venue || '').trim() === (imList[0].venue || '').trim() &&
+              Boolean(mf.completed) === Boolean(imList[0].completed)));
+
+        if (isTrustedSingleInternationalDateMirror && mf) {
+          allCalendarEntries.push(
+            buildEntry(mf, league, leagueIndex, cd, dateIndex, 'mirroredInternationalDate', 0)
+          );
+        } else {
+          if (mf) {
+            allCalendarEntries.push(buildEntry(mf, league, leagueIndex, cd, dateIndex, 'matchFixture'));
+          }
+          imList.forEach((im, imIdx) => {
+            allCalendarEntries.push(
+              buildEntry(im, league, leagueIndex, cd, dateIndex, 'internationalMatches', imIdx)
+            );
+          });
+        }
+      });
+    });
+  }
+
+  // Helper to apply player & team stat updates only when resolutionStatus === 'resolved'
+  const applyPlayerAndTeamUpdatesIfProvided = (): {
+    updatedPlayers?: Player[];
+    updatedTeams?: Team[];
+  } => {
+    if (players === undefined && teams === undefined) return {};
+    const activeLeague =
+      (Array.isArray(leagues) && leagues.find(l => l && l.id === currentLeagueId)) ||
+      (Array.isArray(leagues) ? leagues[0] : undefined);
+    const seasonKey = normalizeSeasonYear(activeLeague?.seasonName);
+    const applyStats = (p: Player): Player => recordMatchToPlayerStats(p, finishedMatch, seasonKey);
+    return {
+      ...(players !== undefined ? { updatedPlayers: players.map(applyStats) } : {}),
+      ...(teams !== undefined
+        ? {
+            updatedTeams: teams.map(t => ({
+              ...t,
+              squad: Array.isArray(t.squad) ? t.squad.map(applyStats) : t.squad
+            }))
+          }
+        : {})
+    };
+  };
+
+  // ==========================================================================
+  // WTC Path (Explicitly Classified)
+  // ==========================================================================
   if (competitionType === 'wtc') {
     const isAlreadyCompletedWtc = Boolean(
       internationalSeries?.wtcTestCompleted &&
-      (internationalSeries.wtcTestSummary === intlShortSummary || !params.intlShortSummary)
+        (internationalSeries.wtcTestSummary === intlShortSummary || !params.intlShortSummary)
     );
 
     if (isAlreadyCompletedWtc) {
-      // Reconcile calendar if uncompleted, but do not duplicate rankings or series! (Requirement 2)
       const reconciledLeagues = reconcileCalendarForInternationalMatch({
         leagues,
         currentLeagueId,
-        matchedFixtureId,
+        matchedFixtureId: explicitFixtureId,
         competitionType: 'wtc',
         authoritativeSummary: internationalSeries?.wtcTestSummary || intlShortSummary,
         finishedMatch,
@@ -5642,287 +5893,531 @@ export function applyRecordCompletedInternationalMatchState(params: {
         internationalSeries,
         leagues: reconciledLeagues,
         nations,
-        matchedFixtureId
+        ...(players !== undefined ? { players } : {}),
+        ...(teams !== undefined ? { teams } : {}),
+        matchedFixtureId: explicitFixtureId,
+        resolutionStatus: 'already_completed'
       };
     }
 
-    if (internationalSeries && typeof internationalSeries === 'object') {
-      nextSeries = {
-        ...internationalSeries,
-        wtcTestCompleted: true,
-        wtcTestSummary: intlShortSummary
-      };
-    }
-  } else if (competitionType === 'bilateral') {
-    if (!internationalSeries || !Array.isArray(internationalSeries.matches) || internationalSeries.matches.length === 0) {
-      // No active series matches to record against: fail safely without mutating state
-      return {
-        internationalSeries,
-        leagues,
-        nations,
-        matchedFixtureId: null
-      };
-    }
-
-    const seriesMatchesTeams = doesPairMatchFinishedTeams(
-      internationalSeries.userNationId,
-      internationalSeries.opponentNationId,
-      internationalSeries.userNationName,
-      internationalSeries.opponentNationName
-    );
-
-    if (!seriesMatchesTeams) {
-      // Teams in finished match do not match active bilateral series: fail safely
-      return {
-        internationalSeries,
-        leagues,
-        nations,
-        matchedFixtureId: null
-      };
-    }
-
-    let targetMatchIdx = -1;
-    if (explicitFixtureId) {
-      // 1. Authoritative exact fixture ID resolution against series matches
-      const matchedIndexes: number[] = [];
-      internationalSeries.matches.forEach((m, idx) => {
-        if (
-          m &&
-          (m.fixtureId === explicitFixtureId ||
-            (internationalSeries.seriesId &&
-              `intl_fix_${internationalSeries.seriesId}_${m.matchNumber}` === explicitFixtureId))
-        ) {
-          matchedIndexes.push(idx);
-        }
-      });
-
-      if (matchedIndexes.length === 1) {
-        // Validate that neither the callback nor any matching calendar fixture across leagues
-        // asserts a conflicting international series identity (different seriesId), and ensure
-        // explicit fixture IDs are not duplicated across multiple calendar dates claiming the same series.
-        const callbackSeriesId: string | undefined = (finishedMatch as any).seriesId;
-
-        let hasConflictingCalendarSeries = false;
-        let matchingSeriesCalendarDatesCount = 0;
-
-        for (const league of leagues) {
-          if (!league || !Array.isArray(league.calendarDates)) continue;
-          for (const cd of league.calendarDates) {
-            if (!cd) continue;
-            const candidates = [
-              cd.matchFixture,
-              ...(Array.isArray(cd.internationalMatches) ? cd.internationalMatches : [])
-            ].filter(Boolean);
-
-            let dateHasMatchingSeriesFixture = false;
-            for (const candFix of candidates) {
-              if (!candFix || candFix.id !== explicitFixtureId) continue;
-              const { seriesId: fixSeriesId, isConflicted } = getEffectiveFixtureSeriesIdentity(candFix, cd.id);
-
-              if (isConflicted || (internationalSeries.seriesId && fixSeriesId && fixSeriesId !== internationalSeries.seriesId)) {
-                hasConflictingCalendarSeries = true;
-              } else if (internationalSeries.seriesId && fixSeriesId === internationalSeries.seriesId) {
-                dateHasMatchingSeriesFixture = true;
-              }
-            }
-            if (dateHasMatchingSeriesFixture) {
-              matchingSeriesCalendarDatesCount++;
-            }
-          }
-        }
-
-        const isCallbackSeriesValid =
-          !callbackSeriesId ||
-          !internationalSeries.seriesId ||
-          callbackSeriesId === internationalSeries.seriesId;
-
-        if (isCallbackSeriesValid && !hasConflictingCalendarSeries && matchingSeriesCalendarDatesCount <= 1) {
-          targetMatchIdx = matchedIndexes[0];
-        }
-      }
-
-      // 2. Authoritative fixture-mapping recovery path with strict series identity and participant verification
-      if (targetMatchIdx === -1 && internationalSeries.seriesId && matchedIndexes.length === 0) {
-        // First, check total occurrences of explicitFixtureId across all calendar entries in all leagues.
-        // If a custom fixture ID is duplicated across calendar entries in different leagues, reject the callback
-        // before candidate filtering can silently ignore any entry with conflicting metadata.
-        let totalCalendarMatchesWithExplicitId = 0;
-        for (const league of leagues) {
-          if (!league || !Array.isArray(league.calendarDates)) continue;
-          for (const cd of league.calendarDates) {
-            if (!cd) continue;
-            const hasMf = cd.matchFixture?.id === explicitFixtureId;
-            const hasIm = Array.isArray(cd.internationalMatches) && cd.internationalMatches.some(im => im && im.id === explicitFixtureId);
-            if (hasMf || hasIm) {
-              totalCalendarMatchesWithExplicitId++;
-            }
-          }
-        }
-
-        if (totalCalendarMatchesWithExplicitId === 1) {
-          const candidateMatches: { candidateIndex: number; expectedFixtureId: string; isProven: boolean }[] = [];
-
-          for (const league of leagues) {
-            if (!league || !Array.isArray(league.calendarDates)) continue;
-            for (const cd of league.calendarDates) {
-              if (!cd) continue;
-              const candMf: CalendarMatchFixture | null = cd.matchFixture?.id === explicitFixtureId ? cd.matchFixture : null;
-              const candIm: CalendarMatchFixture | null = Array.isArray(cd.internationalMatches)
-                ? (cd.internationalMatches.find(im => im && im.id === explicitFixtureId) as CalendarMatchFixture | undefined) || null
-                : null;
-              const candFix: CalendarMatchFixture | null = candMf || candIm;
-              if (!candFix) continue;
-
-              // Strict Verification:
-              // a) Series identity must match active international series
-              const { seriesId: fixSeriesId, isConflicted } = getEffectiveFixtureSeriesIdentity(candFix, cd.id);
-              const isSeriesIdentical: boolean = Boolean(
-                !isConflicted && fixSeriesId && fixSeriesId === internationalSeries.seriesId
-              );
-
-              // b) Participants must match active international series nations
-              const isPairMatchingSeries: boolean = doesPairMatchFinishedTeams(
-                candFix.homeTeamId,
-                candFix.awayTeamId,
-                candFix.homeTeamName,
-                candFix.awayTeamName
-              );
-
-              // c) Match number verification against series match (find by matchNumber, NOT array index!)
-              const matchNum: number | undefined = (candFix as any).matchNumber || (candFix as any).seriesMatchNumber;
-              const isValidMatchNum: boolean = typeof matchNum === 'number' && matchNum >= 1;
-
-              if (isSeriesIdentical && isPairMatchingSeries && isValidMatchNum && typeof matchNum === 'number') {
-                const matchingSeriesMatches: { match: InternationalSeriesMatch; index: number }[] = [];
-                internationalSeries.matches.forEach((m, idx) => {
-                  if (m && m.matchNumber === matchNum) {
-                    matchingSeriesMatches.push({ match: m, index: idx });
-                  }
-                });
-
-                if (matchingSeriesMatches.length === 1) {
-                  const { match: candidateSeriesMatch, index: candidateIndex } = matchingSeriesMatches[0];
-                  const expectedCanonicalId = `intl_fix_${internationalSeries.seriesId}_${candidateSeriesMatch.matchNumber}`;
-
-                  const isDirectMatch = Boolean(
-                    (candidateSeriesMatch.fixtureId && candidateSeriesMatch.fixtureId === explicitFixtureId) ||
-                      expectedCanonicalId === explicitFixtureId
-                  );
-
-                  const isExplicitCalendarLink = Boolean(
-                    candFix.id === explicitFixtureId &&
-                      ((candFix as any).expectedFixtureId === expectedCanonicalId ||
-                        (candFix as any).canonicalFixtureId === expectedCanonicalId)
-                  );
-
-                  const isProven = isDirectMatch || isExplicitCalendarLink;
-                  const calExpectedId = (candFix as any).expectedFixtureId || (candFix as any).canonicalFixtureId || expectedCanonicalId;
-
-                  candidateMatches.push({
-                    candidateIndex,
-                    expectedFixtureId: calExpectedId,
-                    isProven
-                  });
-                }
-              }
-            }
-          }
-
-          if (candidateMatches.length === 1 && candidateMatches[0].isProven) {
-            targetMatchIdx = candidateMatches[0].candidateIndex;
-          } else {
-            targetMatchIdx = -1;
-          }
-        } else {
-          // Reject duplicate custom fixture IDs across different leagues (totalCalendarMatchesWithExplicitId > 1 or 0)
-          targetMatchIdx = -1;
-        }
-      }
-
-      // Requirement 1.2: If supplied fixture ID does not match a fixture in the series,
-      // DO NOT fall back to another match based solely on team names!
-      if (targetMatchIdx === -1) {
-        return {
-          internationalSeries,
-          leagues,
-          nations,
-          matchedFixtureId: null
-        };
-      }
-    } else {
-      // Requirement 1.4 & 1.5: If NO fixture ID was supplied (legacy flow), allow team-based fallback
-      // ONLY when the teams, series identity, and match status UNIQUELY identify the intended unfinished fixture.
-      const unfinishedIndexes: number[] = [];
-      internationalSeries.matches.forEach((m, idx) => {
-        if (m && !m.completed) {
-          unfinishedIndexes.push(idx);
-        }
-      });
-
-      if (unfinishedIndexes.length === 1) {
-        targetMatchIdx = unfinishedIndexes[0];
-      } else {
-        // Ambiguous match (e.g. 0 or >1 unfinished matches in series): reject safely without mutation
-        return {
-          internationalSeries,
-          leagues,
-          nations,
-          matchedFixtureId: null
-        };
-      }
-    }
-
-    const targetMatch = internationalSeries.matches[targetMatchIdx];
-    const expectedFixId =
-      targetMatch.fixtureId ||
-      (internationalSeries.seriesId
-        ? `intl_fix_${internationalSeries.seriesId}_${targetMatch.matchNumber}`
-        : matchedFixtureId || undefined);
-
-    if (!matchedFixtureId && expectedFixId) {
-      matchedFixtureId = expectedFixId;
-    }
-
-    if (targetMatch.completed) {
-      // Idempotency: match was already completed in series, do not duplicate rankings or results,
-      // BUT reconcile the corresponding calendar fixture in case it was out of sync (Requirement 2)
-      const reconciledLeagues = reconcileCalendarForInternationalMatch({
-        leagues,
-        currentLeagueId,
-        matchedFixtureId,
-        competitionType: 'bilateral',
-        authoritativeSummary: targetMatch.summary || intlShortSummary,
-        finishedMatch,
-        doesPairMatchFinishedTeams
-      });
-
-      return {
-        internationalSeries,
-        leagues: reconciledLeagues,
-        nations,
-        matchedFixtureId
-      };
-    }
-
-    const updatedMatches = internationalSeries.matches.map((m, idx) =>
-      idx === targetMatchIdx
+    const nextSeries =
+      internationalSeries && typeof internationalSeries === 'object'
         ? {
-            ...m,
-            fixtureId: m.fixtureId || expectedFixId,
-            completed: true,
-            summary: intlShortSummary
+            ...internationalSeries,
+            wtcTestCompleted: true,
+            wtcTestSummary: intlShortSummary
           }
-        : m
-    );
-    nextSeries = {
-      ...internationalSeries,
-      seriesWins: internationalSeries.seriesWins + (didUserWin ? 1 : 0),
-      seriesLosses: internationalSeries.seriesLosses + (didUserWin ? 0 : 1),
-      matches: updatedMatches
+        : internationalSeries;
+
+    const updatedNationsRaw = nations.map(n => {
+      const isWin = (winnerNat && n.id === winnerNat.id) || n.name.toLowerCase() === winnerNameLower;
+      const isLoss = (loserNat && n.id === loserNat.id) || n.name.toLowerCase() === loserNameLower;
+      if (!isWin && !isLoss) return n;
+      const delta = isWin ? 3 : -2;
+      return {
+        ...n,
+        ratingT20: finishedMatch.format === 'T20' ? Math.max(150, n.ratingT20 + delta) : n.ratingT20,
+        ratingODI: finishedMatch.format === 'ODI' ? Math.max(50, n.ratingODI + delta) : n.ratingODI,
+        ratingTest: finishedMatch.format === 'TEST' ? Math.max(40, n.ratingTest + delta) : n.ratingTest
+      };
+    });
+    const byT20 = [...updatedNationsRaw].sort((a, b) => b.ratingT20 - a.ratingT20);
+    const byODI = [...updatedNationsRaw].sort((a, b) => b.ratingODI - a.ratingODI);
+    const byTest = [...updatedNationsRaw].sort((a, b) => b.ratingTest - a.ratingTest);
+    const updatedNations = updatedNationsRaw.map(n => {
+      const rT20 = byT20.findIndex(x => x.id === n.id) + 1;
+      const rODI = byODI.findIndex(x => x.id === n.id) + 1;
+      const rTest = byTest.findIndex(x => x.id === n.id) + 1;
+      return {
+        ...n,
+        rankT20: rT20,
+        t20Rank: rT20,
+        rankODI: rODI,
+        odiRank: rODI,
+        rankTest: rTest,
+        testRank: rTest
+      };
+    });
+
+    const updatedLeagues = reconcileCalendarForInternationalMatch({
+      leagues,
+      currentLeagueId,
+      matchedFixtureId: explicitFixtureId,
+      competitionType: 'wtc',
+      authoritativeSummary: intlShortSummary,
+      finishedMatch,
+      doesPairMatchFinishedTeams
+    });
+
+    const { updatedPlayers, updatedTeams } = applyPlayerAndTeamUpdatesIfProvided();
+
+    return {
+      internationalSeries: nextSeries,
+      leagues: updatedLeagues,
+      nations: updatedNations,
+      ...(updatedPlayers !== undefined ? { players: updatedPlayers } : {}),
+      ...(updatedTeams !== undefined ? { teams: updatedTeams } : {}),
+      matchedFixtureId: explicitFixtureId,
+      resolutionStatus: 'resolved'
     };
   }
 
-  // 3. Update ICC Rankings only for freshly completed matches (idempotency enforced)
+  // ==========================================================================
+  // STAGE C, D & E: Bilateral Active-Series Resolution & Validation Pipeline
+  // ==========================================================================
+  if (
+    !internationalSeries ||
+    !Array.isArray(internationalSeries.matches) ||
+    internationalSeries.matches.length === 0
+  ) {
+    return unchanged('not_found');
+  }
+
+  const activeSeriesId =
+    typeof internationalSeries.seriesId === 'string' && internationalSeries.seriesId.trim() !== ''
+      ? internationalSeries.seriesId.trim()
+      : undefined;
+
+  if (activeSeriesId && effectiveCallbackSeriesId && effectiveCallbackSeriesId !== activeSeriesId) {
+    return unchanged('identity_conflict');
+  }
+
+  const seriesMatchesTeams = doesPairMatchFinishedTeams(
+    internationalSeries.userNationId,
+    internationalSeries.opponentNationId,
+    internationalSeries.userNationName,
+    internationalSeries.opponentNationName
+  );
+
+  if (!seriesMatchesTeams) {
+    return unchanged('not_found');
+  }
+
+  let targetMatchIdx = -1;
+  let resolvedFixtureId: string | null = explicitFixtureId;
+
+  if (explicitFixtureId) {
+    // 1. Collect all calendar entries matching explicitFixtureId across all leagues, dates, and slots
+    let matchingIdCalendarEntries = allCalendarEntries.filter(e => e.fixtureId === explicitFixtureId);
+
+    // 2. Validate every matching calendar entry for internal or cross-series conflicts BEFORE filtering
+    for (const entry of matchingIdCalendarEntries) {
+      if (entry.isSeriesConflicted) {
+        return unchanged('identity_conflict');
+      }
+      if (activeSeriesId && entry.effectiveSeriesId && entry.effectiveSeriesId !== activeSeriesId) {
+        return unchanged('identity_conflict');
+      }
+      if (!entry.participantsMatch) {
+        return unchanged('identity_conflict');
+      }
+      if (entry.isInvalidMatchNumber) {
+        return unchanged('identity_conflict');
+      }
+      if (
+        entry.expectedFixtureId &&
+        entry.canonicalFixtureId &&
+        entry.expectedFixtureId !== entry.canonicalFixtureId
+      ) {
+        return unchanged('identity_conflict');
+      }
+      // If entry specifies expectedFixtureId or canonicalFixtureId, check if it conflicts with entry.matchNumber or activeSeriesId
+      const linkedCanonical = entry.expectedFixtureId || entry.canonicalFixtureId;
+      if (linkedCanonical && activeSeriesId) {
+        if (entry.matchNumber !== undefined) {
+          const expectedForEntryNum = `intl_fix_${activeSeriesId}_${entry.matchNumber}`;
+          if (linkedCanonical !== expectedForEntryNum) {
+            return unchanged('identity_conflict');
+          }
+        } else if (!linkedCanonical.startsWith(`intl_fix_${activeSeriesId}_`)) {
+          return unchanged('identity_conflict');
+        }
+      }
+    }
+
+    // 3. Handle duplicate occurrences of explicitFixtureId across calendar entries
+    if (matchingIdCalendarEntries.length > 1) {
+      // Check if duplicate entries disagree with each other on metadata -> identity_conflict
+      const firstEntry = matchingIdCalendarEntries[0];
+      const hasMetadataDisagreement = matchingIdCalendarEntries.some(
+        e =>
+          (e.effectiveSeriesId &&
+            firstEntry.effectiveSeriesId &&
+            e.effectiveSeriesId !== firstEntry.effectiveSeriesId) ||
+          (e.matchNumber !== undefined &&
+            firstEntry.matchNumber !== undefined &&
+            e.matchNumber !== firstEntry.matchNumber) ||
+          (e.expectedFixtureId &&
+            firstEntry.expectedFixtureId &&
+            e.expectedFixtureId !== firstEntry.expectedFixtureId) ||
+          (e.canonicalFixtureId &&
+            firstEntry.canonicalFixtureId &&
+            e.canonicalFixtureId !== firstEntry.canonicalFixtureId)
+      );
+      if (hasMetadataDisagreement) {
+        return unchanged('identity_conflict');
+      }
+
+      // Trusted Canonical Tour Disambiguation Contract:
+      // Only disambiguates when explicitFixtureId is a canonical series fixture ID `intl_fix_${activeSeriesId}_${matchNumber}`,
+      // exactly one entry is the authoritative `cal_intl_${activeSeriesId}_${matchNumber}` date in `currentLeagueId`
+      // with `effectiveSeriesId === activeSeriesId`, and all other entries are unlinked placeholders (`effectiveSeriesId === undefined`)
+      // in non-active leagues (`leagueId !== currentLeagueId`).
+      let disambiguatedCanonicalEntry: CollectedCalendarFixtureEntry | null = null;
+      if (activeSeriesId && explicitFixtureId.startsWith(`intl_fix_${activeSeriesId}_`)) {
+        const canonicalInActiveLeague = matchingIdCalendarEntries.filter(
+          e =>
+            e.leagueId === currentLeagueId &&
+            e.effectiveSeriesId === activeSeriesId &&
+            typeof e.calendarDateId === 'string' &&
+            e.calendarDateId.startsWith(`cal_intl_${activeSeriesId}_`)
+        );
+        const othersAreUnlinkedNonActivePlaceholders = matchingIdCalendarEntries
+          .filter(e => e !== canonicalInActiveLeague[0])
+          .every(
+            e =>
+              e.leagueId !== currentLeagueId &&
+              e.effectiveSeriesId === undefined &&
+              !e.expectedFixtureId &&
+              !e.canonicalFixtureId
+          );
+
+        if (canonicalInActiveLeague.length === 1 && othersAreUnlinkedNonActivePlaceholders) {
+          disambiguatedCanonicalEntry = canonicalInActiveLeague[0];
+        }
+      }
+
+      if (disambiguatedCanonicalEntry) {
+        matchingIdCalendarEntries = [disambiguatedCanonicalEntry];
+      } else {
+        return unchanged('ambiguous');
+      }
+    }
+
+    // 4. Check for direct match in internationalSeries.matches
+    const directSeriesMatches: { match: InternationalSeriesMatch; index: number }[] = [];
+    internationalSeries.matches.forEach((m, idx) => {
+      if (!m) return;
+      const canonicalId =
+        activeSeriesId && typeof m.matchNumber === 'number' && m.matchNumber >= 1
+          ? `intl_fix_${activeSeriesId}_${m.matchNumber}`
+          : undefined;
+      if (
+        m.fixtureId === explicitFixtureId ||
+        (!m.fixtureId && canonicalId === explicitFixtureId) ||
+        (m.fixtureId === canonicalId && canonicalId === explicitFixtureId)
+      ) {
+        directSeriesMatches.push({ match: m, index: idx });
+      }
+    });
+
+    if (directSeriesMatches.length > 1) {
+      return unchanged('ambiguous');
+    }
+
+    if (directSeriesMatches.length === 1) {
+      // Direct Match Path: Validate matchNumber uniqueness & calendar consistency
+      const candidateMatch = directSeriesMatches[0].match;
+      const candidateIdx = directSeriesMatches[0].index;
+
+      if (
+        typeof candidateMatch.matchNumber !== 'number' ||
+        !Number.isInteger(candidateMatch.matchNumber) ||
+        candidateMatch.matchNumber < 1
+      ) {
+        return unchanged('identity_conflict');
+      }
+
+      const sameMatchNumberCount = internationalSeries.matches.filter(
+        m => m && m.matchNumber === candidateMatch.matchNumber
+      ).length;
+      if (sameMatchNumberCount !== 1) {
+        return unchanged('ambiguous');
+      }
+
+      const callbackMatchNum = (finishedMatch as any).matchNumber;
+      if (callbackMatchNum !== undefined && callbackMatchNum !== candidateMatch.matchNumber) {
+        return unchanged('identity_conflict');
+      }
+
+      const expectedCanonicalId = activeSeriesId
+        ? `intl_fix_${activeSeriesId}_${candidateMatch.matchNumber}`
+        : undefined;
+
+      if (matchingIdCalendarEntries.length === 1) {
+        const calEntry = matchingIdCalendarEntries[0];
+        if (calEntry.matchNumber !== undefined && calEntry.matchNumber !== candidateMatch.matchNumber) {
+          return unchanged('identity_conflict');
+        }
+        if (
+          expectedCanonicalId &&
+          calEntry.expectedFixtureId &&
+          calEntry.expectedFixtureId !== expectedCanonicalId
+        ) {
+          return unchanged('identity_conflict');
+        }
+        if (
+          expectedCanonicalId &&
+          calEntry.canonicalFixtureId &&
+          calEntry.canonicalFixtureId !== expectedCanonicalId
+        ) {
+          return unchanged('identity_conflict');
+        }
+      }
+
+      // Check if multiple calendar entries claim this same canonical fixture
+      if (expectedCanonicalId && activeSeriesId) {
+        const claimingEntries = allCalendarEntries.filter(
+          e =>
+            e.expectedFixtureId === expectedCanonicalId ||
+            e.canonicalFixtureId === expectedCanonicalId ||
+            (e.effectiveSeriesId === activeSeriesId && e.matchNumber === candidateMatch.matchNumber)
+        );
+        if (claimingEntries.length > 1) {
+          return unchanged('ambiguous');
+        }
+      }
+
+      targetMatchIdx = candidateIdx;
+      resolvedFixtureId = explicitFixtureId;
+    } else {
+      // Calendar-Linked Recovery Path: directSeriesMatches.length === 0
+      if (!activeSeriesId) {
+        return unchanged('not_found');
+      }
+
+      if (matchingIdCalendarEntries.length === 0) {
+        // Check if explicitFixtureId encodes a different series' canonical prefix
+        if (
+          explicitFixtureId.startsWith('intl_fix_') &&
+          !explicitFixtureId.startsWith(`intl_fix_${activeSeriesId}_`)
+        ) {
+          return unchanged('identity_conflict');
+        }
+        return unchanged('not_found');
+      }
+
+      const calEntry = matchingIdCalendarEntries[0];
+
+      // Require proven active series identity on the calendar entry
+      if (!calEntry.effectiveSeriesId || calEntry.effectiveSeriesId !== activeSeriesId) {
+        return unchanged('identity_conflict');
+      }
+
+      // Require valid matchNumber on the calendar entry
+      if (calEntry.matchNumber === undefined) {
+        return unchanged('identity_conflict');
+      }
+
+      const callbackMatchNum = (finishedMatch as any).matchNumber;
+      if (callbackMatchNum !== undefined && callbackMatchNum !== calEntry.matchNumber) {
+        return unchanged('identity_conflict');
+      }
+
+      // Resolve series match strictly by matchNumber, never array position
+      const matchingByNum: { match: InternationalSeriesMatch; index: number }[] = [];
+      internationalSeries.matches.forEach((m, idx) => {
+        if (m && m.matchNumber === calEntry.matchNumber) {
+          matchingByNum.push({ match: m, index: idx });
+        }
+      });
+
+      if (matchingByNum.length === 0) {
+        return unchanged('not_found');
+      }
+      if (matchingByNum.length > 1) {
+        return unchanged('ambiguous');
+      }
+
+      const candidateMatch = matchingByNum[0].match;
+      const candidateIdx = matchingByNum[0].index;
+      const expectedCanonicalId = `intl_fix_${activeSeriesId}_${candidateMatch.matchNumber}`;
+
+      // Require explicit authoritative link (expectedFixtureId or canonicalFixtureId) matching expectedCanonicalId
+      const hasProvenLink = Boolean(
+        calEntry.expectedFixtureId === expectedCanonicalId ||
+          calEntry.canonicalFixtureId === expectedCanonicalId
+      );
+      if (!hasProvenLink) {
+        return unchanged('identity_conflict');
+      }
+
+      // Reject if multiple calendar entries across any league/date claim the same canonical fixture
+      const claimingEntries = allCalendarEntries.filter(
+        e =>
+          e.fixtureId === expectedCanonicalId ||
+          e.expectedFixtureId === expectedCanonicalId ||
+          e.canonicalFixtureId === expectedCanonicalId ||
+          (e.effectiveSeriesId === activeSeriesId && e.matchNumber === candidateMatch.matchNumber)
+      );
+      if (claimingEntries.length > 1) {
+        return unchanged('ambiguous');
+      }
+
+      targetMatchIdx = candidateIdx;
+      resolvedFixtureId = explicitFixtureId;
+    }
+  } else {
+    // ==========================================================================
+    // Legacy Callback Path (No explicitFixtureId provided)
+    // ==========================================================================
+    const unfinishedMatches: { match: InternationalSeriesMatch; index: number }[] = [];
+    internationalSeries.matches.forEach((m, idx) => {
+      if (m && !m.completed) {
+        unfinishedMatches.push({ match: m, index: idx });
+      }
+    });
+
+    if (unfinishedMatches.length === 0) {
+      return unchanged('not_found');
+    }
+    if (unfinishedMatches.length > 1) {
+      return unchanged('ambiguous');
+    }
+
+    const candidateMatch = unfinishedMatches[0].match;
+    const candidateIdx = unfinishedMatches[0].index;
+
+    if (
+      typeof candidateMatch.matchNumber !== 'number' ||
+      !Number.isInteger(candidateMatch.matchNumber) ||
+      candidateMatch.matchNumber < 1
+    ) {
+      return unchanged('identity_conflict');
+    }
+
+    const sameMatchNumberCount = internationalSeries.matches.filter(
+      m => m && m.matchNumber === candidateMatch.matchNumber
+    ).length;
+    if (sameMatchNumberCount !== 1) {
+      return unchanged('ambiguous');
+    }
+
+    const expectedCanonicalId = activeSeriesId
+      ? `intl_fix_${activeSeriesId}_${candidateMatch.matchNumber}`
+      : undefined;
+    const expectedFixId = candidateMatch.fixtureId || expectedCanonicalId;
+
+    // Inspect calendar entries for any conflicting or ambiguous identity evidence
+    const relatedCalendarEntries = allCalendarEntries.filter(
+      e =>
+        (expectedFixId && e.fixtureId === expectedFixId) ||
+        (expectedCanonicalId &&
+          (e.fixtureId === expectedCanonicalId ||
+            e.expectedFixtureId === expectedCanonicalId ||
+            e.canonicalFixtureId === expectedCanonicalId)) ||
+        (activeSeriesId &&
+          e.effectiveSeriesId === activeSeriesId &&
+          e.matchNumber === candidateMatch.matchNumber) ||
+        (e.leagueId === currentLeagueId &&
+          !e.fixture.completed &&
+          (e.fixture.isInternational || e.calendarDateType === 'international') &&
+          e.participantsMatch)
+    );
+
+    for (const entry of relatedCalendarEntries) {
+      if (entry.isSeriesConflicted) {
+        return unchanged('identity_conflict');
+      }
+      if (activeSeriesId && entry.effectiveSeriesId && entry.effectiveSeriesId !== activeSeriesId) {
+        return unchanged('identity_conflict');
+      }
+      if (!entry.participantsMatch) {
+        return unchanged('identity_conflict');
+      }
+      if (entry.isInvalidMatchNumber) {
+        return unchanged('identity_conflict');
+      }
+      if (entry.matchNumber !== undefined && entry.matchNumber !== candidateMatch.matchNumber) {
+        return unchanged('identity_conflict');
+      }
+      if (
+        expectedCanonicalId &&
+        entry.expectedFixtureId &&
+        entry.expectedFixtureId !== expectedCanonicalId
+      ) {
+        return unchanged('identity_conflict');
+      }
+      if (
+        expectedCanonicalId &&
+        entry.canonicalFixtureId &&
+        entry.canonicalFixtureId !== expectedCanonicalId
+      ) {
+        return unchanged('identity_conflict');
+      }
+    }
+
+    const exactIdMatches = expectedFixId
+      ? allCalendarEntries.filter(e => e.fixtureId === expectedFixId)
+      : [];
+    if (exactIdMatches.length > 1) {
+      return unchanged('ambiguous');
+    }
+
+    targetMatchIdx = candidateIdx;
+    resolvedFixtureId = expectedFixId || null;
+  }
+
+  if (targetMatchIdx === -1) {
+    return unchanged('not_found');
+  }
+
+  const targetMatch = internationalSeries.matches[targetMatchIdx];
+  const expectedFixId =
+    targetMatch.fixtureId ||
+    (activeSeriesId
+      ? `intl_fix_${activeSeriesId}_${targetMatch.matchNumber}`
+      : resolvedFixtureId || undefined);
+
+  if (!resolvedFixtureId && expectedFixId) {
+    resolvedFixtureId = expectedFixId;
+  }
+
+  // ==========================================================================
+  // STAGE G: Handle 'already_completed' Idempotently
+  // ==========================================================================
+  if (targetMatch.completed) {
+    const reconciledLeagues = reconcileCalendarForInternationalMatch({
+      leagues,
+      currentLeagueId,
+      matchedFixtureId: resolvedFixtureId,
+      competitionType: 'bilateral',
+      authoritativeSummary: targetMatch.summary || intlShortSummary,
+      finishedMatch,
+      doesPairMatchFinishedTeams
+    });
+
+    return {
+      internationalSeries,
+      leagues: reconciledLeagues,
+      nations,
+      ...(players !== undefined ? { players } : {}),
+      ...(teams !== undefined ? { teams } : {}),
+      matchedFixtureId: resolvedFixtureId,
+      resolutionStatus: 'already_completed'
+    };
+  }
+
+  // ==========================================================================
+  // STAGE F: Apply Completion, Statistics, Ranking, and Calendar Updates
+  // ==========================================================================
+  const updatedMatches = internationalSeries.matches.map((m, idx) =>
+    idx === targetMatchIdx
+      ? {
+          ...m,
+          fixtureId: m.fixtureId || expectedFixId,
+          completed: true,
+          summary: intlShortSummary
+        }
+      : m
+  );
+  const nextSeries: InternationalSeriesState = {
+    ...internationalSeries,
+    seriesWins: internationalSeries.seriesWins + (didUserWin ? 1 : 0),
+    seriesLosses: internationalSeries.seriesLosses + (didUserWin ? 0 : 1),
+    matches: updatedMatches
+  };
+
   const updatedNationsRaw = nations.map(n => {
     const isWin = (winnerNat && n.id === winnerNat.id) || n.name.toLowerCase() === winnerNameLower;
     const isLoss = (loserNat && n.id === loserNat.id) || n.name.toLowerCase() === loserNameLower;
@@ -5955,22 +6450,26 @@ export function applyRecordCompletedInternationalMatchState(params: {
     };
   });
 
-  // 4. Update leagues calendar fixture
   const updatedLeagues = reconcileCalendarForInternationalMatch({
     leagues,
     currentLeagueId,
-    matchedFixtureId,
-    competitionType: competitionType as 'bilateral' | 'wtc',
+    matchedFixtureId: resolvedFixtureId,
+    competitionType: 'bilateral',
     authoritativeSummary: intlShortSummary,
     finishedMatch,
     doesPairMatchFinishedTeams
   });
 
+  const { updatedPlayers, updatedTeams } = applyPlayerAndTeamUpdatesIfProvided();
+
   return {
     internationalSeries: nextSeries,
     leagues: updatedLeagues,
     nations: updatedNations,
-    matchedFixtureId
+    ...(updatedPlayers !== undefined ? { players: updatedPlayers } : {}),
+    ...(updatedTeams !== undefined ? { teams: updatedTeams } : {}),
+    matchedFixtureId: resolvedFixtureId,
+    resolutionStatus: 'resolved'
   };
 }
 
@@ -11413,16 +11912,10 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
 
-    // 1. Update participating players' season & career stats
+    // 1. Update participating players' season & career stats and competition state
     const activeLeague = leagues.find(l => l.id === currentLeagueId) || leagues[0];
     const currentActiveSeasonKey = normalizeSeasonYear(activeLeague?.seasonName);
     const applyStatsToPlayer = (p: Player): Player => recordMatchToPlayerStats(p, finishedMatch, currentActiveSeasonKey);
-
-    setPlayers(prev => prev.map(applyStatsToPlayer));
-    setTeams(prev => prev.map(t => ({
-      ...t,
-      squad: t.squad.map(applyStatsToPlayer)
-    })));
 
     // 2. Update League Standings, NRR, Background AI Fixture & Playoff Bracket
     const isInternational =
@@ -11450,10 +11943,24 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         currentLeagueId,
         coachProfile
       });
-      setNations(intlSync.nations);
-      setInternationalSeries(intlSync.internationalSeries);
-      setLeagues(intlSync.leagues);
+      if (intlSync.resolutionStatus === 'resolved') {
+        setPlayers(prev => prev.map(applyStatsToPlayer));
+        setTeams(prev => prev.map(t => ({
+          ...t,
+          squad: t.squad.map(applyStatsToPlayer)
+        })));
+        setNations(intlSync.nations);
+        setInternationalSeries(intlSync.internationalSeries);
+        setLeagues(intlSync.leagues);
+      } else if (intlSync.resolutionStatus === 'already_completed') {
+        setLeagues(intlSync.leagues);
+      }
     } else {
+      setPlayers(prev => prev.map(applyStatsToPlayer));
+      setTeams(prev => prev.map(t => ({
+        ...t,
+        squad: t.squad.map(applyStatsToPlayer)
+      })));
       setLeagues(prevLeagues => prevLeagues.map(league => {
         if (league.id !== finishedMatch.leagueId) return league;
 
