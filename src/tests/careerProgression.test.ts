@@ -7333,10 +7333,168 @@ export function runCareerProgressionTests() {
     assert.deepEqual(step46_res.internationalSeries, snap46Series, 'REQ 46.1b: Active series matches completely unmutated');
     assert.deepEqual(step46_res.leagues, snap46Leagues, 'REQ 46.1c: Calendar fixtures in both leagues remain completed: false');
     assert.deepEqual(step46_res.nations, snap46Nations, 'REQ 46.1d: ICC rankings completely unmutated');
+
+    // ==========================================================================
+    // SCENARIO 47: Phase 5.6 — Negative Case A: Direct-ID Collision Across International Tours
+    // ==========================================================================
+    const directCollisionCustomId = 'direct_collision_custom_id_777';
+
+    const seriesDirectCollision: InternationalSeriesState = {
+      seriesId: 'tour_ind_aus_2026',
+      userNationId: 'nat_ind',
+      opponentNationId: 'nat_aus',
+      userNationName: 'India',
+      userNationCode: 'IND',
+      userNationFlag: '🇮🇳',
+      opponentNationName: 'Australia',
+      opponentNationCode: 'AUS',
+      opponentNationFlag: '🇦🇺',
+      format: 'T20',
+      matches: [
+        {
+          matchNumber: 1,
+          city: 'Melbourne',
+          venue: 'MCG',
+          completed: false,
+          fixtureId: directCollisionCustomId // Explicit custom fixture ID on active series match
+        },
+        {
+          matchNumber: 2,
+          city: 'Sydney',
+          venue: 'SCG',
+          completed: false
+        },
+        {
+          matchNumber: 3,
+          city: 'Brisbane',
+          venue: 'Gabba',
+          completed: false
+        }
+      ],
+      seriesWins: 0,
+      seriesLosses: 0
+    };
+
+    const leagueOtherTour: League = {
+      ...step1.leagues[0],
+      id: 'league_other_tour',
+      calendarDates: [
+        {
+          dateStr: '2026-04-01',
+          dayOfWeek: 'WED',
+          dayNumber: 1,
+          month: 'Apr',
+          type: 'match',
+          matchFixture: {
+            id: directCollisionCustomId, // Same explicit custom ID used in another tour
+            homeTeamId: 'nat_ind',
+            awayTeamId: 'nat_aus',
+            homeTeamName: 'India',
+            awayTeamName: 'Australia',
+            seriesId: 'tour_other_2026', // Conflicting series ID
+            matchNumber: 1,
+            expectedFixtureId: 'intl_fix_tour_other_2026_1',
+            isInternational: true,
+            completed: false
+          } as any
+        }
+      ]
+    };
+
+    const finishedMatchCollision = {
+      ...finishedMatch41_1,
+      id: directCollisionCustomId,
+      fixtureId: directCollisionCustomId,
+      seriesId: 'tour_other_2026'
+    } as unknown as MatchLiveState;
+
+    const snap47Series = {
+      ...seriesDirectCollision,
+      matches: seriesDirectCollision.matches.map((m: any) => ({ ...m }))
+    };
+    const snap47Leagues = JSON.parse(JSON.stringify([leagueOtherTour]));
+    const snap47Nations = JSON.parse(JSON.stringify(step1.nations));
+
+    const step47_res = applyRecordCompletedInternationalMatchState({
+      finishedMatch: finishedMatchCollision,
+      didUserWin: true,
+      coachProfile: intlCoach41,
+      internationalSeries: seriesDirectCollision,
+      leagues: [leagueOtherTour],
+      currentLeagueId: leagueOtherTour.id,
+      nations: step1.nations
+    });
+
+    assert.equal(step47_res.matchedFixtureId, null, 'REQ 47.1a: Direct-ID collision with conflicting tour seriesId rejected cleanly');
+    assert.deepEqual(step47_res.internationalSeries, snap47Series, 'REQ 47.1b: Active series matches completely unmutated');
+    assert.deepEqual(step47_res.leagues, snap47Leagues, 'REQ 47.1c: Calendar fixture in conflicting tour remains completed: false');
+    assert.deepEqual(step47_res.nations, snap47Nations, 'REQ 47.1d: ICC rankings completely unmutated');
+
+    // ==========================================================================
+    // SCENARIO 48: Phase 5.6 — Positive Case B: Legitimate Direct Match Completion
+    // ==========================================================================
+    const legitDirectCustomId = 'legit_direct_custom_id_888';
+
+    const seriesLegitDirect: InternationalSeriesState = {
+      seriesId: 'tour_ind_aus_2026',
+      userNationId: 'nat_ind',
+      opponentNationId: 'nat_aus',
+      userNationName: 'India',
+      userNationCode: 'IND',
+      userNationFlag: '🇮🇳',
+      opponentNationName: 'Australia',
+      opponentNationCode: 'AUS',
+      opponentNationFlag: '🇦🇺',
+      format: 'T20',
+      matches: [
+        {
+          matchNumber: 1,
+          city: 'Melbourne',
+          venue: 'MCG',
+          completed: false,
+          fixtureId: legitDirectCustomId // Uniquely identified active-series fixture
+        },
+        {
+          matchNumber: 2,
+          city: 'Sydney',
+          venue: 'SCG',
+          completed: false
+        },
+        {
+          matchNumber: 3,
+          city: 'Brisbane',
+          venue: 'Gabba',
+          completed: false
+        }
+      ],
+      seriesWins: 0,
+      seriesLosses: 0
+    };
+
+    const finishedMatchLegitDirect = {
+      ...finishedMatch41_1,
+      id: legitDirectCustomId,
+      fixtureId: legitDirectCustomId,
+      seriesId: 'tour_ind_aus_2026'
+    } as unknown as MatchLiveState;
+
+    const step48_res = applyRecordCompletedInternationalMatchState({
+      finishedMatch: finishedMatchLegitDirect,
+      didUserWin: true,
+      coachProfile: intlCoach41,
+      internationalSeries: seriesLegitDirect,
+      leagues: step1.leagues,
+      currentLeagueId: step1.leagues[0].id,
+      nations: step1.nations
+    });
+
+    assert.equal(step48_res.matchedFixtureId, legitDirectCustomId, 'REQ 48.1a: Uniquely identified direct match resolved successfully');
+    assert.equal(step48_res.internationalSeries.matches[0].completed, true, 'REQ 48.1b: Match #1 marked completed: true');
+    assert.equal(step48_res.internationalSeries.seriesWins, 1, 'REQ 48.1c: Series win count incremented to 1');
   }
 
   console.log('✅ ALL Career Progression, Multi-League Recovery, International Series IDs, Transition Idempotency & Verified Defect Tests PASSED!');
-  return { passedScenarios: 46, totalScenarios: 46 };
+  return { passedScenarios: 48, totalScenarios: 48 };
 }
 
 

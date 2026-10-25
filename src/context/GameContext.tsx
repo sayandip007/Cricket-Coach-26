@@ -5649,7 +5649,42 @@ export function applyRecordCompletedInternationalMatchState(params: {
       });
 
       if (matchedIndexes.length === 1) {
-        targetMatchIdx = matchedIndexes[0];
+        // Validate that neither the callback nor any matching calendar fixture across leagues
+        // asserts a conflicting international series identity (different seriesId)
+        const callbackSeriesId: string | undefined = (finishedMatch as any).seriesId;
+
+        let hasConflictingCalendarSeries = false;
+        if (internationalSeries.seriesId) {
+          for (const league of leagues) {
+            if (!league || !Array.isArray(league.calendarDates)) continue;
+            for (const cd of league.calendarDates) {
+              if (!cd) continue;
+              const candMf = cd.matchFixture?.id === explicitFixtureId ? cd.matchFixture : null;
+              const candIm = Array.isArray(cd.internationalMatches)
+                ? cd.internationalMatches.find(im => im && im.id === explicitFixtureId) || null
+                : null;
+              const candFix = candMf || candIm;
+              if (!candFix) continue;
+
+              const fixSeriesId: string | undefined = (candFix as any).seriesId;
+
+              if (fixSeriesId && fixSeriesId !== internationalSeries.seriesId) {
+                hasConflictingCalendarSeries = true;
+                break;
+              }
+            }
+            if (hasConflictingCalendarSeries) break;
+          }
+        }
+
+        const isCallbackSeriesValid =
+          !callbackSeriesId ||
+          !internationalSeries.seriesId ||
+          callbackSeriesId === internationalSeries.seriesId;
+
+        if (isCallbackSeriesValid && !hasConflictingCalendarSeries) {
+          targetMatchIdx = matchedIndexes[0];
+        }
       }
 
       // 2. Authoritative fixture-mapping recovery path with strict series identity and participant verification
