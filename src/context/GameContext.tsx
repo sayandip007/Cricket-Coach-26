@@ -5659,18 +5659,19 @@ export function applyRecordCompletedInternationalMatchState(params: {
             if (!league || !Array.isArray(league.calendarDates)) continue;
             for (const cd of league.calendarDates) {
               if (!cd) continue;
-              const candMf = cd.matchFixture?.id === explicitFixtureId ? cd.matchFixture : null;
-              const candIm = Array.isArray(cd.internationalMatches)
-                ? cd.internationalMatches.find(im => im && im.id === explicitFixtureId) || null
-                : null;
-              const candFix = candMf || candIm;
-              if (!candFix) continue;
+              const candidates = [
+                cd.matchFixture,
+                ...(Array.isArray(cd.internationalMatches) ? cd.internationalMatches : [])
+              ].filter(Boolean);
 
-              const fixSeriesId: string | undefined = (candFix as any).seriesId;
+              for (const candFix of candidates) {
+                if (!candFix || candFix.id !== explicitFixtureId) continue;
+                const fixSeriesId: string | undefined = (candFix as any).seriesId;
 
-              if (fixSeriesId && fixSeriesId !== internationalSeries.seriesId) {
-                hasConflictingCalendarSeries = true;
-                break;
+                if (fixSeriesId && fixSeriesId !== internationalSeries.seriesId) {
+                  hasConflictingCalendarSeries = true;
+                  break;
+                }
               }
             }
             if (hasConflictingCalendarSeries) break;

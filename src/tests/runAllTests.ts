@@ -1950,7 +1950,7 @@ runTest('REGRESSION', 'Phase 26: Cricket Engine Bugfixes — Bowler Selection, 5
   assert.equal(bugRes.passed, bugRes.total, `Expected all ${bugRes.total} cricket bugs regression tests to pass`);
 });
 
-runTest('REGRESSION', 'Phase 27: Career Mode Progression, Playoff Brackets, Board Review & Next-Season Advancement (Scenarios 1–48)', () => {
+runTest('REGRESSION', 'Phase 27: Career Mode Progression, Playoff Brackets, Board Review & Next-Season Advancement (Scenarios 1–49)', () => {
   const careerRes = runCareerProgressionTests();
   assert.equal(careerRes.passedScenarios, careerRes.totalScenarios, `Expected all ${careerRes.totalScenarios} career progression scenarios to pass`);
 });
