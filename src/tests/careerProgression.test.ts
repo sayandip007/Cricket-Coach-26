@@ -7903,10 +7903,118 @@ export function runCareerProgressionTests() {
     assert.deepEqual(step53_res.internationalSeries, snap53Series, 'REQ 53.1b: Active series matches completely unmutated');
     assert.deepEqual(step53_res.leagues, snap53Leagues, 'REQ 53.1c: Calendar fixtures remain completed: false');
     assert.deepEqual(step53_res.nations, snap53Nations, 'REQ 53.1d: ICC rankings completely unmutated');
+
+    // ==========================================================================
+    // SCENARIO 54: Phase 5.9 — Duplicate Direct IDs With Consistent Metadata Across Leagues
+    // ==========================================================================
+    const duplicateDirectCustomId = 'duplicate_direct_id_105';
+
+    const seriesDuplicateDirect: InternationalSeriesState = {
+      seriesId: 'tour_ind_aus_2026',
+      userNationId: 'nat_ind',
+      opponentNationId: 'nat_aus',
+      userNationName: 'India',
+      userNationCode: 'IND',
+      userNationFlag: '🇮🇳',
+      opponentNationName: 'Australia',
+      opponentNationCode: 'AUS',
+      opponentNationFlag: '🇦🇺',
+      format: 'T20',
+      matches: [
+        {
+          matchNumber: 1,
+          city: 'Melbourne',
+          venue: 'MCG',
+          completed: false,
+          fixtureId: duplicateDirectCustomId
+        }
+      ],
+      seriesWins: 0,
+      seriesLosses: 0
+    };
+
+    const leagueDup1: League = {
+      ...step1.leagues[0],
+      id: 'league_dup_1',
+      calendarDates: [
+        {
+          id: 'cal_intl_tour_ind_aus_2026_date1',
+          dateStr: '2026-05-01',
+          dayOfWeek: 'FRI',
+          dayNumber: 1,
+          month: 'May',
+          type: 'match',
+          matchFixture: {
+            id: duplicateDirectCustomId,
+            homeTeamId: 'nat_ind',
+            awayTeamId: 'nat_aus',
+            seriesId: 'tour_ind_aus_2026',
+            competitionId: 'tour_ind_aus_2026',
+            matchNumber: 1,
+            isInternational: true,
+            completed: false
+          } as any
+        }
+      ]
+    };
+
+    const leagueDup2: League = {
+      ...step1.leagues[0],
+      id: 'league_dup_2',
+      calendarDates: [
+        {
+          id: 'cal_intl_tour_ind_aus_2026_date2',
+          dateStr: '2026-05-02',
+          dayOfWeek: 'SAT',
+          dayNumber: 2,
+          month: 'May',
+          type: 'match',
+          matchFixture: {
+            id: duplicateDirectCustomId,
+            homeTeamId: 'nat_ind',
+            awayTeamId: 'nat_aus',
+            seriesId: 'tour_ind_aus_2026',
+            competitionId: 'tour_ind_aus_2026',
+            matchNumber: 1,
+            isInternational: true,
+            completed: false
+          } as any
+        }
+      ]
+    };
+
+    const finishedMatchDuplicateDirect = {
+      ...finishedMatch41_1,
+      id: duplicateDirectCustomId,
+      fixtureId: duplicateDirectCustomId,
+      seriesId: 'tour_ind_aus_2026'
+    } as unknown as MatchLiveState;
+
+    const snap54Series = {
+      ...seriesDuplicateDirect,
+      matches: seriesDuplicateDirect.matches.map((m: any) => ({ ...m }))
+    };
+    const snap54Leagues = JSON.parse(JSON.stringify([leagueDup1, leagueDup2]));
+    const snap54Nations = JSON.parse(JSON.stringify(step1.nations));
+
+    const step54_res = applyRecordCompletedInternationalMatchState({
+      finishedMatch: finishedMatchDuplicateDirect,
+      didUserWin: true,
+      coachProfile: intlCoach41,
+      internationalSeries: seriesDuplicateDirect,
+      leagues: [leagueDup1, leagueDup2],
+      currentLeagueId: leagueDup1.id,
+      nations: step1.nations
+    });
+
+    assert.equal(step54_res.matchedFixtureId, null, 'REQ 54.1a: Duplicate direct IDs with consistent metadata across leagues rejected due to ambiguous calendar ownership');
+    assert.deepEqual(step54_res.internationalSeries, snap54Series, 'REQ 54.1b: Active series matches & completion flags completely unmutated');
+    assert.deepEqual(step54_res.leagues, snap54Leagues, 'REQ 54.1c: Both calendar entries remain completed: false');
+    assert.deepEqual(step54_res.nations, snap54Nations, 'REQ 54.1d: ICC rankings completely unmutated');
   }
 
   console.log('✅ ALL Career Progression, Multi-League Recovery, International Series IDs, Transition Idempotency & Verified Defect Tests PASSED!');
-  return { passedScenarios: 53, totalScenarios: 53 };
+  return { passedScenarios: 54, totalScenarios: 54 };
 }
 
 

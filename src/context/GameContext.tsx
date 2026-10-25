@@ -5698,31 +5698,36 @@ export function applyRecordCompletedInternationalMatchState(params: {
 
       if (matchedIndexes.length === 1) {
         // Validate that neither the callback nor any matching calendar fixture across leagues
-        // asserts a conflicting international series identity (different seriesId)
+        // asserts a conflicting international series identity (different seriesId), and ensure
+        // explicit fixture IDs are not duplicated across multiple calendar dates claiming the same series.
         const callbackSeriesId: string | undefined = (finishedMatch as any).seriesId;
 
         let hasConflictingCalendarSeries = false;
-        if (internationalSeries.seriesId) {
-          for (const league of leagues) {
-            if (!league || !Array.isArray(league.calendarDates)) continue;
-            for (const cd of league.calendarDates) {
-              if (!cd) continue;
-              const candidates = [
-                cd.matchFixture,
-                ...(Array.isArray(cd.internationalMatches) ? cd.internationalMatches : [])
-              ].filter(Boolean);
+        let matchingSeriesCalendarDatesCount = 0;
 
-              for (const candFix of candidates) {
-                if (!candFix || candFix.id !== explicitFixtureId) continue;
-                const { seriesId: fixSeriesId, isConflicted } = getEffectiveFixtureSeriesIdentity(candFix, cd.id);
+        for (const league of leagues) {
+          if (!league || !Array.isArray(league.calendarDates)) continue;
+          for (const cd of league.calendarDates) {
+            if (!cd) continue;
+            const candidates = [
+              cd.matchFixture,
+              ...(Array.isArray(cd.internationalMatches) ? cd.internationalMatches : [])
+            ].filter(Boolean);
 
-                if (isConflicted || (fixSeriesId && fixSeriesId !== internationalSeries.seriesId)) {
-                  hasConflictingCalendarSeries = true;
-                  break;
-                }
+            let dateHasMatchingSeriesFixture = false;
+            for (const candFix of candidates) {
+              if (!candFix || candFix.id !== explicitFixtureId) continue;
+              const { seriesId: fixSeriesId, isConflicted } = getEffectiveFixtureSeriesIdentity(candFix, cd.id);
+
+              if (isConflicted || (internationalSeries.seriesId && fixSeriesId && fixSeriesId !== internationalSeries.seriesId)) {
+                hasConflictingCalendarSeries = true;
+              } else if (internationalSeries.seriesId && fixSeriesId === internationalSeries.seriesId) {
+                dateHasMatchingSeriesFixture = true;
               }
             }
-            if (hasConflictingCalendarSeries) break;
+            if (dateHasMatchingSeriesFixture) {
+              matchingSeriesCalendarDatesCount++;
+            }
           }
         }
 
@@ -5731,7 +5736,7 @@ export function applyRecordCompletedInternationalMatchState(params: {
           !internationalSeries.seriesId ||
           callbackSeriesId === internationalSeries.seriesId;
 
-        if (isCallbackSeriesValid && !hasConflictingCalendarSeries) {
+        if (isCallbackSeriesValid && !hasConflictingCalendarSeries && matchingSeriesCalendarDatesCount <= 1) {
           targetMatchIdx = matchedIndexes[0];
         }
       }
