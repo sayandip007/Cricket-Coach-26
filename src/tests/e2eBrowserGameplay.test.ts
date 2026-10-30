@@ -1,5 +1,25 @@
 import { chromium, Browser, Page } from '@playwright/test';
 import rawAssert from 'node:assert/strict';
+import fs from 'node:fs';
+
+function resolveChromiumExecutablePath(): string | undefined {
+  try {
+    const defaultPath = chromium.executablePath();
+    if (defaultPath && fs.existsSync(defaultPath)) {
+      return defaultPath;
+    }
+  } catch {}
+  const fallbackPaths = [
+    '/ms-playwright/chrome-headless-shell-linux64/chrome-headless-shell',
+    '/ms-playwright/chromium_headless_shell-1247/chrome-headless-shell-linux64/chrome-headless-shell'
+  ];
+  for (const candidate of fallbackPaths) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
 
 interface TestSectionResult {
   section: string;
@@ -30,8 +50,10 @@ async function runSection(name: string, fn: (page: Page) => Promise<void>, page:
 }
 
 async function main() {
+  const executablePath = resolveChromiumExecutablePath();
   const browser: Browser = await chromium.launch({
     headless: true,
+    ...(executablePath ? { executablePath } : {}),
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
   });
 
@@ -41,20 +63,70 @@ async function main() {
 
   const page: Page = await context.newPage();
 
-  // Collect page console errors and uncaught exceptions
+  // ---------------------------------------------------------------------------
+  // Browser Error & Network Failure Tracking
+  // ---------------------------------------------------------------------------
+  // Documented expected dev-server noise:
+  // 1. Vite HMR WebSocket connection failures (ws://127.0.0.1:3000 or ws://localhost:3000)
+  //    when HMR is disabled (DISABLE_HMR=true) in the test/preview environment.
+  // 2. External Google Fonts CDN requests (fonts.googleapis.com / fonts.gstatic.com)
+  //    ONLY when running inside a network-isolated container without external internet.
+  // All application resources (http://127.0.0.1:3000/*), uncaught page exceptions,
+  // and unexpected console/network errors MUST be recorded and fail the test.
+  const isExpectedViteHmrWebSocketNoise = (text: string, url: string = ''): boolean => {
+    const combined = `${text} ${url}`;
+    const isViteHmrWs =
+      /ws:\/\/(127\.0\.0\.1|localhost):3000/i.test(combined) ||
+      /\[vite\]\s*(failed to connect to websocket|server connection lost)/i.test(combined);
+    return isViteHmrWs;
+  };
+
+  const isExternalFontCdnInIsolatedEnv = (url: string): boolean => {
+    return /^https:\/\/fonts\.(googleapis|gstatic)\.com\//i.test(url);
+  };
+
   const pageErrors: string[] = [];
+
   page.on('console', msg => {
     if (msg.type() === 'error') {
       const txt = msg.text();
-      // Ignore non-fatal React / Vite dev server network warnings
-      if (!txt.includes('Failed to load resource') && !txt.includes('WebSocket')) {
-        pageErrors.push(txt);
+      const locUrl = msg.location()?.url || '';
+      if (isExpectedViteHmrWebSocketNoise(txt, locUrl)) {
+        return;
       }
+      if (
+        txt.includes('Failed to load resource') &&
+        isExternalFontCdnInIsolatedEnv(locUrl)
+      ) {
+        return;
+      }
+      pageErrors.push(`[console.error] ${txt}${locUrl ? ` (url: ${locUrl})` : ''}`);
     }
   });
 
   page.on('pageerror', err => {
-    pageErrors.push(err.message);
+    pageErrors.push(`[pageerror] ${err.message}`);
+  });
+
+  page.on('requestfailed', req => {
+    const url = req.url();
+    const failureText = req.failure()?.errorText || 'unknown failure';
+    // Ignore benign navigation/reload cancellation and documented dev-server noise
+    if (failureText.includes('ERR_ABORTED')) {
+      return;
+    }
+    if (isExpectedViteHmrWebSocketNoise(failureText, url) || isExternalFontCdnInIsolatedEnv(url)) {
+      return;
+    }
+    pageErrors.push(`[requestfailed] ${req.method()} ${url} -> ${failureText}`);
+  });
+
+  page.on('response', res => {
+    const url = res.url();
+    const status = res.status();
+    if (status >= 400 && /^https?:\/\/(127\.0\.0\.1|localhost):3000/i.test(url)) {
+      pageErrors.push(`[http ${status}] ${url}`);
+    }
   });
 
   try {
@@ -342,7 +414,7 @@ async function main() {
       console.log('   ✓ 15-Man National Squad valid. Confirming national appointment...');
       await confirmSquadBtn.click();
 
-      // Step C: Verify Hub Shows Active International Duty Card
+      // Step C: Verify Hub Shows Active International Duty Card & Capture Pre-Match Ratings
       const hubTab = p.locator('button:has-text("Hub")').last();
       await hubTab.click();
 
@@ -350,29 +422,241 @@ async function main() {
       await intlCard.waitFor({ state: 'visible', timeout: 10000 });
       console.log('   ✓ International Career Duty card active with bilateral tour');
 
-      // Step D: Simulate Match 1 via supported UI control
+      const preMatchSnapshot = await p.evaluate(() => {
+        const hook = (window as any).__cricketCoachTestHook;
+        if (!hook) throw new Error('Missing __cricketCoachTestHook on window');
+        const snap = hook.getStateSnapshot();
+        const series = snap.internationalSeries;
+        const userNat = snap.nations.find(
+          (n: any) => n.id === series.userNationId || n.name.toLowerCase() === series.userNationName.toLowerCase()
+        );
+        const oppNat = snap.nations.find(
+          (n: any) => n.id === series.opponentNationId || n.name.toLowerCase() === series.opponentNationName.toLowerCase()
+        );
+        return {
+          seriesId: series.seriesId,
+          format: series.format || 'T20',
+          userNationId: userNat?.id,
+          userNationName: userNat?.name,
+          userRatingT20: userNat?.ratingT20,
+          oppNationId: oppNat?.id,
+          oppNationName: oppNat?.name,
+          oppRatingT20: oppNat?.ratingT20,
+          seriesWins: series.seriesWins,
+          seriesLosses: series.seriesLosses,
+          match1Completed: series.matches[0]?.completed ?? false,
+          match1FixtureId: series.matches[0]?.fixtureId || `intl_fix_${series.seriesId}_1`
+        };
+      });
+
+      rawAssert.equal(preMatchSnapshot.match1Completed, false, 'Match 1 starts uncompleted');
+      rawAssert.equal(preMatchSnapshot.seriesWins, 0, 'Series wins start at 0');
+      rawAssert.equal(preMatchSnapshot.seriesLosses, 0, 'Series losses start at 0');
+      rawAssert.equal(typeof preMatchSnapshot.userRatingT20, 'number', 'Captured numeric pre-match user nation T20 rating');
+      rawAssert.equal(typeof preMatchSnapshot.oppRatingT20, 'number', 'Captured numeric pre-match opponent nation T20 rating');
+      console.log(
+        `   ✓ Pre-Match 1 Ratings captured: ${preMatchSnapshot.userNationName}=${preMatchSnapshot.userRatingT20}, ${preMatchSnapshot.oppNationName}=${preMatchSnapshot.oppRatingT20}`
+      );
+
+      // Step D: Complete Match 1 using existing UI controls
       const simMatch1Btn = intlCard.locator('button:has-text("SIM")').first();
       await simMatch1Btn.waitFor({ state: 'visible', timeout: 5000 });
 
-      console.log('   ✓ Simulating Match 1 of international tour...');
+      console.log('   ✓ Simulating Match 1 of international tour via UI...');
       await simMatch1Btn.click();
 
-      // Match Result Modal: verify result and click CONTINUE
       const continueResultBtn = p.locator('button:has-text("CONTINUE")').first();
       await continueResultBtn.waitFor({ state: 'visible', timeout: 20000 });
       console.log('   ✓ International Match 1 completed. Result modal visible, clicking CONTINUE...');
       await continueResultBtn.click();
 
-      // Step E: Verify match result and series completion state on Hub
+      // Step E: Verify match result, series completion state, and rating delta via authoritative state & visible UI
       await intlCard.waitFor({ state: 'visible', timeout: 10000 });
       const cardTextMatch1 = await intlCard.textContent();
       rawAssert.ok(
         cardTextMatch1?.includes('1 - 0') || cardTextMatch1?.includes('0 - 1') || cardTextMatch1?.includes('2nd T20I'),
-        'Series score and next match updated after Match 1'
+        'Series score and next match updated on Hub card after Match 1'
       );
-      console.log('   ✓ Verified Match 1 result recorded and series score updated');
 
-      // Step F: Simulate remaining matches to conclude series
+      const postMatch1Snapshot = await p.evaluate(() => {
+        const hook = (window as any).__cricketCoachTestHook;
+        const snap = hook.getStateSnapshot();
+        const series = snap.internationalSeries;
+        const userNat = snap.nations.find(
+          (n: any) => n.id === series.userNationId || n.name.toLowerCase() === series.userNationName.toLowerCase()
+        );
+        const oppNat = snap.nations.find(
+          (n: any) => n.id === series.opponentNationId || n.name.toLowerCase() === series.opponentNationName.toLowerCase()
+        );
+        return {
+          userRatingT20: userNat?.ratingT20,
+          oppRatingT20: oppNat?.ratingT20,
+          seriesWins: series.seriesWins,
+          seriesLosses: series.seriesLosses,
+          match1Completed: series.matches[0]?.completed ?? false,
+          match1Summary: series.matches[0]?.summary || ''
+        };
+      });
+
+      rawAssert.equal(postMatch1Snapshot.match1Completed, true, 'Match 1 is marked completed after UI simulation');
+      rawAssert.equal(
+        postMatch1Snapshot.seriesWins + postMatch1Snapshot.seriesLosses,
+        1,
+        'Exactly 1 series match result recorded after Match 1'
+      );
+
+      const didUserWinMatch1 = postMatch1Snapshot.seriesWins === 1;
+      // Apply the authoritative ranking formula from applyRecordCompletedInternationalMatchState (winner +3, loser -2, floor 150)
+      const expectedUserRatingAfterMatch1 = didUserWinMatch1
+        ? Math.max(150, preMatchSnapshot.userRatingT20 + 3)
+        : Math.max(150, preMatchSnapshot.userRatingT20 - 2);
+      const expectedOppRatingAfterMatch1 = !didUserWinMatch1
+        ? Math.max(150, preMatchSnapshot.oppRatingT20 + 3)
+        : Math.max(150, preMatchSnapshot.oppRatingT20 - 2);
+
+      rawAssert.equal(
+        postMatch1Snapshot.userRatingT20,
+        expectedUserRatingAfterMatch1,
+        `User nation (${preMatchSnapshot.userNationName}) rating updated once from ${preMatchSnapshot.userRatingT20} to ${expectedUserRatingAfterMatch1}`
+      );
+      rawAssert.equal(
+        postMatch1Snapshot.oppRatingT20,
+        expectedOppRatingAfterMatch1,
+        `Opponent nation (${preMatchSnapshot.oppNationName}) rating updated once from ${preMatchSnapshot.oppRatingT20} to ${expectedOppRatingAfterMatch1}`
+      );
+      console.log(
+        `   ✓ Post-Match 1 Ratings verified (userWon=${didUserWinMatch1}): ${preMatchSnapshot.userNationName}=${postMatch1Snapshot.userRatingT20}, ${preMatchSnapshot.oppNationName}=${postMatch1Snapshot.oppRatingT20}`
+      );
+
+      // Verify visible Rankings UI in World Screen reflects the updated ratings
+      await worldTab.click();
+      await p.locator('text=WORLD STAGE & NATIONS').waitFor({ state: 'visible', timeout: 10000 });
+      await p.click('button:has-text("RANKINGS")');
+      const rankingsBodyText = await p.textContent('body');
+      rawAssert.ok(
+        rankingsBodyText?.includes(String(expectedUserRatingAfterMatch1)),
+        `World Rankings UI displays updated user nation rating ${expectedUserRatingAfterMatch1}`
+      );
+      rawAssert.ok(
+        rankingsBodyText?.includes(String(expectedOppRatingAfterMatch1)),
+        `World Rankings UI displays updated opponent nation rating ${expectedOppRatingAfterMatch1}`
+      );
+      await hubTab.click();
+      await intlCard.waitFor({ state: 'visible', timeout: 10000 });
+
+      // Step F: Replay the same Match 1 completion event through the supported test path & verify idempotency
+      const replayCheck = await p.evaluate(() => {
+        const hook = (window as any).__cricketCoachTestHook;
+        const replayResult = hook.replayLastCompletedMatch();
+        const snapAfterReplay = hook.getStateSnapshot();
+        const series = snapAfterReplay.internationalSeries;
+        const userNat = snapAfterReplay.nations.find(
+          (n: any) => n.id === series.userNationId || n.name.toLowerCase() === series.userNationName.toLowerCase()
+        );
+        const oppNat = snapAfterReplay.nations.find(
+          (n: any) => n.id === series.opponentNationId || n.name.toLowerCase() === series.opponentNationName.toLowerCase()
+        );
+        return {
+          replayed: replayResult.replayed,
+          resolutionStatus: replayResult.resolutionStatus,
+          reducerSeriesWins: replayResult.seriesWins,
+          reducerSeriesLosses: replayResult.seriesLosses,
+          liveSeriesWins: series.seriesWins,
+          liveSeriesLosses: series.seriesLosses,
+          liveUserRatingT20: userNat?.ratingT20,
+          liveOppRatingT20: oppNat?.ratingT20,
+          completedCount: series.matches.filter((m: any) => m.completed).length
+        };
+      });
+
+      rawAssert.equal(replayCheck.replayed, true, 'Replayed last completed international match through supported test hook');
+      rawAssert.equal(
+        replayCheck.resolutionStatus,
+        'already_completed',
+        'Authoritative international match recorder returns resolutionStatus="already_completed" on duplicate replay'
+      );
+      rawAssert.equal(
+        replayCheck.liveUserRatingT20,
+        expectedUserRatingAfterMatch1,
+        'User nation rating is NOT applied twice upon duplicate completion event'
+      );
+      rawAssert.equal(
+        replayCheck.liveOppRatingT20,
+        expectedOppRatingAfterMatch1,
+        'Opponent nation rating is NOT applied twice upon duplicate completion event'
+      );
+      rawAssert.equal(
+        replayCheck.liveSeriesWins,
+        postMatch1Snapshot.seriesWins,
+        'Series wins are NOT incremented twice upon duplicate completion event'
+      );
+      rawAssert.equal(
+        replayCheck.liveSeriesLosses,
+        postMatch1Snapshot.seriesLosses,
+        'Series losses are NOT incremented twice upon duplicate completion event'
+      );
+      rawAssert.equal(
+        replayCheck.completedCount,
+        1,
+        'Completed match count remains 1 after duplicate completion replay'
+      );
+      console.log('   ✓ Verified rating and series result idempotency (not applied twice on replay)');
+
+      // Step G: Save career after Match 1, reload page, load via UI, and confirm completed match & rating change are preserved
+      const menuBtnAfterM1 = p.locator('button[title="Club Menu & Pitch Curator"], button:has(svg.lucide-menu)').first();
+      await menuBtnAfterM1.click();
+      await p.click('text=Load another save...');
+      const saveDrawerAfterM1 = p.locator('div:has-text("Save Slots (1–3)")').filter({ has: p.locator('button:has-text("SAVE")') }).first();
+      await saveDrawerAfterM1.waitFor({ state: 'visible', timeout: 5000 });
+      const slot1RowAfterM1 = saveDrawerAfterM1.locator('div.rounded-xl').filter({ hasText: 'Slot 1' });
+      await slot1RowAfterM1.locator('button:has-text("SAVE")').first().click();
+      console.log('   ✓ Saved post-Match 1 career state to Slot 1');
+
+      await p.reload({ waitUntil: 'networkidle' });
+
+      const continueBtnAfterM1 = p.locator('button:has-text("CONTINUE CAREER (SLOT 1)"), button:has-text("CONTINUE CAREER")').first();
+      await continueBtnAfterM1.waitFor({ state: 'visible', timeout: 10000 });
+      await continueBtnAfterM1.click();
+
+      await intlCard.waitFor({ state: 'visible', timeout: 10000 });
+
+      const reloadedMatch1Snapshot = await p.evaluate(() => {
+        const hook = (window as any).__cricketCoachTestHook;
+        const snap = hook.getStateSnapshot();
+        const series = snap.internationalSeries;
+        const userNat = snap.nations.find(
+          (n: any) => n.id === series.userNationId || n.name.toLowerCase() === series.userNationName.toLowerCase()
+        );
+        const oppNat = snap.nations.find(
+          (n: any) => n.id === series.opponentNationId || n.name.toLowerCase() === series.opponentNationName.toLowerCase()
+        );
+        return {
+          match1Completed: series.matches[0]?.completed ?? false,
+          completedCount: series.matches.filter((m: any) => m.completed).length,
+          seriesWins: series.seriesWins,
+          seriesLosses: series.seriesLosses,
+          userRatingT20: userNat?.ratingT20,
+          oppRatingT20: oppNat?.ratingT20
+        };
+      });
+
+      rawAssert.equal(reloadedMatch1Snapshot.match1Completed, true, 'Match 1 remains completed after save and UI reload');
+      rawAssert.equal(reloadedMatch1Snapshot.completedCount, 1, 'Completed match count remains 1 after save and UI reload');
+      rawAssert.equal(reloadedMatch1Snapshot.seriesWins, postMatch1Snapshot.seriesWins, 'Series wins preserved after reload');
+      rawAssert.equal(reloadedMatch1Snapshot.seriesLosses, postMatch1Snapshot.seriesLosses, 'Series losses preserved after reload');
+      rawAssert.equal(
+        reloadedMatch1Snapshot.userRatingT20,
+        expectedUserRatingAfterMatch1,
+        'User nation rating change preserved after save and UI reload'
+      );
+      rawAssert.equal(
+        reloadedMatch1Snapshot.oppRatingT20,
+        expectedOppRatingAfterMatch1,
+        'Opponent nation rating change preserved after save and UI reload'
+      );
+      console.log('   ✓ Confirmed Match 1 completion state and rating changes preserved across save & UI reload');
+
+      // Step H: Simulate remaining matches (2..5) to conclude series
       for (let m = 2; m <= 5; m++) {
         const nextSimBtn = intlCard.locator('button:has-text("SIM")').first();
         if (await nextSimBtn.isVisible()) {
@@ -390,13 +674,13 @@ async function main() {
       await tourConcludedText.waitFor({ state: 'visible', timeout: 10000 });
       console.log('   ✓ All 5 matches played! Bilateral Tour Concluded banner visible');
 
-      // Step G: Advance to Next Tour
+      // Step I: Advance to Next Tour
       const nextTourBtn = p.locator('button:has-text("GO TO NEXT TOUR ▶")').first();
       await nextTourBtn.waitFor({ state: 'visible', timeout: 5000 });
       await nextTourBtn.click();
       console.log('   ✓ Clicked GO TO NEXT TOUR ▶');
 
-      // Step H: Save, Reload, and Verify Persistence of International Tour & Rankings
+      // Step J: Save, Reload, and Verify Persistence of International Tour & Rankings
       const menuBtn = p.locator('button[title="Club Menu & Pitch Curator"], button:has(svg.lucide-menu)').first();
       await menuBtn.click();
       await p.click('text=Load another save...');

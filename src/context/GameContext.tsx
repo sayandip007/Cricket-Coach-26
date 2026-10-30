@@ -10307,6 +10307,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [matchLiveState, setMatchLiveState] = useState<MatchLiveState | null>(null);
   const [pendingRetentionModal, setPendingRetentionModal] = useState<boolean>(false);
   const recordedMatchIdsRef = useRef<Set<string>>(new Set());
+  const lastFinishedMatchRef = useRef<MatchLiveState | null>(null);
 
   // Auction State
   const [auctionLot, setAuctionLot] = useState<AuctionLot | null>(null);
@@ -12294,6 +12295,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!finishedMatch || finishedMatch.status !== 'finished') return;
     if (recordedMatchIdsRef.current.has(finishedMatch.id)) return;
     recordedMatchIdsRef.current.add(finishedMatch.id);
+    lastFinishedMatchRef.current = finishedMatch;
 
     const inn1 = finishedMatch.innings1;
     const inn2 = finishedMatch.innings2;
@@ -12961,6 +12963,45 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       recordCompletedMatch(matchLiveState);
     }
   }, [matchLiveState, recordCompletedMatch]);
+
+  // Narrow, non-destructive test hook for E2E verification of rating & series idempotency
+  if (typeof window !== 'undefined') {
+    (window as any).__cricketCoachTestHook = {
+      getStateSnapshot: () => ({
+        nations,
+        internationalSeries,
+        coachProfile,
+        careerPhase,
+        lastFinishedMatchId: lastFinishedMatchRef.current?.id || null,
+        lastFinishedFixtureId: lastFinishedMatchRef.current?.fixtureId || null
+      }),
+      replayLastCompletedMatch: () => {
+        const finishedMatch = lastFinishedMatchRef.current;
+        if (!finishedMatch) {
+          return { replayed: false, reason: 'no_finished_match' };
+        }
+        // 1. Replay through component-level recordCompletedMatch (verifies recordedMatchIdsRef guard)
+        recordCompletedMatch(finishedMatch);
+        // 2. Replay through authoritative international state reducer (verifies Stage G already_completed guard)
+        const intlSync = applyRecordCompletedInternationalMatchState({
+          finishedMatch,
+          nations,
+          internationalSeries,
+          leagues,
+          currentLeagueId,
+          coachProfile
+        });
+        return {
+          replayed: true,
+          resolutionStatus: intlSync.resolutionStatus,
+          matchedFixtureId: intlSync.matchedFixtureId,
+          seriesWins: intlSync.internationalSeries.seriesWins,
+          seriesLosses: intlSync.internationalSeries.seriesLosses,
+          nations: intlSync.nations
+        };
+      }
+    };
+  }
 
   // Helper to construct a MatchLiveState between any two franchise teams (including Playoff fixtures)
   const createFranchiseMatchState = useCallback((
